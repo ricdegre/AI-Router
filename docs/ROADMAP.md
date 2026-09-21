@@ -34,4 +34,8 @@
 - VS Code dashboard backed by the core
 - Local API and additional interfaces
 
-Intelligent routing, automatic escalation, automatic rollback, and production deployment are intentionally outside the foundation milestone.
+## Safe execution milestone (0.3.0)
+
+Implemented: structured provider output, model-aware deterministic routing, controlled workspace actions, exact changesets, independent validation, executable bounded escalation, task/attempt persistence, runtime and project locking, circuit state, generic limits and cost policy, audit events, crash recovery, diagnostics, and a synthetic live Ollama-to-mock handoff.
+
+Still deferred: LLM-driven routing, real cloud-provider authentication, remote execution, destructive rollback, graphical interfaces, distributed coordination, and production deployment.

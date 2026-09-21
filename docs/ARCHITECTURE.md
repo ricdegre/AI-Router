@@ -19,6 +19,11 @@ AI Router is split into a public source repository and a private runtime data ro
 7. **Account Profiles** reference independently addressable provider resources without storing passwords in the project registry or memory.
 8. **Policy Engine** deterministically chooses a capable resource based on risk, availability, strength, cost category, and explicit preferences.
 9. **Interfaces** call core services. The CLI is the first interface; VS Code, a local API, desktop, or web interfaces may follow.
+10. **Structured Responses** normalize model claims and proposed actions without granting execution authority.
+11. **Action Mediator** enforces safe paths, allowed action types, source hashes, backups, and dry-run behavior.
+12. **Validation Engine** evaluates router-owned acceptance requirements independently from provider claims.
+13. **Resilient Orchestrator** persists states and attempts, coordinates one writer per project, escalates through bounded candidates, and reconstructs work after interruption.
+14. **Audit and Diagnostics** expose operational evidence without private prompts or secret fields.
 
 ## Data flow
 
@@ -30,4 +35,39 @@ Interfaces depend on core services. Core services depend on configuration and st
 
 ## Current implementation
 
-The platform implements configuration, a JSON project registry, Memory/Handoff Protocol 0.1, filesystem-backed project memory, Git inspection, checkpoint metadata, Provider Protocol 0.1, private profiles, Ollama discovery/execution, deterministic routing, bounded escalation state, a continuity orchestrator, CLI, mocks, and integration tests. Cloud authentication and automatic escalation remain deferred.
+The platform implements configuration, a locked JSON project registry, Memory/Handoff Protocol 0.1, filesystem-backed project memory, Git inspection and staged checkpoint metadata, Provider Protocol 0.1, Structured Response Protocol 0.1, private profiles, model-aware Ollama discovery/execution, deterministic routing, controlled actions, independent validation, bounded executable escalation, crash recovery, diagnostics, CLI, mocks, and integration tests. Cloud authentication remains deferred.
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED
+    CREATED --> READY
+    READY --> ROUTING
+    ROUTING --> RUNNING
+    RUNNING --> WAITING_VALIDATION
+    WAITING_VALIDATION --> COMPLETED: validation passes
+    WAITING_VALIDATION --> FAILED: validation fails
+    RUNNING --> FAILED: provider/action failure
+    FAILED --> ESCALATING
+    ESCALATING --> ROUTING: unused candidate
+    FAILED --> BLOCKED: attempts exhausted
+    WAITING_VALIDATION --> BLOCKED: planned handoff
+    BLOCKED --> READY: explicit resume
+    CREATED --> CANCELLED
+    READY --> CANCELLED
+    ROUTING --> CANCELLED
+    RUNNING --> CANCELLED
+```
+
+```mermaid
+sequenceDiagram
+    participant M as Model/Provider
+    participant O as Orchestrator
+    participant A as Action Mediator
+    participant V as Validation Engine
+    M->>O: Structured claims + proposed actions
+    O->>A: Policy-approved narrow actions
+    A-->>O: Durable execution receipts
+    O->>V: Router-owned requirements
+    V-->>O: Evidence and pass/fail
+    O-->>M: Escalate, hand off, block, or complete
+```

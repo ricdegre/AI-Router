@@ -18,13 +18,15 @@ This repository currently provides:
 - versioned Memory and Handoff Protocol 0.1;
 - Provider Protocol 0.1 and a provider/profile registry;
 - a non-invasive Ollama HTTP adapter with model discovery, timeout, and cancellation;
-- deterministic, explainable capability/cost/risk routing;
-- a bounded escalation data model;
-- a continuity orchestrator tested across isolated Agent A and Agent B instances;
-- a minimal command-line interface;
+- model-aware deterministic routing with limits, cost policy, circuit state, and explainable acceptance/rejection;
+- a structured response protocol that treats model output as untrusted proposals;
+- safe paths, controlled text actions, exact stale-protected changesets, private backups, and independent validation;
+- persistent task states, attempt history, bounded executable escalation, audit events, project leases, and crash recovery;
+- a continuity orchestrator tested across isolated Agent A and Agent B instances, including a live local Ollama stage;
+- operator commands and a privacy-conscious diagnostic report;
 - an artificial continuity demo and isolated tests.
 
-Real cloud-provider execution, account authentication, automatic escalation loops, automatic rollback, model-driven routing, and graphical interfaces are **not implemented**. Ollama execution is available through the adapter but requires an explicit installed model and is never activated implicitly by routing or startup.
+Real cloud-provider execution, account authentication, automatic rollback, model-driven routing, and graphical interfaces are **not implemented**. Ollama execution requires an explicit installed model and is never activated implicitly by startup.
 
 ## Conceptual architecture
 
@@ -34,11 +36,14 @@ The system is intended to **route work, not just prompts**. Current deterministi
 
 ```mermaid
 flowchart LR
-    CLI[CLI / future interfaces] --> ORCH[Continuity Orchestrator]
+    CLI[CLI / future interfaces] --> ORCH[Resilient Orchestrator]
     ORCH --> REG[Project Registry]
     ORCH --> MEM[Shared Memory 0.1]
     ORCH --> GIT[Git checkpoint metadata]
     ORCH --> POLICY[Routing Policy]
+    ORCH --> ACTIONS[Action Mediator]
+    ORCH --> VALIDATE[Validation Engine]
+    ORCH --> ATTEMPTS[Task and Attempt Store]
     POLICY --> PREG[Provider Registry]
     POLICY --> PROFILES[Private Profile Registry]
     PREG --> OLLAMA[Ollama adapter]
@@ -65,11 +70,11 @@ Environment variables override local configuration:
 - `AI_ROUTER_DATA`: private runtime data root.
 - `PROJECT_ROOTS`: project roots separated by the operating system path delimiter.
 
-Run `node interfaces/cli/ai-router.js help` for available commands, including provider health, profile inspection, and `route explain`.
+Run `node interfaces/cli/ai-router.js help` for available commands, including `doctor`, provider health, task attempts, audit inspection, memory validation, and `route explain`.
 
 ## Development status
 
-AI Router is in early development. Protocol 0.1 is explicitly versioned but may require future migrations before a stable release. See [the roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [memory protocol](docs/MEMORY_PROTOCOL.md), and [provider protocol](docs/PROVIDER_PROTOCOL.md).
+AI Router 0.3.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [the roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [security model](SECURITY.md), [operator guide](docs/OPERATIONS.md), [memory protocol](docs/MEMORY_PROTOCOL.md), and [provider protocol](docs/PROVIDER_PROTOCOL.md).
 
 ## License
 
