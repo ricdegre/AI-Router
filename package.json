@@ -1,6 +1,6 @@
 {
   "name": "ai-work-router",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Provider-ready continuity platform for AI-assisted project work.",
   "type": "module",
   "private": true,
@@ -17,6 +17,8 @@
     "demo": "node scripts/continuity-demo.js",
     "demo:local-agent": "node scripts/local-agent-handoff-demo.js",
     "smoke:ollama": "node scripts/ollama-smoke.js",
-    "status": "node interfaces/cli/ai-router.js status"
+    "status": "node interfaces/cli/ai-router.js status",
+    "control": "node scripts/control-service.js",
+    "control:stop": "node scripts/windows-launcher.js stop"
   }
 }

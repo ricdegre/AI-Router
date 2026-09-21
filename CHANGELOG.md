@@ -2,6 +2,16 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.5.0 — Local operational control plane
+
+- Added a dependency-free, local-only control service bound to `127.0.0.1` with nonce and Origin checks for state-changing requests.
+- Added a responsive operational dashboard for projects, providers, profiles, models, tasks, routing, memory, handoffs, checkpoints, locks, audit, doctor, and settings.
+- Added durable task creation, cancellation and safe resume controls without bypassing existing policy or recovery checks.
+- Added persistent non-secret control settings and provider enable/disable state.
+- Added one-click Windows start/stop launchers, port-collision handling, clean shutdown, and private runtime logging.
+- Added API, security, state, offline, responsive-contract, and failure-sanitization tests.
+- Real cloud authentication and paid-provider activation remain intentionally absent.
+
 ## 0.4.0 — Durable resumable task execution
 
 - Added Task Execution Descriptor Protocol 0.1 with strict validation, safe defaults, persistent plans, and explicit migration hooks with backups.

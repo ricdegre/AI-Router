@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>AI Router · Local Control</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to workspace</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">AR</span><div><strong>AI Router</strong><small>Local control plane</small></div></div>
+      <nav id="navigation"></nav>
+      <div class="sidebar-foot"><span class="connection-dot" id="connection-dot"></span><div><strong id="connection-label">Connecting</strong><small id="version-label">Local only</small></div></div>
+    </aside>
+    <section class="surface">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="menu-button" aria-label="Open navigation">☰</button>
+        <div><p class="eyebrow" id="page-eyebrow">OPERATIONS</p><h1 id="page-title">Overview</h1></div>
+        <div class="top-actions">
+          <span class="last-refresh" id="last-refresh">Not refreshed</span>
+          <button class="button ghost" id="theme-button" aria-label="Change color theme">◐ <span>Theme</span></button>
+          <button class="button primary" id="refresh-button">↻ <span>Refresh</span></button>
+        </div>
+      </header>
+      <main id="workspace" tabindex="-1"><div class="loading-page"><span class="spinner"></span><p>Loading local state…</p></div></main>
+    </section>
+  </div>
+  <div id="drawer-root"></div>
+  <div id="modal-root"></div>
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

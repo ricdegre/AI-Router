@@ -25,9 +25,10 @@ This repository currently provides:
 - Task Execution Descriptor 0.1, persistent execution plans, hash-chained recovery journals, workspace drift classification, and safe disk-only resume;
 - a continuity orchestrator tested across isolated Agent A and Agent B instances, including a live local Ollama stage;
 - operator commands and a privacy-conscious diagnostic report;
+- a local-only operational control panel with explainable routing, continuity inspection, durable task controls, and system diagnostics;
 - an artificial continuity demo and isolated tests.
 
-Real cloud-provider execution, OpenAI/Gemini/Claude account authentication, automatic rollback, model-driven routing, and graphical interfaces are **not implemented**. Ollama execution requires an explicit installed model and is never activated implicitly by startup.
+Real cloud-provider execution, OpenAI/Gemini/Claude account authentication, automatic rollback, and model-driven routing are **not implemented**. Cloud providers are shown only as explicit placeholders. Ollama execution requires an explicit installed model and is never activated implicitly by startup.
 
 ## Conceptual architecture
 
@@ -37,7 +38,9 @@ The system is intended to **route work, not just prompts**. Current deterministi
 
 ```mermaid
 flowchart LR
-    CLI[CLI / future interfaces] --> ORCH[Resilient Orchestrator]
+    UI[Local control panel] --> API[Loopback control API]
+    CLI[CLI] --> ORCH[Resilient Orchestrator]
+    API --> ORCH
     ORCH --> REG[Project Registry]
     ORCH --> MEM[Shared Memory 0.1]
     ORCH --> GIT[Git checkpoint metadata]
@@ -75,9 +78,15 @@ Environment variables override local configuration:
 
 Run `node interfaces/cli/ai-router.js help` for available commands, including `doctor`, provider health, task list/show/attempts/resume/validate/doctor, audit inspection, memory validation, and `route explain`.
 
+### Local control panel
+
+On Windows, double-click **AI Router.vbs** in the repository root. It starts the service in the background and opens the panel. Double-click **Stop AI Router.vbs** for a clean shutdown. The preferred address is `http://127.0.0.1:43127`; when that port is occupied the launcher chooses the next available loopback port and opens the correct URL.
+
+From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+
 ## Development status
 
-AI Router 0.4.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [the task descriptor](docs/TASK_EXECUTION_DESCRIPTOR.md), [recovery journal](docs/RECOVERY_JOURNAL.md), [roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [security model](SECURITY.md), and [operator guide](docs/OPERATIONS.md).
+AI Router 0.5.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [the task descriptor](docs/TASK_EXECUTION_DESCRIPTOR.md), [recovery journal](docs/RECOVERY_JOURNAL.md), [roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## License
 

@@ -1,6 +1,6 @@
 # Security Model
 
-AI Router 0.4.0 is a pre-release local execution platform. It is not a general-purpose sandbox and must not be treated as production-ready.
+AI Router 0.5.0 is a pre-release local execution platform. It is not a general-purpose sandbox and must not be treated as production-ready.
 
 ## Trust boundaries
 
@@ -20,6 +20,15 @@ These checks reduce risk but do not replace operating-system isolation. Run untr
 ## Commands and Git
 
 Arbitrary shell execution is not implemented. Validation commands must be registered by trusted router code as an executable plus argument array and run with `shell: false`. Git integration is inspection and metadata only. Automatic commits, resets, checkout, rollback, and history rewriting are not performed.
+
+## Local control service
+
+- The operational service refuses any bind address other than `127.0.0.1` and validates the Host header to reduce DNS-rebinding exposure.
+- Foreign Origins are rejected. Every process creates an in-memory nonce; POST requests require both the exact loopback Origin and that nonce.
+- JSON request bodies are bounded, endpoint inputs are validated, and static assets come from a fixed allowlist. There is no arbitrary filesystem, shell, Git mutation, or runtime-file endpoint.
+- Unexpected errors are replaced by a stable generic response. Stack traces and provider response bodies are not sent to the browser.
+- Browser storage is not used for credentials or the control nonce. Safe UI preferences are persisted in the private runtime.
+- This is a single-operator localhost boundary, not remote authentication. The port must not be forwarded, reverse-proxied, or exposed to a network.
 
 ## Concurrency and recovery
 
