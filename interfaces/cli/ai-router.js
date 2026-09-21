@@ -4,6 +4,11 @@ import { ProjectRegistry } from '../../core/project-registry.js';
 import { MemoryManager } from '../../memory/memory-manager.js';
 import { createCheckpointMetadata, inspectGit } from '../../checkpoints/git-checkpoint.js';
 import { AiRouterError } from '../../core/errors.js';
+import { ProfileRegistry } from '../../core/profile-registry.js';
+import { TaskStore } from '../../core/task-store.js';
+import { ProviderRegistry } from '../../providers/core/registry.js';
+import { OllamaProvider } from '../../providers/ollama/ollama-provider.js';
+import { RoutingPolicy } from '../../routing/policy.js';
 
 function print(value) {
   process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}\n`);
@@ -12,6 +17,12 @@ function print(value) {
 function option(args, name) {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
+}
+
+function options(args, name) {
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) if (args[index] === name && args[index + 1]) values.push(args[index + 1]);
+  return values;
 }
 
 function help() {
@@ -29,6 +40,13 @@ Usage:
   ai-router memory show <project-id>
   ai-router handoff show <project-id>
   ai-router checkpoint status <project-id>
+  ai-router providers list
+  ai-router providers status
+  ai-router provider show <provider-id>
+  ai-router profiles list [--provider <provider-id>]
+  ai-router profiles add-local <provider-id> <profile-id> [--name <display-name>]
+  ai-router route explain [--capability <name>] [--risk <level>] [--manual-provider <id>] [--manual-profile <id>]
+  ai-router task status <project-id> <task-id>
 
 Configuration:
   AI_ROUTER_DATA overrides config/local.json dataRoot.
@@ -42,11 +60,26 @@ async function run() {
   const config = await validateConfig(await loadConfig());
   const registry = new ProjectRegistry(config.dataRoot);
   const memory = new MemoryManager(config.dataRoot);
+  const profileRegistry = new ProfileRegistry(config.dataRoot);
+  const providerRegistry = new ProviderRegistry({ profileRegistry });
+  providerRegistry.register(new OllamaProvider());
+  const routingPolicy = new RoutingPolicy();
+  const taskStore = new TaskStore(config.dataRoot);
   const [group, action, target] = args;
 
   if (group === 'status') {
     const projects = await registry.list();
-    return print({ status: 'ready', configuration: publicConfigSummary(config), registeredProjects: projects.length });
+    const profiles = await profileRegistry.list();
+    return print({
+      status: 'ready',
+      platform_stage: 'provider-ready-continuity',
+      memory_protocol: '0.1',
+      provider_protocol: '0.1',
+      configuration: publicConfigSummary(config),
+      registeredProjects: projects.length,
+      registeredProviders: providerRegistry.list().length,
+      registeredProfiles: profiles.length
+    });
   }
 
   if (group === 'projects' && action === 'scan') {
@@ -108,6 +141,64 @@ async function run() {
     const project = await registry.get(target);
     const gitState = inspectGit(project.workspacePath);
     return print(gitState.isRepository ? createCheckpointMetadata(gitState) : gitState);
+  }
+
+  if (group === 'providers' && action === 'list') {
+    return print(providerRegistry.list());
+  }
+
+  if (group === 'providers' && action === 'status') {
+    return print(await providerRegistry.status());
+  }
+
+  if (group === 'provider' && action === 'show') {
+    if (!target) throw new AiRouterError('A provider ID is required.', 'MISSING_ARGUMENT');
+    const adapter = providerRegistry.get(target);
+    const status = await providerRegistry.status(target);
+    return print({ ...adapter.descriptor, enabled: providerRegistry.isEnabled(target), health: status[0].health, profiles: await profileRegistry.list(target) });
+  }
+
+  if (group === 'profiles' && action === 'list') {
+    return print(await profileRegistry.list(option(args, '--provider')));
+  }
+
+  if (group === 'profiles' && action === 'add-local') {
+    const providerId = target;
+    const profileId = args[3];
+    if (!providerId || !profileId) throw new AiRouterError('Provider ID and profile ID are required.', 'MISSING_ARGUMENT');
+    providerRegistry.get(providerId);
+    return print(await profileRegistry.register({
+      profile_id: profileId,
+      provider_id: providerId,
+      display_name: option(args, '--name') ?? profileId,
+      auth_mode: 'none',
+      location: 'local',
+      cost_category: 'local',
+      enabled: true,
+      status: 'unknown',
+      usage_available: false,
+      limits_available: false,
+      runtime_isolation: { kind: 'local-service' }
+    }));
+  }
+
+  if (group === 'route' && action === 'explain') {
+    const explanation = await routingPolicy.explain({
+      task_type: option(args, '--task-type') ?? 'general',
+      risk: option(args, '--risk') ?? 'low',
+      required_capabilities: options(args, '--capability'),
+      preferred_cost: option(args, '--preferred-cost') ?? 'local-first',
+      manual_provider: option(args, '--manual-provider'),
+      manual_profile: option(args, '--manual-profile'),
+      allow_metered: option(args, '--allow-metered') === 'true'
+    }, providerRegistry, await profileRegistry.list());
+    return print(explanation);
+  }
+
+  if (group === 'task' && action === 'status') {
+    const taskId = args[3];
+    if (!target || !taskId) throw new AiRouterError('Project ID and task ID are required.', 'MISSING_ARGUMENT');
+    return print(await taskStore.get(target, taskId));
   }
 
   throw new AiRouterError('Unknown command. Run ai-router help.', 'UNKNOWN_COMMAND');

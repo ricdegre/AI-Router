@@ -6,5 +6,4 @@ Where a provider officially supports isolated state directories, processes, devi
 
 Public configuration may refer to profile IDs, but authentication artifacts belong under the private runtime root or provider-managed secure storage. Logs and handoffs may record a non-secret profile identifier only.
 
-The current foundation records optional provider and profile identifiers in handoffs but does not authenticate accounts or manipulate existing provider state.
-
+The current platform persists non-secret profile metadata under the private runtime root and supports multiple profiles per provider. It records optional profile identifiers in handoffs but does not authenticate accounts or manipulate existing provider state.

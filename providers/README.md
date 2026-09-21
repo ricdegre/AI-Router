@@ -1,4 +1,3 @@
 # Providers
 
-Provider adapters are intentionally not implemented in the foundation release. Their contract and security boundaries are defined in `docs/PROVIDERS.md`.
-
+Provider Protocol 0.1 and a non-invasive Ollama HTTP adapter are implemented. No cloud authentication or paid-provider adapter exists. See `docs/PROVIDER_PROTOCOL.md` and `docs/PROVIDERS.md`.

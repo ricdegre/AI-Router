@@ -8,5 +8,4 @@ Adapters must distinguish subscription-backed access, local inference, and meter
 
 Provider output is untrusted input. Adapters must normalize errors, redact secrets, apply timeouts, and avoid writing outside the active project and runtime boundaries.
 
-No real provider adapter exists in the current foundation.
-
+Provider Protocol 0.1 and the Ollama local HTTP adapter now exist. No cloud provider or real account-authentication adapter exists.

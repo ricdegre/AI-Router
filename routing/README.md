@@ -1,4 +1,3 @@
 # Routing
 
-Intelligent routing is intentionally deferred until continuity, memory, checkpoints, and provider boundaries are proven. See `docs/ARCHITECTURE.md` and `docs/ROADMAP.md`.
-
+Deterministic Routing Policy 0.1 and a bounded escalation data model are implemented. AI-based routing and automatic retry loops remain deferred. See `docs/ROUTING_POLICY.md`.
