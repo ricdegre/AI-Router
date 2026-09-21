@@ -47,8 +47,8 @@ export class ControlApi {
   }
 
   async status() {
-    const [projects, tasks, providers, profiles, settings] = await Promise.all([
-      this.services.projectRegistry.list(), this.services.taskStore.list(), this.providers(), this.services.profileRegistry.list(), this.settingsStore.load()
+    const [projects, tasks, providers, profiles, settings, decisionEngine] = await Promise.all([
+      this.services.projectRegistry.list(), this.services.taskStore.list(), this.providers(), this.services.profileRegistry.list(), this.settingsStore.load(), this.services.routingPolicy.status()
     ]);
     const healthy = providers.filter((item) => item.health.status === 'healthy').length;
     return {
@@ -57,7 +57,7 @@ export class ControlApi {
       generated_at: new Date().toISOString(),
       control: { host: '127.0.0.1', local_only: true, uptime_seconds: Math.floor(process.uptime()) },
       counts: { projects: projects.length, tasks: tasks.length, active_tasks: tasks.filter((task) => !['COMPLETED', 'CANCELLED'].includes(task.state)).length, providers: providers.length, healthy_providers: healthy, profiles: profiles.length },
-      settings: { refresh_interval_ms: settings.refresh_interval_ms, theme: settings.theme }
+      settings: { refresh_interval_ms: settings.refresh_interval_ms, theme: settings.theme }, decision_engine: decisionEngine
     };
   }
 
@@ -120,7 +120,7 @@ export class ControlApi {
     const settings = await this.settingsStore.load();
     const capabilities = query.getAll('capability').filter(Boolean);
     return this.services.routingPolicy.explain({
-      task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities,
+      objective: (query.get('objective') || '').slice(0, 2_000), task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities,
       manual_provider: query.get('provider') || null, manual_profile: query.get('profile') || null, manual_model: query.get('model') || null,
       allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered,
       cost_policy: { prefer_local: settings.prefer_local, prefer_subscription: settings.prefer_subscription, allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered }
@@ -152,6 +152,8 @@ export class ControlApi {
     if (pathname === '/api/models') return this.models({ detailed: query.get('detailed') === 'true', force: query.get('refresh') === 'true' });
     if (pathname === '/api/tasks') return this.tasks(query);
     if (pathname === '/api/routing/explain') return this.routing(query);
+    if (pathname === '/api/decision-engines/status') return this.services.routingPolicy.status();
+    if (pathname === '/api/decision-engines/config') return this.services.decisionEngineConfigStore.load();
     if (pathname === '/api/locks') return this.locks();
     if (pathname === '/api/audit') return (await this.services.auditLog.list(queryFilters(query))).slice(-500).reverse();
     if (pathname === '/api/doctor') return this.doctor();
@@ -180,6 +182,11 @@ export class ControlApi {
     }
     if (pathname === '/api/projects/register') return this.services.projectRegistry.register(cleanText(body?.path, 'Project path'), { displayName: body?.display_name ? cleanText(body.display_name, 'Display name', 120) : undefined });
     if (pathname === '/api/settings') return this.settingsStore.update(body ?? {});
+    if (pathname === '/api/decision-engines/config') {
+      const saved = await this.services.decisionEngineConfigStore.update(body ?? {});
+      await this.services.auditLog.record('decision_engine_config_changed', { enabled: saved.enabled, routing_mode: saved.mode, transport: saved.transport, fallback_enabled: saved.fallback_enabled, usage_categories: saved.usage_categories, budgets: saved.budgets });
+      return saved;
+    }
     const memoryMatch = pathname.match(/^\/api\/projects\/([^/]+)\/memory\/initialize$/);
     if (memoryMatch) { const projectId = decodeURIComponent(memoryMatch[1]); return this.services.memoryManager.initialize(await this.services.projectRegistry.get(requiredId(projectId, 'Project ID'))); }
     const providerMatch = pathname.match(/^\/api\/providers\/([^/]+)\/(enable|disable)$/);

@@ -5,6 +5,7 @@ The AI Router dashboard is a dependency-free web interface for operating the exi
 ## Pages
 
 - **Overview** summarizes project, provider, task, continuity, audit, and last-routing state.
+- **Decision Engines** shows Jev as an optional classifier, including mode, health, confidence, latency, fallback, honest usage/cost availability, and the unavailable real-connection placeholder. It is deliberately separate from execution providers.
 - **Projects** shows workspace availability, observed Git state, memory readiness, and active tasks. Registration and configured-root scanning are explicit actions.
 - **Providers** reports adapter registration and live health. Enable/disable is persisted as non-secret control state.
 - **Profiles / Accounts** reports profile metadata and cost categories. OpenAI and Gemini cards are clearly marked unimplemented placeholders; they do not imitate authentication.
@@ -24,6 +25,8 @@ The interface has a permanent desktop sidebar, responsive single-column layouts,
 Live status uses three lightweight polling tiers: active task and lock state every 4 seconds, health/provider state every 10–60 seconds (10 seconds with the default setting), and audit/static observations every 45 seconds when their page is visible. Provider health is cached briefly to avoid duplicate polling, and model discovery remains on demand with a 30-second service cache.
 
 Polling never reloads the document or re-renders the current page. It patches only named metrics, status badges, timestamps, and visible data rows whose values changed. Current route, scroll, filters, tabs, drawers, modals, selections, and unsent form values therefore remain intact. If a background request fails, the last successful data stays visible and the top bar reports that it may be stale.
+
+Settings includes a Decision Engine section for instant mode and Jev on/off changes, fallback preference, confidence bounds, timeout, usage categories, and estimated daily/monthly budgets. No restart is required. The Connect Jev button is an explicit placeholder and never requests credentials.
 
 ## Boundaries
 

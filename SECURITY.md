@@ -1,6 +1,6 @@
 # Security Model
 
-AI Router 0.5.0 is a pre-release local execution platform. It is not a general-purpose sandbox and must not be treated as production-ready.
+AI Router 0.6.0-pre.0 is a pre-release local execution platform. It is not a general-purpose sandbox and must not be treated as production-ready.
 
 ## Trust boundaries
 
@@ -10,6 +10,7 @@ AI Router 0.5.0 is a pre-release local execution platform. It is not a general-p
 - Runtime memory, profiles, attempts, backups, locks, and audit events live outside the source repository.
 - Durable descriptors and execution plans are strictly validated; recovery journals are append-only and hash-chained.
 - Secrets, credentials, tokens, API keys, private prompts, and full private conversations do not belong in shared memory or audit data. Secret-shaped fields are rejected.
+- Optional decision engines are untrusted classifiers. They receive bounded, minimized routing state and cannot bypass provider availability, capabilities, cost controls, manual overrides, action approval, or project constraints. Jev is off by default and its current transport is mock-only.
 
 ## Filesystem protections
 
@@ -41,5 +42,6 @@ Project leases prevent two orchestrators from editing or resuming one project co
 - Junction/reparse behavior varies by platform and filesystem; regression tests cover the host capabilities available during testing.
 - Provider content can still be misleading even when schema-valid. Human review remains appropriate for consequential work.
 - Cloud authentication, paid APIs, remote execution, and destructive rollback are intentionally absent.
+- Real TypeSafe/Jev connectivity is intentionally absent. Future credentials must stay in a backend secret store and must never be entered in the dashboard.
 
 Report vulnerabilities privately to the maintainers. Do not include credentials, private prompts, or user project contents in reports.

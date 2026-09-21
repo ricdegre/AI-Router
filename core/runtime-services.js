@@ -18,6 +18,12 @@ import { RoutingPolicy } from '../routing/policy.js';
 import { ActionMediator } from '../actions/action-mediator.js';
 import { ValidationEngine } from '../validation/validation-engine.js';
 import { ResilientOrchestrator } from './resilient-orchestrator.js';
+import { DeterministicDecisionEngine } from '../decision-engines/deterministic/deterministic-engine.js';
+import { MockJevDecisionEngine } from '../decision-engines/jev/mock-engine.js';
+import { DecisionEngineConfigStore } from '../decision-engines/core/config-store.js';
+import { DecisionUsageStore } from '../decision-engines/core/usage-store.js';
+import { DecisionStateBuilder } from '../decision-engines/core/state-builder.js';
+import { DecisionRouter } from '../decision-engines/core/decision-router.js';
 
 export function createRuntimeServices(config, options = {}) {
   const dataRoot = config.dataRoot;
@@ -34,12 +40,21 @@ export function createRuntimeServices(config, options = {}) {
   const projectCoordinator = new ProjectCoordinator(dataRoot);
   const attemptStore = new AttemptStore(dataRoot);
   const executionPlanStore = new ExecutionPlanStore(dataRoot);
-  const routingPolicy = new RoutingPolicy({ circuitBreaker });
+  const deterministicRoutingPolicy = new RoutingPolicy({ circuitBreaker });
+  const auditLog = new AuditLog(dataRoot);
+  const decisionEngineConfigStore = new DecisionEngineConfigStore(dataRoot);
+  const decisionUsageStore = new DecisionUsageStore(dataRoot);
+  const jevEngine = options.jevEngine ?? new MockJevDecisionEngine(options.jevMockOptions);
+  const routingPolicy = new DecisionRouter({
+    deterministicEngine: new DeterministicDecisionEngine(deterministicRoutingPolicy), jevEngine,
+    configStore: decisionEngineConfigStore, usageStore: decisionUsageStore,
+    stateBuilder: new DecisionStateBuilder(), auditLog
+  });
   const dependencies = {
     projectRegistry, profileRegistry, providerRegistry, memoryManager, descriptorStore,
     taskStore, attemptStore, executionPlanStore, recoveryJournal,
-    auditLog: new AuditLog(dataRoot), projectCoordinator, contextBuilder: new ContextBuilder(memoryManager),
-    circuitBreaker, routingPolicy,
+    auditLog, projectCoordinator, contextBuilder: new ContextBuilder(memoryManager),
+    circuitBreaker, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, jevEngine,
     actionMediatorFactory: ({ project, task }) => new ActionMediator({
       workspaceRoot: project.workspacePath, backupRoot: path.join(dataRoot, 'backups', project.projectId),
       maxFileBytes: task.execution_limits?.max_file_bytes, actionPolicy: task.action_policy, filesystemScope: task.filesystem_scope,

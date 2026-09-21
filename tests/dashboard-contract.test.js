@@ -38,3 +38,10 @@ test('polling uses bounded tiers and retains stale data on failure', async () =>
   assert.match(app, /Using last known state/);
   assert.match(app, /document\.querySelector\('#refresh-button'\)\.addEventListener\('click',\(\)=>refreshCurrent\('manual'\)\)/);
 });
+
+test('dashboard exposes optional Jev controls, status, and auditable route evidence', async () => {
+  const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
+  for (const text of ['Decision Engines', 'Jev Decision Engine', 'Deterministic Only', 'Jev Assisted', 'Hybrid', 'Confidence threshold', 'Initial routing', 'Retry / escalation', 'Action risk', 'Handoff quality', 'Context relevance', 'Real Jev connection not enabled yet.', 'Hard rules', 'Jev classification', 'Deterministic policy']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(app, /\/api\/decision-engines\/config/);
+  assert.match(app, /connect-jev/);
+});

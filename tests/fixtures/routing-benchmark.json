@@ -1,0 +1,18 @@
+[
+  { "id": "trivial-css", "objective": "Fix one CSS spacing rule", "risk": "low", "capabilities": ["coding"] },
+  { "id": "documentation", "objective": "Update operator documentation", "risk": "low", "capabilities": ["chat"] },
+  { "id": "file-rename", "objective": "Rename one local file", "risk": "low", "capabilities": ["filesystem"] },
+  { "id": "component", "objective": "Create a UI component", "risk": "medium", "capabilities": ["coding"] },
+  { "id": "backend-bug", "objective": "Diagnose a backend bug", "risk": "medium", "capabilities": ["coding"] },
+  { "id": "database-migration", "objective": "Design a database migration", "risk": "high", "capabilities": ["coding"] },
+  { "id": "authentication", "objective": "Change authentication policy", "risk": "high", "capabilities": ["coding"] },
+  { "id": "production-incident", "objective": "Analyze a production incident", "risk": "critical", "capabilities": ["chat"] },
+  { "id": "security", "objective": "Review a security-sensitive change", "risk": "critical", "capabilities": ["coding"] },
+  { "id": "long-context", "objective": "Analyze a large architecture", "risk": "medium", "capabilities": ["chat"] },
+  { "id": "web-research", "objective": "Research current web information", "risk": "low", "capabilities": ["web"] },
+  { "id": "image", "objective": "Inspect an image asset", "risk": "low", "capabilities": ["vision"] },
+  { "id": "local-only", "objective": "Keep all work local", "risk": "low", "capabilities": ["local"] },
+  { "id": "subscription-exhausted", "objective": "Route when subscription is exhausted", "risk": "medium", "capabilities": ["coding"] },
+  { "id": "local-offline", "objective": "Route while local capacity is offline", "risk": "medium", "capabilities": ["coding"] },
+  { "id": "cloud-unavailable", "objective": "Route while cloud capacity is unavailable", "risk": "high", "capabilities": ["coding"] }
+]

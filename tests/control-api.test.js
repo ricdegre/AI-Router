@@ -74,6 +74,20 @@ test('provider state and safe settings persist without secrets', async (t) => {
   await assert.rejects(() => api.handlePost('/api/settings', { api_token: 'forbidden' }), { code: 'INVALID_CONTROL_SETTING' });
 });
 
+test('decision engine can be toggled at runtime without credentials or restart', async (t) => {
+  const { api } = await fixture(t);
+  const initial = await api.handleGet('/api/decision-engines/status', new URLSearchParams());
+  assert.equal(initial.enabled, false); assert.equal(initial.mode, 'deterministic_only'); assert.equal(initial.health.status, 'DISABLED');
+  const saved = await api.handlePost('/api/decision-engines/config', { mode: 'hybrid', enabled: true });
+  assert.equal(saved.enabled, true); assert.equal(saved.mode, 'hybrid');
+  const route = await api.handleGet('/api/routing/explain', new URLSearchParams('objective=small+fix&risk=low&capability=coding'));
+  assert.equal(route.decision_engine.decision_source, 'hybrid');
+  await api.handlePost('/api/decision-engines/config', { enabled: false });
+  const off = await api.handleGet('/api/routing/explain', new URLSearchParams('risk=low&capability=coding'));
+  assert.equal(off.decision_engine.decision_source, 'deterministic'); assert.equal(off.decision_engine.jev_called, false);
+  await assert.rejects(() => api.handlePost('/api/decision-engines/config', { api_key: 'forbidden' }), { code: 'INVALID_DECISION_ENGINE_CONFIG' });
+});
+
 test('routing explanation includes accepted and rejected evidence', async (t) => {
   const { api } = await fixture(t);
   const route = await api.handleGet('/api/routing/explain', new URLSearchParams('risk=low&capability=coding'));

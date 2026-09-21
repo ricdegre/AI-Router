@@ -27,3 +27,5 @@ Lexical path containment is enforced. Future hardening must also define a symlin
 Mock providers used by integration tests can modify only test-created temporary workspaces. A future real coding-agent adapter will require a stronger execution sandbox and explicit allowed-path policy before it may receive filesystem or command-execution capabilities.
 
 Never commit `config/local.json`, the runtime data root, authentication files, environment files, tokens, credentials, logs, account state, or project memory.
+
+Decision-engine state is deliberately compact and excludes private chat transcripts, secrets, full source files, full prompts, and irrelevant project memory. The hard policy gate runs before optional classification. Audit records contain question identifiers and normalized classification only, never credentials or the complete routing input.

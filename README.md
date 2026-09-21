@@ -19,6 +19,7 @@ This repository currently provides:
 - Provider Protocol 0.1 and a provider/profile registry;
 - a non-invasive Ollama HTTP adapter with model discovery, timeout, and cancellation;
 - model-aware deterministic routing with limits, cost policy, circuit state, and explainable acceptance/rejection;
+- optional Decision Engine Protocol 0.1 with deterministic-only, mocked Jev-assisted, and hybrid modes; hard policy remains authoritative;
 - a structured response protocol that treats model output as untrusted proposals;
 - safe paths, controlled text actions, exact stale-protected changesets, private backups, and independent validation;
 - persistent task states, attempt history, bounded executable escalation, audit events, project leases, and crash recovery;
@@ -28,7 +29,7 @@ This repository currently provides:
 - a local-only operational control panel with explainable routing, continuity inspection, durable task controls, and system diagnostics;
 - an artificial continuity demo and isolated tests.
 
-Real cloud-provider execution, OpenAI/Gemini/Claude account authentication, automatic rollback, and model-driven routing are **not implemented**. Cloud providers are shown only as explicit placeholders. Ollama execution requires an explicit installed model and is never activated implicitly by startup.
+Real cloud-provider execution, OpenAI/Gemini/Claude account authentication, automatic rollback, and real TypeSafe/Jev connectivity are **not implemented**. Cloud providers and real Jev connection are shown only as explicit placeholders. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
 
 ## Conceptual architecture
 
@@ -86,7 +87,7 @@ From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is sel
 
 ## Development status
 
-AI Router 0.5.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [the task descriptor](docs/TASK_EXECUTION_DESCRIPTOR.md), [recovery journal](docs/RECOVERY_JOURNAL.md), [roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.6.0-pre.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## License
 
