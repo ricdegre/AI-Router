@@ -1,12 +1,14 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { withFileLock } from './file-lock.js';
+import { AiRouterError } from './errors.js';
 
 export async function readJson(filePath, fallback = undefined) {
   try {
     return JSON.parse(await readFile(filePath, 'utf8'));
   } catch (error) {
     if (error.code === 'ENOENT' && fallback !== undefined) return fallback;
+    if (error instanceof SyntaxError) throw new AiRouterError('Runtime JSON data is corrupt or incomplete.', 'CORRUPT_JSON_STORE', { file: path.basename(filePath) });
     throw error;
   }
 }

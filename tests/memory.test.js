@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, readdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { ProjectRegistry } from '../core/project-registry.js';
 import { MemoryManager } from '../memory/memory-manager.js';
@@ -26,6 +26,15 @@ test('memory initialization creates the complete external layout and is idempote
   assert.deepEqual(files, ['ai-changelog.md', 'checkpoints.json', 'constraints.md', 'context.md', 'current-task.md', 'decisions.md', 'handoff.md', 'project.json']);
   assert.equal(first.created.length, 8);
   assert.equal(second.created.length, 0);
+});
+
+test('initialization safely repairs a missing memory document without overwriting others', async (t) => {
+  const { project, memory } = await fixture(t);
+  await memory.initialize(project);
+  await unlink(memory.file(project.projectId, 'handoff.md'));
+  const repaired = await memory.initialize(project);
+  assert.deepEqual(repaired.created, ['handoff.md']);
+  assert.equal((await memory.readHandoff(project.projectId)).data.status, 'none');
 });
 
 test('handoff and current task round-trip structured continuity data', async (t) => {

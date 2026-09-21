@@ -84,6 +84,11 @@ export class ResilientOrchestrator {
         remaining_work: [task.objective], constraints: task.constraints ?? [],
         do_not_modify: task.do_not_modify ?? []
       });
+      const taskCheckpoint = await this.checkpoint(project, task, null, 'pre-task');
+      if (task.require_clean_workspace && taskCheckpoint?.dirty) {
+        await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'dirty-workspace' });
+        return { status: 'blocked', reason: 'dirty_workspace', checkpoint: taskCheckpoint };
+      }
       const priorAttempts = await this.attemptStore.list(task.project_id, task.task_id);
       const usedCandidates = new Set(priorAttempts.map((attempt) => candidateKey(attempt)));
       const executedActionIds = new Set(priorAttempts.flatMap((attempt) => attempt.approved_actions ?? []).map((action) => action.action_id));
@@ -155,6 +160,9 @@ export class ResilientOrchestrator {
             } else rejectedActions.push(action);
             await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { approved_actions: approvedActions, rejected_actions: rejectedActions, execution_results: executionResults });
             await this.auditLog?.record(['completed', 'dry-run', 'skipped-duplicate'].includes(result.status) ? 'action_approved' : 'action_rejected', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_id: action.action_id, action_type: action.type, target: action.target ?? null, error_code: result.error?.code ?? null });
+            if (result.status === 'completed' && ['create_file', 'modify_file', 'append_file'].includes(action.type)) {
+              await this.auditLog?.record('file_modified', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_id: action.action_id, action_type: action.type, target: action.target });
+            }
             await options.faultInjector?.('after-action-persisted', { action, result, attempt });
           }
           if (rejectedActions.length) { failureCategory = 'action_rejected'; failureCode = executionResults.find((result) => result.status === 'rejected')?.error?.code; }
@@ -206,12 +214,13 @@ export class ResilientOrchestrator {
           });
           await this.circuitBreaker?.recordSuccess(candidate.provider_id, candidate.profile_id, candidate.model_id);
           await this.profileRegistry.markSuccessful(candidate.profile_id);
+          const finalCheckpoint = await this.checkpoint(project, task, attempt.attempt_number, 'final-validated', validation.results.map((result) => `${result.validation_id}:${result.passed}`));
           await this.handoff(project, task, candidate, attempt, 'completed', {
             completed_work: [structured.summary], remaining_work: structured.remaining_work,
             files_touched: executionResults.filter((result) => result.status === 'completed').map((result) => result.target).filter(Boolean),
             validation_performed: validation.results.map((result) => result.validation_id),
             validation_results: validation.results.map((result) => `${result.validation_id}:${result.passed}`),
-            checkpoint: postCheckpoint, recommended_next_action: structured.handoff_notes[0] ?? 'No remaining work.',
+            checkpoint: finalCheckpoint ?? postCheckpoint, recommended_next_action: structured.handoff_notes[0] ?? 'No remaining work.',
             confidence: structured.uncertainty.length ? 0.7 : 1, uncertainty: structured.uncertainty
           });
           await this.taskStore.transition(task.project_id, task.task_id, 'COMPLETED', { reason: 'router-validation-passed', attempt: attempt.attempt_number });
@@ -221,7 +230,7 @@ export class ResilientOrchestrator {
             remaining_work: structured.remaining_work, constraints: task.constraints ?? [], do_not_modify: task.do_not_modify ?? []
           });
           await this.auditLog?.record('completion', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, status: 'completed' });
-          return { status: 'completed', route, selected: candidate, attempt: attempt.attempt_number, validation, checkpoint: postCheckpoint };
+          return { status: 'completed', route, selected: candidate, attempt: attempt.attempt_number, validation, checkpoint: finalCheckpoint ?? postCheckpoint };
         }
 
         await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {

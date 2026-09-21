@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { temporaryDirectory } from './helpers.js';
 import { TaskStore } from '../core/task-store.js';
@@ -10,6 +10,7 @@ import { ProjectCoordinator } from '../core/project-coordinator.js';
 import { CircuitBreaker } from '../providers/core/circuit-breaker.js';
 import { limitsAllowRouting, normalizeLimitReport } from '../providers/core/limits.js';
 import { evaluateCost } from '../routing/cost-policy.js';
+import { ProjectRegistry } from '../core/project-registry.js';
 
 test('task states and attempt history persist valid lifecycle facts', async (t) => {
   const root = await temporaryDirectory(t);
@@ -66,4 +67,11 @@ test('project leases serialize one project while allowing another project', asyn
   await other.release();
   await first.release();
   assert.equal((await coordinator.inspect('project-01')).locked, false);
+});
+
+test('corrupt runtime JSON fails with a stable recoverable error', async (t) => {
+  const root = await temporaryDirectory(t);
+  await mkdir(path.join(root, 'registry'), { recursive: true });
+  await writeFile(path.join(root, 'registry', 'projects.json'), '{truncated');
+  await assert.rejects(() => new ProjectRegistry(root).list(), { code: 'CORRUPT_JSON_STORE' });
 });

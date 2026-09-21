@@ -6,9 +6,14 @@ import { createCheckpointMetadata, inspectGit } from '../../checkpoints/git-chec
 import { AiRouterError } from '../../core/errors.js';
 import { ProfileRegistry } from '../../core/profile-registry.js';
 import { TaskStore } from '../../core/task-store.js';
+import { AttemptStore } from '../../core/attempt-store.js';
+import { AuditLog } from '../../core/audit-log.js';
+import { ProjectCoordinator } from '../../core/project-coordinator.js';
+import { runDoctor } from '../../core/doctor.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 import { OllamaProvider } from '../../providers/ollama/ollama-provider.js';
 import { RoutingPolicy } from '../../routing/policy.js';
+import { readFile } from 'node:fs/promises';
 
 function print(value) {
   process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}\n`);
@@ -42,11 +47,19 @@ Usage:
   ai-router checkpoint status <project-id>
   ai-router providers list
   ai-router providers status
+  ai-router providers health
   ai-router provider show <provider-id>
   ai-router profiles list [--provider <provider-id>]
   ai-router profiles add-local <provider-id> <profile-id> [--name <display-name>]
   ai-router route explain [--capability <name>] [--risk <level>] [--manual-provider <id>] [--manual-profile <id>]
-  ai-router task status <project-id> <task-id>
+  ai-router task show <project-id> <task-id>
+  ai-router task attempts <project-id> <task-id>
+  ai-router task resume <project-id> <task-id>
+  ai-router task cancel <project-id> <task-id>
+  ai-router project locks <project-id>
+  ai-router audit show [--project <id>] [--task <id>] [--type <event>]
+  ai-router memory validate <project-id>
+  ai-router doctor
 
 Configuration:
   AI_ROUTER_DATA overrides config/local.json dataRoot.
@@ -58,6 +71,7 @@ async function run() {
   if (!args.length || args[0] === 'help' || args.includes('--help')) return help();
 
   const config = await validateConfig(await loadConfig());
+  const packageMetadata = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
   const registry = new ProjectRegistry(config.dataRoot);
   const memory = new MemoryManager(config.dataRoot);
   const profileRegistry = new ProfileRegistry(config.dataRoot);
@@ -65,6 +79,9 @@ async function run() {
   providerRegistry.register(new OllamaProvider());
   const routingPolicy = new RoutingPolicy();
   const taskStore = new TaskStore(config.dataRoot);
+  const attemptStore = new AttemptStore(config.dataRoot);
+  const auditLog = new AuditLog(config.dataRoot);
+  const projectCoordinator = new ProjectCoordinator(config.dataRoot);
   const [group, action, target] = args;
 
   if (group === 'status') {
@@ -72,7 +89,8 @@ async function run() {
     const profiles = await profileRegistry.list();
     return print({
       status: 'ready',
-      platform_stage: 'provider-ready-continuity',
+      version: packageMetadata.version,
+      platform_stage: 'safe-local-execution-resilient-orchestration',
       memory_protocol: '0.1',
       provider_protocol: '0.1',
       configuration: publicConfigSummary(config),
@@ -147,7 +165,7 @@ async function run() {
     return print(providerRegistry.list());
   }
 
-  if (group === 'providers' && action === 'status') {
+  if (group === 'providers' && ['status', 'health'].includes(action)) {
     return print(await providerRegistry.status());
   }
 
@@ -195,10 +213,47 @@ async function run() {
     return print(explanation);
   }
 
-  if (group === 'task' && action === 'status') {
+  if (group === 'task' && ['status', 'show'].includes(action)) {
     const taskId = args[3];
     if (!target || !taskId) throw new AiRouterError('Project ID and task ID are required.', 'MISSING_ARGUMENT');
     return print(await taskStore.get(target, taskId));
+  }
+
+  if (group === 'task' && action === 'attempts') {
+    const taskId = args[3];
+    if (!target || !taskId) throw new AiRouterError('Project ID and task ID are required.', 'MISSING_ARGUMENT');
+    return print(await attemptStore.list(target, taskId));
+  }
+
+  if (group === 'task' && action === 'cancel') {
+    const taskId = args[3];
+    if (!target || !taskId) throw new AiRouterError('Project ID and task ID are required.', 'MISSING_ARGUMENT');
+    const record = await taskStore.cancel(target, taskId);
+    await auditLog.record('task_cancelled', { project_id: target, task_id: taskId });
+    return print(record);
+  }
+
+  if (group === 'task' && action === 'resume') {
+    throw new AiRouterError('CLI resume requires a persisted executable task descriptor and is intentionally unavailable in this milestone.', 'SAFE_RESUME_UNAVAILABLE');
+  }
+
+  if (group === 'project' && action === 'locks') {
+    if (!target) throw new AiRouterError('A project ID is required.', 'MISSING_ARGUMENT');
+    return print(await projectCoordinator.inspect(target));
+  }
+
+  if (group === 'audit' && action === 'show') {
+    return print(await auditLog.list({ project_id: option(args, '--project'), task_id: option(args, '--task'), type: option(args, '--type') }));
+  }
+
+  if (group === 'memory' && action === 'validate') {
+    if (!target) throw new AiRouterError('A project ID is required.', 'MISSING_ARGUMENT');
+    const summary = await memory.summary(target);
+    return print({ valid: true, project_id: target, memory_schema_version: summary.memory_schema_version, compatibility: summary.project.compatibility });
+  }
+
+  if (group === 'doctor') {
+    return print(await runDoctor({ config, projectRegistry: registry, profileRegistry, providerRegistry, memoryManager: memory, version: packageMetadata.version }));
   }
 
   throw new AiRouterError('Unknown command. Run ai-router help.', 'UNKNOWN_COMMAND');

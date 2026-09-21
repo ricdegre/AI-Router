@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { temporaryDirectory } from './helpers.js';
+import { createGitRepository, temporaryDirectory } from './helpers.js';
 import { ProjectRegistry } from '../core/project-registry.js';
 import { ProfileRegistry } from '../core/profile-registry.js';
 import { TaskStore } from '../core/task-store.js';
@@ -123,4 +123,34 @@ test('partial success creates a durable ready-for-handoff state', async (t) => {
   const handoff = (await setup.dependencies.memoryManager.readHandoff(setup.project.projectId)).data;
   assert.equal(handoff.status, 'ready-for-handoff');
   assert.deepEqual(handoff.remaining_work, ['Run second stage']);
+});
+
+test('rejected stale actions and independent validation failures leave tasks recoverable', async (t) => {
+  const staleAction = { action_id: 'stale-edit', type: 'modify_file', target: 'status.txt', parameters: { patch: {
+    kind: 'exact_replace', expected_sha256: '0'.repeat(64), search: 'PENDING', replacement: 'DONE'
+  } } };
+  const stale = await fixture(t, [{ provider: 'mock-a', profile: 'profile-a', execute: async () => ({ structured: response('ok', 'Claimed stale change.', [staleAction]) }) }]);
+  await writeFile(path.join(stale.workspace, 'status.txt'), 'STATUS=PENDING\n');
+  const staleTask = { project_id: stale.project.projectId, task_id: 'failure-01', objective: 'Reject stale change', preferred_profiles: ['profile-a'] };
+  const staleResult = await stale.orchestrator.run(staleTask, { maxAttempts: 1 });
+  assert.equal(staleResult.status, 'blocked');
+  assert.equal((await stale.dependencies.attemptStore.list(stale.project.projectId, staleTask.task_id))[0].failure_category, 'action_rejected');
+  assert.equal(await readFile(path.join(stale.workspace, 'status.txt'), 'utf8'), 'STATUS=PENDING\n');
+
+  const invalid = await fixture(t, [{ provider: 'mock-b', profile: 'profile-b', execute: async () => ({ structured: response('ok', 'Model claimed completion.') }) }]);
+  await writeFile(path.join(invalid.workspace, 'status.txt'), 'STATUS=PENDING\n');
+  const invalidTask = { project_id: invalid.project.projectId, task_id: 'failure-02', objective: 'Validation must overrule claim', preferred_profiles: ['profile-b'], validation_requirements: [{ validation_id: 'must-be-done', type: 'exact_content', target: 'status.txt', expected: 'STATUS=DONE\n' }] };
+  assert.equal((await invalid.orchestrator.run(invalidTask, { maxAttempts: 1 })).status, 'blocked');
+  assert.equal((await invalid.dependencies.attemptStore.list(invalid.project.projectId, invalidTask.task_id))[0].failure_category, 'validation_failure');
+});
+
+test('dirty Git workspace policy blocks before provider execution', async (t) => {
+  let calls = 0;
+  const setup = await fixture(t, [{ provider: 'mock-a', profile: 'profile-a', execute: async () => { calls += 1; return { structured: response('ok', 'Should not run.') }; } }]);
+  await createGitRepository(setup.workspace);
+  await writeFile(path.join(setup.workspace, 'dirty.txt'), 'uncommitted\n');
+  const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'dirty-01', objective: 'Require clean Git', preferred_profiles: ['profile-a'], require_clean_workspace: true });
+  assert.equal(result.reason, 'dirty_workspace');
+  assert.equal(calls, 0);
+  assert.equal((await setup.dependencies.taskStore.get(setup.project.projectId, 'dirty-01')).state, 'BLOCKED');
 });
