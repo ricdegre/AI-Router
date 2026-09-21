@@ -17,3 +17,24 @@ test('dashboard visual system includes responsive, accessible light and dark mod
   assert.match(html, /skip-link/); assert.match(html, /aria-label="Primary navigation"/);
   assert.match(css, /data-theme="dark"/); assert.match(css, /prefers-color-scheme/); assert.match(css, /@media\(max-width:760px\)/);
 });
+
+test('automatic refresh is incremental and never reloads or re-renders the page', async () => {
+  const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /(?:window\.)?location\.reload\s*\(/);
+  assert.doesNotMatch(app, /setInterval\s*\([^\n]*\brender\s*\(/);
+  assert.match(app, /setInterval\(\(\)=>refreshCurrent\('tasks'\),POLL_INTERVALS\.tasks\)/);
+  assert.match(app, /setInterval\(\(\)=>refreshCurrent\('health'\),Math\.min\(60_000,Math\.max\(10_000,healthInterval\)\)\)/);
+  assert.match(app, /setInterval\(\(\)=>refreshCurrent\('static'\),POLL_INTERVALS\.static\)/);
+  const incremental = app.slice(app.indexOf('async function refreshCurrent'), app.indexOf('const renderers='));
+  assert.doesNotMatch(incremental, /workspace\.innerHTML|\brender\s*\(/);
+});
+
+test('polling uses bounded tiers and retains stale data on failure', async () => {
+  const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
+  assert.match(app, /tasks:\s*4_000/);
+  assert.match(app, /health:\s*12_000/);
+  assert.match(app, /static:\s*45_000/);
+  assert.match(app, /catch\{markStale\(\);\}/);
+  assert.match(app, /Using last known state/);
+  assert.match(app, /document\.querySelector\('#refresh-button'\)\.addEventListener\('click',\(\)=>refreshCurrent\('manual'\)\)/);
+});

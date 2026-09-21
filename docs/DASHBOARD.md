@@ -21,7 +21,9 @@ The AI Router dashboard is a dependency-free web interface for operating the exi
 
 The interface has a permanent desktop sidebar, responsive single-column layouts, keyboard-focusable controls, a skip link, semantic text badges, light/dark/system themes, and explicit loading, empty, offline, degraded, and error states. It uses only local HTML, CSS, JavaScript, and system fonts, so no CDN or Internet access is needed.
 
-The refresh interval defaults to 10 seconds. Provider health is cached briefly to avoid duplicate polling, and model discovery is cached for 30 seconds unless the operator requests a refresh.
+Live status uses three lightweight polling tiers: active task and lock state every 4 seconds, health/provider state every 10–60 seconds (10 seconds with the default setting), and audit/static observations every 45 seconds when their page is visible. Provider health is cached briefly to avoid duplicate polling, and model discovery remains on demand with a 30-second service cache.
+
+Polling never reloads the document or re-renders the current page. It patches only named metrics, status badges, timestamps, and visible data rows whose values changed. Current route, scroll, filters, tabs, drawers, modals, selections, and unsent form values therefore remain intact. If a background request fails, the last successful data stays visible and the top bar reports that it may be stale.
 
 ## Boundaries
 
