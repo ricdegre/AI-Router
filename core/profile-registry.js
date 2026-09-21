@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { resolveWithin } from './paths.js';
-import { readJson, writeJsonAtomic } from './json-store.js';
+import { readJson, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
 
 export const PROFILE_SCHEMA_VERSION = '0.1';
@@ -70,39 +70,49 @@ export class ProfileRegistry {
 
   async register(profileInput) {
     const profile = validateProfile(profileInput);
-    const state = await this.load();
-    const existing = state.profiles.find((item) => item.profile_id === profile.profile_id);
-    if (existing) {
-      if (existing.provider_id !== profile.provider_id) throw new AiRouterError('A profile ID cannot move between providers.', 'PROFILE_PROVIDER_MISMATCH');
-      Object.assign(existing, profile, { updated_at: new Date().toISOString() });
-      await writeJsonAtomic(this.filePath, state);
-      return { profile: existing, created: false };
-    }
-    profile.created_at = new Date().toISOString();
-    state.profiles.push(profile);
-    await writeJsonAtomic(this.filePath, state);
-    return { profile, created: true };
+    let outcome;
+    await updateJsonAtomic(this.filePath, { version: PROFILE_SCHEMA_VERSION, profiles: [] }, (state) => {
+      state.profiles ??= [];
+      const existing = state.profiles.find((item) => item.profile_id === profile.profile_id);
+      if (existing) {
+        if (existing.provider_id !== profile.provider_id) throw new AiRouterError('A profile ID cannot move between providers.', 'PROFILE_PROVIDER_MISMATCH');
+        Object.assign(existing, profile, { updated_at: new Date().toISOString() });
+        outcome = { profile: existing, created: false };
+      } else {
+        profile.created_at = new Date().toISOString();
+        state.profiles.push(profile);
+        outcome = { profile, created: true };
+      }
+      return state;
+    });
+    return outcome;
   }
 
   async setEnabled(profileId, enabled) {
-    const state = await this.load();
-    const profile = state.profiles.find((item) => item.profile_id === profileId);
-    if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
-    profile.enabled = Boolean(enabled);
-    profile.status = enabled ? 'unknown' : 'disabled';
-    profile.updated_at = new Date().toISOString();
-    await writeJsonAtomic(this.filePath, state);
-    return profile;
+    let outcome;
+    await updateJsonAtomic(this.filePath, { version: PROFILE_SCHEMA_VERSION, profiles: [] }, (state) => {
+      const profile = state.profiles.find((item) => item.profile_id === profileId);
+      if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
+      profile.enabled = Boolean(enabled);
+      profile.status = enabled ? 'unknown' : 'disabled';
+      profile.updated_at = new Date().toISOString();
+      outcome = profile;
+      return state;
+    });
+    return outcome;
   }
 
   async markSuccessful(profileId, at = new Date().toISOString()) {
-    const state = await this.load();
-    const profile = state.profiles.find((item) => item.profile_id === profileId);
-    if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
-    profile.last_successful_use = at;
-    profile.status = 'available';
-    profile.updated_at = at;
-    await writeJsonAtomic(this.filePath, state);
-    return profile;
+    let outcome;
+    await updateJsonAtomic(this.filePath, { version: PROFILE_SCHEMA_VERSION, profiles: [] }, (state) => {
+      const profile = state.profiles.find((item) => item.profile_id === profileId);
+      if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
+      profile.last_successful_use = at;
+      profile.status = 'available';
+      profile.updated_at = at;
+      outcome = profile;
+      return state;
+    });
+    return outcome;
   }
 }

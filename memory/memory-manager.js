@@ -1,8 +1,8 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { assertSafeProjectId, resolveWithin } from '../core/paths.js';
-import { readJson, writeJsonAtomic } from '../core/json-store.js';
-import { AiRouterError } from '../core/errors.js';
+import { readJson, updateJsonAtomic } from '../core/json-store.js';
+import { withFileLock } from '../core/file-lock.js';
 import { parseStructuredDocument, renderCurrentTask, renderHandoff } from './documents.js';
 import { MEMORY_SCHEMA_VERSION, normalizeCurrentTask, normalizeHandoff, normalizeProjectMetadata, rejectSensitiveFields } from './protocol.js';
 
@@ -63,7 +63,8 @@ export class MemoryManager {
 
   async updateCurrentTask(projectId, task) {
     const normalized = normalizeCurrentTask(projectId, task);
-    await writeFile(this.file(projectId, 'current-task.md'), renderCurrentTask(normalized), { encoding: 'utf8', mode: 0o600 });
+    const filePath = this.file(projectId, 'current-task.md');
+    await withFileLock(filePath, () => writeFile(filePath, renderCurrentTask(normalized), { encoding: 'utf8', mode: 0o600 }));
     return normalized;
   }
 
@@ -75,7 +76,8 @@ export class MemoryManager {
 
   async createHandoff(projectId, handoff) {
     const normalized = normalizeHandoff(projectId, handoff);
-    await writeFile(this.file(projectId, 'handoff.md'), renderHandoff(normalized), { encoding: 'utf8', mode: 0o600 });
+    const filePath = this.file(projectId, 'handoff.md');
+    await withFileLock(filePath, () => writeFile(filePath, renderHandoff(normalized), { encoding: 'utf8', mode: 0o600 }));
     return normalized;
   }
 
@@ -91,17 +93,21 @@ export class MemoryManager {
     const agent = entry.agent ? ` · ${entry.agent}` : '';
     const provider = entry.provider ? ` (${entry.provider})` : '';
     const line = `\n## ${timestamp}${agent}${provider}\n\n${entry.summary}\n`;
-    await appendFile(this.file(projectId, 'ai-changelog.md'), line, { encoding: 'utf8' });
+    const filePath = this.file(projectId, 'ai-changelog.md');
+    await withFileLock(filePath, () => appendFile(filePath, line, { encoding: 'utf8' }));
     return { ...entry, at: timestamp };
   }
 
   async addCheckpoint(projectId, checkpoint) {
     rejectSensitiveFields(checkpoint);
     const filePath = this.file(projectId, 'checkpoints.json');
-    const checkpoints = await readJson(filePath, []);
-    checkpoints.push({ memory_schema_version: MEMORY_SCHEMA_VERSION, document_type: 'checkpoint', ...checkpoint });
-    await writeJsonAtomic(filePath, checkpoints);
-    return checkpoints.at(-1);
+    let outcome;
+    await updateJsonAtomic(filePath, [], (checkpoints) => {
+      outcome = { memory_schema_version: MEMORY_SCHEMA_VERSION, document_type: 'checkpoint', ...checkpoint };
+      checkpoints.push(outcome);
+      return checkpoints;
+    });
+    return outcome;
   }
 
   async summary(projectId) {

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { resolveWithin, assertSafeProjectId } from './paths.js';
-import { readJson, writeJsonAtomic } from './json-store.js';
+import { readJson, writeJsonAtomic, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
 
 function assertTaskId(taskId) {
@@ -38,14 +38,16 @@ export class TaskStore {
   }
 
   async update(projectId, taskId, changes) {
-    const record = await this.get(projectId, taskId);
-    Object.assign(record, changes, { updated_at: new Date().toISOString() });
-    await writeJsonAtomic(this.path(projectId, taskId), record);
-    return record;
+    let outcome;
+    await updateJsonAtomic(this.path(projectId, taskId), undefined, (record) => {
+      Object.assign(record, changes, { updated_at: new Date().toISOString() });
+      outcome = record;
+      return record;
+    });
+    return outcome;
   }
 
   async get(projectId, taskId) {
     return readJson(this.path(projectId, taskId));
   }
 }
-

@@ -3,7 +3,7 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { canonicalPath, resolveWithin } from './paths.js';
-import { readJson, writeJsonAtomic } from './json-store.js';
+import { readJson, writeJsonAtomic, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
 
 const REGISTRY_VERSION = 1;
@@ -49,6 +49,19 @@ export class ProjectRegistry {
     return registry;
   }
 
+  async mutate(mutator) {
+    let outcome;
+    const state = await updateJsonAtomic(this.registryPath, { version: REGISTRY_VERSION, projectRoots: [], projects: [] }, async (registry) => {
+      registry.projectRoots ??= [];
+      registry.projects ??= [];
+      outcome = await mutator(registry);
+      registry.version = REGISTRY_VERSION;
+      registry.updatedAt = now();
+      return registry;
+    });
+    return { state, outcome };
+  }
+
   async list() {
     return (await this.load()).projects;
   }
@@ -62,34 +75,33 @@ export class ProjectRegistry {
       throw new AiRouterError('Project root does not exist.', 'PROJECT_ROOT_NOT_FOUND');
     }
     if (!info.isDirectory()) throw new AiRouterError('Project root is not a directory.', 'INVALID_PROJECT_ROOT');
-    const registry = await this.load();
-    const existing = registry.projectRoots.find((entry) => canonicalPath(entry.path) === canonicalPath(absolute));
-    if (existing) {
-      existing.lastSeenAt = now();
-      existing.status = 'active';
-      await this.save(registry);
-      return { projectRoot: existing, created: false };
-    }
-    const timestamp = now();
-    const projectRootRecord = { path: absolute, createdAt: timestamp, lastSeenAt: timestamp, status: 'active' };
-    registry.projectRoots.push(projectRootRecord);
-    await this.save(registry);
-    return { projectRoot: projectRootRecord, created: true };
+    return (await this.mutate((registry) => {
+      const existing = registry.projectRoots.find((entry) => canonicalPath(entry.path) === canonicalPath(absolute));
+      if (existing) {
+        existing.lastSeenAt = now();
+        existing.status = 'active';
+        return { projectRoot: existing, created: false };
+      }
+      const timestamp = now();
+      const projectRootRecord = { path: absolute, createdAt: timestamp, lastSeenAt: timestamp, status: 'active' };
+      registry.projectRoots.push(projectRootRecord);
+      return { projectRoot: projectRootRecord, created: true };
+    })).outcome;
   }
 
   async listRoots() {
-    const registry = await this.load();
-    for (const root of registry.projectRoots) {
-      try {
-        const info = await stat(root.path);
-        root.status = info.isDirectory() ? 'active' : 'invalid';
-        if (info.isDirectory()) root.lastSeenAt = now();
-      } catch {
-        root.status = 'missing';
+    return (await this.mutate(async (registry) => {
+      for (const root of registry.projectRoots) {
+        try {
+          const info = await stat(root.path);
+          root.status = info.isDirectory() ? 'active' : 'invalid';
+          if (info.isDirectory()) root.lastSeenAt = now();
+        } catch {
+          root.status = 'missing';
+        }
       }
-    }
-    await this.save(registry);
-    return registry.projectRoots;
+      return registry.projectRoots;
+    })).outcome;
   }
 
   async register(workspacePath, options = {}) {
@@ -102,55 +114,43 @@ export class ProjectRegistry {
     }
     if (!info.isDirectory()) throw new AiRouterError('Project workspace is not a directory.', 'INVALID_PROJECT_PATH');
 
-    const registry = await this.load();
     const key = canonicalPath(absolute);
-    const existing = registry.projects.find((entry) => canonicalPath(entry.workspacePath) === key);
-    const timestamp = now();
-    if (existing) {
-      existing.lastSeenAt = timestamp;
-      existing.status = 'active';
-      if (options.displayName) existing.displayName = options.displayName;
-      await this.save(registry);
-      return { project: existing, created: false, moved: false };
-    }
-
     const fingerprint = await projectFingerprint(absolute);
-    const moved = fingerprint
-      ? registry.projects.find((entry) => entry.fingerprint === fingerprint)
-      : undefined;
-    if (moved) {
-      moved.previousPaths ??= [];
-      if (!moved.previousPaths.includes(moved.workspacePath)) moved.previousPaths.push(moved.workspacePath);
-      moved.workspacePath = absolute;
-      moved.lastSeenAt = timestamp;
-      moved.status = 'active';
-      if (options.displayName) moved.displayName = options.displayName;
-      await this.save(registry);
-      return { project: moved, created: false, moved: true };
-    }
+    return (await this.mutate((registry) => {
+      const existing = registry.projects.find((entry) => canonicalPath(entry.workspacePath) === key);
+      const timestamp = now();
+      if (existing) {
+        existing.lastSeenAt = timestamp;
+        existing.status = 'active';
+        if (options.displayName) existing.displayName = options.displayName;
+        return { project: existing, created: false, moved: false };
+      }
 
-    const displayName = options.displayName || path.basename(absolute);
-    const identity = fingerprint || key;
-    const hash = createHash('sha256').update(identity).digest('hex').slice(0, 10);
-    let projectId = `${slug(displayName)}-${hash}`;
-    let suffix = 1;
-    while (registry.projects.some((entry) => entry.projectId === projectId)) {
-      projectId = `${slug(displayName)}-${hash}-${suffix++}`;
-    }
-    const project = {
-      projectId,
-      displayName,
-      workspacePath: absolute,
-      memoryLocation: resolveWithin(this.dataRoot, 'projects', projectId),
-      fingerprint,
-      createdAt: timestamp,
-      lastSeenAt: timestamp,
-      status: 'active',
-      previousPaths: []
-    };
-    registry.projects.push(project);
-    await this.save(registry);
-    return { project, created: true, moved: false };
+      const moved = fingerprint ? registry.projects.find((entry) => entry.fingerprint === fingerprint) : undefined;
+      if (moved) {
+        moved.previousPaths ??= [];
+        if (!moved.previousPaths.includes(moved.workspacePath)) moved.previousPaths.push(moved.workspacePath);
+        moved.workspacePath = absolute;
+        moved.lastSeenAt = timestamp;
+        moved.status = 'active';
+        if (options.displayName) moved.displayName = options.displayName;
+        return { project: moved, created: false, moved: true };
+      }
+
+      const displayName = options.displayName || path.basename(absolute);
+      const identity = fingerprint || key;
+      const hash = createHash('sha256').update(identity).digest('hex').slice(0, 10);
+      let projectId = `${slug(displayName)}-${hash}`;
+      let suffix = 1;
+      while (registry.projects.some((entry) => entry.projectId === projectId)) projectId = `${slug(displayName)}-${hash}-${suffix++}`;
+      const project = {
+        projectId, displayName, workspacePath: absolute,
+        memoryLocation: resolveWithin(this.dataRoot, 'projects', projectId), fingerprint,
+        createdAt: timestamp, lastSeenAt: timestamp, status: 'active', previousPaths: []
+      };
+      registry.projects.push(project);
+      return { project, created: true, moved: false };
+    })).outcome;
   }
 
   async scan(projectRoot) {
@@ -177,18 +177,18 @@ export class ProjectRegistry {
   }
 
   async refreshStatuses() {
-    const registry = await this.load();
-    for (const project of registry.projects) {
-      try {
-        const info = await stat(project.workspacePath);
-        project.status = info.isDirectory() ? 'active' : 'invalid';
-        if (info.isDirectory()) project.lastSeenAt = now();
-      } catch {
-        project.status = 'missing';
+    return (await this.mutate(async (registry) => {
+      for (const project of registry.projects) {
+        try {
+          const info = await stat(project.workspacePath);
+          project.status = info.isDirectory() ? 'active' : 'invalid';
+          if (info.isDirectory()) project.lastSeenAt = now();
+        } catch {
+          project.status = 'missing';
+        }
       }
-    }
-    await this.save(registry);
-    return registry.projects;
+      return registry.projects;
+    })).outcome;
   }
 
   async get(projectId) {
