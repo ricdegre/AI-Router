@@ -11,14 +11,20 @@ if (!model) {
     process.stderr.write('Requested smoke-test model is not installed; no download was attempted.\n');
     process.exitCode = 3;
   } else {
-    const result = await provider.execute({
+    const result = await provider.executeStructured({
       model,
-      prompt: 'Return exactly this JSON and nothing else: {"status":"ok"}',
+      prompt: 'Return one JSON object matching the requested schema. Use status "ok" and summary exactly "ollama-conformance". Use empty arrays for all list fields. Return no Markdown.',
       timeout_ms: 45_000,
       keep_alive: 0,
-      options: { temperature: 0, num_predict: 12 }
+      think: false,
+      options: { temperature: 0, num_predict: 96 }
     });
-    process.stdout.write(`${JSON.stringify({ provider: 'ollama', model: result.model, done: result.done, output: result.output.trim(), metrics: result.metrics }, null, 2)}\n`);
+    if (!result.output.trim() || !result.structured_valid || result.structured.status !== 'ok' || result.structured.summary !== 'ollama-conformance') {
+      throw new Error('Ollama returned a non-conformant semantic response.');
+    }
+    process.stdout.write(`${JSON.stringify({
+      provider: 'ollama', model: result.model, done: result.done, semantic_status: 'passed',
+      structured: result.structured, metrics: result.metrics
+    }, null, 2)}\n`);
   }
 }
-

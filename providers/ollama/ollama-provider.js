@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ProviderAdapter, ProviderError, safeProviderError } from '../core/protocol.js';
+import { createModelDescriptor } from '../core/model-descriptor.js';
+import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
 
 export class OllamaProvider extends ProviderAdapter {
   constructor(options = {}) {
@@ -67,6 +69,64 @@ export class OllamaProvider extends ProviderAdapter {
     }));
   }
 
+  async loadedModels() {
+    const result = await this.request('/api/ps');
+    return result.models ?? [];
+  }
+
+  async inspectModel(modelId, options = {}) {
+    const [details, loaded] = await Promise.all([
+      this.request('/api/show', { method: 'POST', body: { model: modelId, verbose: false } }),
+      this.loadedModels()
+    ]);
+    const capabilities = Array.isArray(details.capabilities) ? details.capabilities : [];
+    const modelInfo = details.model_info ?? {};
+    const contextEntry = Object.entries(modelInfo).find(([key, value]) => /context_length$/i.test(key) && Number.isFinite(value));
+    const parameterSize = details.details?.parameter_size ?? null;
+    let heuristicStrength = null;
+    const parameterMatch = typeof parameterSize === 'string' ? parameterSize.match(/([\d.]+)\s*B/i) : null;
+    if (parameterMatch) {
+      const billions = Number(parameterMatch[1]);
+      heuristicStrength = billions <= 4 ? 'basic' : billions <= 14 ? 'standard' : 'strong';
+    }
+    return createModelDescriptor({
+      providerId: this.descriptor.id,
+      modelId,
+      discovered: {
+        display_name: modelId,
+        family: details.details?.family ?? null,
+        local: true,
+        context_size: contextEntry?.[1] ?? null,
+        tool_support: capabilities.includes('tools') ? true : capabilities.length ? false : null,
+        structured_output_support: capabilities.includes('completion') ? null : null,
+        vision: capabilities.includes('vision') ? true : capabilities.length ? false : null,
+        coding_suitability: null,
+        reasoning_support: capabilities.includes('thinking') ? true : capabilities.length ? false : null,
+        loaded: loaded.some((item) => (item.name ?? item.model) === modelId),
+        parameter_size: parameterSize
+      },
+      overrides: options.overrides ?? {},
+      heuristics: {
+        coding_suitability: /(^|[-_.])(code|coder)([-_.:]|$)/i.test(modelId) ? 'likely' : 'unknown',
+        strength_class: heuristicStrength
+      }
+    });
+  }
+
+  async discoverModels(options = {}) {
+    const models = await this.listModels();
+    if (options.detailed === false) {
+      const loaded = await this.loadedModels();
+      return models.map((model) => createModelDescriptor({
+        providerId: this.descriptor.id,
+        modelId: model.name,
+        discovered: { display_name: model.name, local: true, loaded: loaded.some((item) => (item.name ?? item.model) === model.name) },
+        overrides: options.overrides?.[model.name] ?? {}
+      }));
+    }
+    return Promise.all(models.map((model) => this.inspectModel(model.name, { overrides: options.overrides?.[model.name] ?? {} })));
+  }
+
   async health() {
     try {
       const models = await this.listModels();
@@ -97,6 +157,8 @@ export class OllamaProvider extends ProviderAdapter {
         model: request.model,
         messages,
         stream: false,
+        ...(request.format !== undefined ? { format: request.format } : {}),
+        ...(request.think !== undefined ? { think: request.think } : {}),
         ...(request.keep_alive !== undefined ? { keep_alive: request.keep_alive } : {}),
         ...(request.options ? { options: request.options } : {})
       }
@@ -114,6 +176,16 @@ export class OllamaProvider extends ProviderAdapter {
         eval_count: result.eval_count ?? null
       }
     };
+  }
+
+  async executeStructured(request) {
+    const raw = await this.execute({
+      ...request,
+      think: request.think ?? false,
+      format: request.format ?? STRUCTURED_RESPONSE_JSON_SCHEMA
+    });
+    const parsed = parseStructuredResponse(raw.output, { allowTextFallback: request.allow_text_fallback ?? false, maxBytes: request.max_response_bytes });
+    return { ...raw, structured: parsed.response, structured_valid: parsed.valid };
   }
 
   async cancel(requestId) {

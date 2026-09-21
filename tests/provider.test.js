@@ -69,3 +69,21 @@ test('Ollama HTTP errors do not expose response bodies', async () => {
     }
   }, { code: 'OLLAMA_HTTP_ERROR' });
 });
+
+test('Ollama detailed discovery separates reported data from heuristics', async () => {
+  const provider = new OllamaProvider({ fetch: async (url) => {
+    if (url.pathname === '/api/show') return jsonResponse({
+      capabilities: ['completion', 'tools', 'thinking'],
+      details: { family: 'test-family', parameter_size: '9B' },
+      model_info: { 'test.context_length': 32768 }
+    });
+    if (url.pathname === '/api/ps') return jsonResponse({ models: [{ name: 'test-coder:9b' }] });
+    return jsonResponse({ models: [{ name: 'test-coder:9b' }] });
+  } });
+  const model = await provider.inspectModel('test-coder:9b');
+  assert.equal(model.discovered_facts.context_size, 32768);
+  assert.equal(model.discovered_facts.tool_support, true);
+  assert.equal(model.discovered_facts.loaded, true);
+  assert.equal(model.heuristic_classification.coding_suitability, 'likely');
+  assert.equal(model.heuristic_classification.strength_class, 'standard');
+});
