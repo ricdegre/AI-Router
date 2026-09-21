@@ -3,6 +3,7 @@ import { resolveWithin, assertSafeProjectId } from './paths.js';
 import { readJson, writeJsonAtomic, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
 import { applyTaskTransition } from './task-state-machine.js';
+import { readdir } from 'node:fs/promises';
 
 function assertTaskId(taskId) {
   if (typeof taskId !== 'string' || !/^[a-z0-9][a-z0-9._-]{1,79}$/.test(taskId)) {
@@ -12,8 +13,10 @@ function assertTaskId(taskId) {
 }
 
 export class TaskStore {
-  constructor(dataRoot) {
+  constructor(dataRoot, options = {}) {
     this.dataRoot = path.resolve(dataRoot);
+    this.descriptorStore = options.descriptorStore ?? null;
+    this.recoveryJournal = options.recoveryJournal ?? null;
   }
 
   path(projectId, taskId) {
@@ -64,10 +67,17 @@ export class TaskStore {
 
   async transition(projectId, taskId, to, details = {}) {
     let outcome;
+    await this.recoveryJournal?.record(projectId, taskId, 'transition_intent', { to, reason: details.reason ?? null, attempt: details.attempt ?? null });
     await updateJsonAtomic(this.path(projectId, taskId), undefined, (record) => {
       outcome = applyTaskTransition(record, to, details);
       return outcome;
     });
+    if (this.descriptorStore) await this.descriptorStore.update(projectId, taskId, {
+      current_state: to,
+      ...(['READY', 'ROUTING', 'WAITING_VALIDATION', 'COMPLETED'].includes(to) ? { last_successful_step: details.reason ?? to.toLowerCase() } : {}),
+      ...(['COMPLETED', 'CANCELLED'].includes(to) ? { next_safe_action: null } : details.next_safe_action ? { next_safe_action: details.next_safe_action } : {})
+    });
+    await this.recoveryJournal?.record(projectId, taskId, 'transition_receipt', { from: outcome.state_history.at(-1)?.from ?? null, to, reason: details.reason ?? null, attempt: details.attempt ?? null });
     return outcome;
   }
 
@@ -89,5 +99,21 @@ export class TaskStore {
 
   async get(projectId, taskId) {
     return readJson(this.path(projectId, taskId));
+  }
+
+  async list(projectId = null) {
+    const root = resolveWithin(this.dataRoot, 'tasks');
+    let projectDirectories;
+    try { projectDirectories = projectId ? [{ name: projectId, isDirectory: () => true }] : await readdir(root, { withFileTypes: true }); }
+    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    const records = [];
+    for (const directory of projectDirectories.filter((entry) => entry.isDirectory())) {
+      let files;
+      try { files = await readdir(path.join(root, directory.name)); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      for (const file of files.filter((name) => name.endsWith('.json') && !name.includes('.attempts.') && !name.includes('.descriptor.') && !name.includes('.plan.'))) {
+        records.push(await readJson(path.join(root, directory.name, file)));
+      }
+    }
+    return records;
   }
 }

@@ -61,3 +61,15 @@ test('mediator rejects binary and oversized files', async (t) => {
   assert.equal((await mediator.execute({ action_id: 'large-read', type: 'read_file', target: 'large.txt', parameters: {} })).error.code, 'FILE_TOO_LARGE');
 });
 
+test('mediator enforces descriptor filesystem sub-scopes', async (t) => {
+  const base = await temporaryDirectory(t);
+  const workspace = path.join(base, 'workspace');
+  await mkdir(path.join(workspace, 'allowed'), { recursive: true });
+  await mkdir(path.join(workspace, 'denied'), { recursive: true });
+  await writeFile(path.join(workspace, 'allowed', 'ok.txt'), 'ok');
+  await writeFile(path.join(workspace, 'denied', 'no.txt'), 'no');
+  const mediator = new ActionMediator({ workspaceRoot: workspace, filesystemScope: { allowed_paths: ['allowed'], denied_paths: ['allowed/private'] }, actionPolicy: { allowed: ['read_file'], denied: [] } });
+  assert.equal((await mediator.execute({ action_id: 'read-ok', type: 'read_file', target: 'allowed/ok.txt' })).status, 'completed');
+  assert.equal((await mediator.execute({ action_id: 'read-no', type: 'read_file', target: 'denied/no.txt' })).error.code, 'ACTION_SCOPE_REJECTED');
+  assert.equal((await mediator.execute({ action_id: 'create-no', type: 'create_file', target: 'allowed/new.txt', parameters: { content: 'x' } })).error.code, 'ACTION_POLICY_REJECTED');
+});

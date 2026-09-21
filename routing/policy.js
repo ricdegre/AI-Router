@@ -16,6 +16,7 @@ export function normalizeTaskDescriptor(input) {
   return {
     task_type: 'general', preferred_cost: 'local-first', allow_metered: false,
     preferred_providers: [], preferred_profiles: [], preferred_models: [], recent_failures: [],
+    provider_constraints: {}, model_constraints: {},
     estimated_context_tokens: null, ...input, risk,
     required_capabilities: [...new Set(capabilities)],
     minimum_strength: input.minimum_strength ?? derivedStrength,
@@ -83,6 +84,15 @@ export class RoutingPolicy {
         if (task.manual_provider && task.manual_provider !== provider.id) rejected.push('not-manual-provider');
         if (task.manual_profile && task.manual_profile !== profile.profile_id) rejected.push('not-manual-profile');
         if (task.manual_model && task.manual_model !== modelId) rejected.push('not-manual-model');
+        const providerConstraints = task.provider_constraints ?? {};
+        const modelConstraints = task.model_constraints ?? {};
+        if (providerConstraints.allowed_provider_ids?.length && !providerConstraints.allowed_provider_ids.includes(provider.id)) rejected.push('provider-not-allowed');
+        if (providerConstraints.denied_provider_ids?.includes(provider.id)) rejected.push('provider-denied');
+        if (providerConstraints.allowed_profile_ids?.length && !providerConstraints.allowed_profile_ids.includes(profile.profile_id)) rejected.push('profile-not-allowed');
+        if (providerConstraints.denied_profile_ids?.includes(profile.profile_id)) rejected.push('profile-denied');
+        if (providerConstraints.require_local && !provider.capabilities.includes('local')) rejected.push('local-provider-required');
+        if (modelConstraints.allowed_model_ids?.length && !modelConstraints.allowed_model_ids.includes(modelId)) rejected.push('model-not-allowed');
+        if (modelConstraints.denied_model_ids?.includes(modelId)) rejected.push('model-denied');
 
         const cost = evaluateCost(profile.cost_category, task.cost_policy);
         if (!cost.allowed) rejected.push(cost.reason); else reasons.push(cost.reason, `cost-category-${cost.category}`);
@@ -97,10 +107,13 @@ export class RoutingPolicy {
         if (missing.length) rejected.push(`missing-capabilities:${missing.join(',')}`); else reasons.push('all-required-capabilities-available');
 
         const strength = resolvedModelValue(model, 'strength_class') ?? provider.strength_class;
-        if ((STRENGTH[strength] ?? -1) < (STRENGTH[task.minimum_strength] ?? 0)) rejected.push(`strength-below-${task.minimum_strength}`);
-        else reasons.push(`strength-${strength}-meets-${task.minimum_strength}`);
+        const requiredStrength = modelConstraints.minimum_strength ?? task.minimum_strength;
+        if ((STRENGTH[strength] ?? -1) < (STRENGTH[requiredStrength] ?? 0)) rejected.push(`strength-below-${requiredStrength}`);
+        else reasons.push(`strength-${strength}-meets-${requiredStrength}`);
 
         const contextSize = resolvedModelValue(model, 'context_size');
+        if (modelConstraints.minimum_context_tokens && (!contextSize || contextSize < modelConstraints.minimum_context_tokens)) rejected.push('model-context-below-constraint');
+        if (modelConstraints.require_tool_support && !capabilities.has('tool_use')) rejected.push('model-tool-support-required');
         if (task.estimated_context_tokens && contextSize && task.estimated_context_tokens > contextSize) rejected.push('model-context-too-small');
         else if (task.estimated_context_tokens && contextSize) reasons.push('model-context-sufficient');
         else if (task.estimated_context_tokens) reasons.push('model-context-unknown');
@@ -137,4 +150,3 @@ export class RoutingPolicy {
     return explanation;
   }
 }
-

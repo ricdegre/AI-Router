@@ -14,6 +14,8 @@ import { ProviderRegistry } from '../../providers/core/registry.js';
 import { OllamaProvider } from '../../providers/ollama/ollama-provider.js';
 import { RoutingPolicy } from '../../routing/policy.js';
 import { readFile } from 'node:fs/promises';
+import { createRuntimeServices } from '../../core/runtime-services.js';
+import { runTaskDoctor } from '../../core/task-doctor.js';
 
 function print(value) {
   process.stdout.write(`${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}\n`);
@@ -52,10 +54,13 @@ Usage:
   ai-router profiles list [--provider <provider-id>]
   ai-router profiles add-local <provider-id> <profile-id> [--name <display-name>]
   ai-router route explain [--capability <name>] [--risk <level>] [--manual-provider <id>] [--manual-profile <id>]
-  ai-router task show <project-id> <task-id>
-  ai-router task attempts <project-id> <task-id>
-  ai-router task resume <project-id> <task-id>
-  ai-router task cancel <project-id> <task-id>
+  ai-router task list [--project <project-id>]
+  ai-router task show <task-id> [--project <project-id>]
+  ai-router task attempts <task-id> [--project <project-id>]
+  ai-router task resume <task-id> [--project <project-id>] [--explain]
+  ai-router task cancel <task-id> [--project <project-id>]
+  ai-router task validate <task-id> [--project <project-id>]
+  ai-router task doctor <task-id> [--project <project-id>]
   ai-router project locks <project-id>
   ai-router audit show [--project <id>] [--task <id>] [--type <event>]
   ai-router memory validate <project-id>
@@ -72,17 +77,12 @@ async function run() {
 
   const config = await validateConfig(await loadConfig());
   const packageMetadata = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
-  const registry = new ProjectRegistry(config.dataRoot);
-  const memory = new MemoryManager(config.dataRoot);
-  const profileRegistry = new ProfileRegistry(config.dataRoot);
-  const providerRegistry = new ProviderRegistry({ profileRegistry });
-  providerRegistry.register(new OllamaProvider());
-  const routingPolicy = new RoutingPolicy();
-  const taskStore = new TaskStore(config.dataRoot);
-  const attemptStore = new AttemptStore(config.dataRoot);
-  const auditLog = new AuditLog(config.dataRoot);
-  const projectCoordinator = new ProjectCoordinator(config.dataRoot);
+  const services = createRuntimeServices(config);
+  const registry = services.projectRegistry;
+  const memory = services.memoryManager;
+  const { profileRegistry, providerRegistry, routingPolicy, taskStore, attemptStore, auditLog, projectCoordinator, descriptorStore, executionPlanStore, resumeManager } = services;
   const [group, action, target] = args;
+  const taskTarget = group === 'task' && target === '--explain' ? args[3] : target;
 
   if (group === 'status') {
     const projects = await registry.list();
@@ -214,27 +214,48 @@ async function run() {
   }
 
   if (group === 'task' && ['status', 'show'].includes(action)) {
-    const taskId = args[3];
-    if (!target || !taskId) throw new AiRouterError('Project ID and task ID are required.', 'MISSING_ARGUMENT');
-    return print(await taskStore.get(target, taskId));
+    if (!taskTarget) throw new AiRouterError('A task ID is required.', 'MISSING_ARGUMENT');
+    const descriptor = await descriptorStore.find(taskTarget, option(args, '--project'));
+    return print({ descriptor, state: await taskStore.get(descriptor.project_id, descriptor.task_id), execution_plan: await executionPlanStore.load(descriptor.project_id, descriptor.task_id) });
   }
 
   if (group === 'task' && action === 'attempts') {
-    const taskId = args[3];
-    if (!target || !taskId) throw new AiRouterError('Project ID and task ID are required.', 'MISSING_ARGUMENT');
-    return print(await attemptStore.list(target, taskId));
+    if (!taskTarget) throw new AiRouterError('A task ID is required.', 'MISSING_ARGUMENT');
+    const descriptor = await descriptorStore.find(taskTarget, option(args, '--project'));
+    return print(await attemptStore.list(descriptor.project_id, descriptor.task_id));
   }
 
   if (group === 'task' && action === 'cancel') {
-    const taskId = args[3];
-    if (!target || !taskId) throw new AiRouterError('Project ID and task ID are required.', 'MISSING_ARGUMENT');
-    const record = await taskStore.cancel(target, taskId);
-    await auditLog.record('task_cancelled', { project_id: target, task_id: taskId });
+    if (!taskTarget) throw new AiRouterError('A task ID is required.', 'MISSING_ARGUMENT');
+    const descriptor = await descriptorStore.find(taskTarget, option(args, '--project'));
+    const record = await taskStore.cancel(descriptor.project_id, descriptor.task_id);
+    await auditLog.record('task_cancelled', { project_id: descriptor.project_id, task_id: descriptor.task_id });
     return print(record);
   }
 
   if (group === 'task' && action === 'resume') {
-    throw new AiRouterError('CLI resume requires a persisted executable task descriptor and is intentionally unavailable in this milestone.', 'SAFE_RESUME_UNAVAILABLE');
+    if (!taskTarget) throw new AiRouterError('A task ID is required.', 'MISSING_ARGUMENT');
+    const resumeOptions = { projectId: option(args, '--project') };
+    return print(args.includes('--explain') ? await resumeManager.explain(taskTarget, resumeOptions) : await resumeManager.resume(taskTarget, resumeOptions));
+  }
+
+  if (group === 'task' && action === 'list') {
+    const projectId = option(args, '--project');
+    const descriptors = await descriptorStore.list();
+    return print(projectId ? descriptors.filter((item) => item.project_id === projectId) : descriptors);
+  }
+
+  if (group === 'task' && action === 'validate') {
+    if (!taskTarget) throw new AiRouterError('A task ID is required.', 'MISSING_ARGUMENT');
+    const descriptor = await descriptorStore.find(taskTarget, option(args, '--project'));
+    const project = await registry.get(descriptor.project_id);
+    const validation = await services.validationEngineFactory({ project }).validate(descriptor.validation_requirements);
+    return print({ task_id: descriptor.task_id, project_id: descriptor.project_id, ...validation });
+  }
+
+  if (group === 'task' && action === 'doctor') {
+    if (!taskTarget) throw new AiRouterError('A task ID is required.', 'MISSING_ARGUMENT');
+    return print(await runTaskDoctor(resumeManager, taskTarget, { projectId: option(args, '--project') }));
   }
 
   if (group === 'project' && action === 'locks') {

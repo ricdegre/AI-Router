@@ -29,19 +29,31 @@ async function writeAtomic(filePath, content) {
 }
 
 export class ActionMediator {
-  constructor({ workspaceRoot, backupRoot, maxFileBytes = 1024 * 1024, validationCommands = null }) {
+  constructor({ workspaceRoot, backupRoot, maxFileBytes = 1024 * 1024, validationCommands = null, actionPolicy = null, filesystemScope = null, faultInjector = null }) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.backupRoot = backupRoot ? path.resolve(backupRoot) : null;
     this.maxFileBytes = maxFileBytes;
     this.validationCommands = validationCommands;
+    this.actionPolicy = actionPolicy;
+    this.filesystemScope = filesystemScope;
+    this.faultInjector = faultInjector;
   }
 
   validateAction(action) {
     if (!action || typeof action !== 'object') throw new AiRouterError('Action must be an object.', 'INVALID_ACTION');
     safeActionId(action.action_id);
     if (!ACTION_TYPES.includes(action.type)) throw new AiRouterError(`Action type '${action.type}' is not allowed.`, 'ACTION_TYPE_REJECTED');
+    if (this.actionPolicy?.allowed && !this.actionPolicy.allowed.includes(action.type)) throw new AiRouterError(`Action type '${action.type}' is outside this task policy.`, 'ACTION_POLICY_REJECTED');
+    if (this.actionPolicy?.denied?.includes(action.type)) throw new AiRouterError(`Action type '${action.type}' is denied for this task.`, 'ACTION_POLICY_REJECTED');
     if (action.type !== 'inspect_git_status' && action.type !== 'run_validation_command' && typeof action.target !== 'string') {
       throw new AiRouterError('Action target is required.', 'INVALID_ACTION');
+    }
+    if (action.target && this.filesystemScope) {
+      const relative = path.normalize(action.target).replaceAll('\\', '/').toLowerCase();
+      const contains = (scope) => scope === '.' || relative === scope || relative.startsWith(`${scope}/`);
+      const allowed = (this.filesystemScope.allowed_paths ?? ['.']).map((item) => item.replaceAll('\\', '/').toLowerCase());
+      const denied = (this.filesystemScope.denied_paths ?? []).map((item) => item.replaceAll('\\', '/').toLowerCase());
+      if (!allowed.some(contains) || denied.some(contains)) throw new AiRouterError('Action target is outside the descriptor filesystem scope.', 'ACTION_SCOPE_REJECTED');
     }
     return { action_protocol_version: ACTION_PROTOCOL_VERSION, risk: 'low', parameters: {}, ...action };
   }
@@ -55,19 +67,20 @@ export class ActionMediator {
   }
 
   async execute(input, options = {}) {
-    const action = this.validateAction(input);
-    const dryRun = options.dryRun ?? action.dry_run ?? false;
+    let action;
+    const dryRun = options.dryRun ?? input?.dry_run ?? false;
     const startedAt = new Date().toISOString();
-    const base = {
-      action_id: action.action_id, type: action.type, target: action.target ?? null,
-      risk: action.risk, dry_run: dryRun, started_at: startedAt
-    };
     try {
+      action = this.validateAction(input);
+      const base = { action_id: action.action_id, type: action.type, target: action.target ?? null, risk: action.risk, dry_run: dryRun, started_at: startedAt };
       const result = await this.executeAllowed(action, dryRun);
       return { ...base, status: dryRun ? 'dry-run' : 'completed', result, error: null, completed_at: new Date().toISOString() };
     } catch (error) {
+      if (error.code === 'SIMULATED_CRASH') throw error;
       return {
-        ...base, status: 'rejected', result: null,
+        action_id: action?.action_id ?? input?.action_id ?? null, type: action?.type ?? input?.type ?? null,
+        target: action?.target ?? input?.target ?? null, risk: action?.risk ?? input?.risk ?? null,
+        dry_run: dryRun, started_at: startedAt, status: 'rejected', result: null,
         error: { code: error.code ?? 'ACTION_FAILED', message: error.message },
         completed_at: new Date().toISOString()
       };
@@ -102,8 +115,10 @@ export class ActionMediator {
       if (Buffer.byteLength(content) > this.maxFileBytes) throw new AiRouterError('Content exceeds mediator size limit.', 'FILE_TOO_LARGE');
       if (dryRun) return { would_create: action.target, size: Buffer.byteLength(content), sha256: contentHash(content) };
       if (action.parameters.create_parents) await mkdir(path.dirname(safe.path), { recursive: true });
+      await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
       const handle = await open(safe.path, 'wx', 0o600);
       try { await handle.writeFile(content, 'utf8'); } finally { await handle.close(); }
+      await this.faultInjector?.('during-action-after-write', { action, target: safe.path });
       return { created: action.target, size: Buffer.byteLength(content), sha256: contentHash(content) };
     }
 
@@ -117,7 +132,9 @@ export class ActionMediator {
         if (Buffer.byteLength(patched.content) > this.maxFileBytes) throw new AiRouterError('Patched file exceeds mediator size limit.', 'FILE_TOO_LARGE');
         if (dryRun) return { would_modify: action.target, ...patched, content: undefined };
         const backup = await this.backup(action.action_id, action.target, source);
+        await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
         await writeAtomic(safe.path, patched.content);
+        await this.faultInjector?.('during-action-after-write', { action, target: safe.path });
         return { modified: action.target, summary: patched.summary, before_sha256: patched.before_sha256, after_sha256: patched.after_sha256, backup };
       }
       if (typeof content !== 'string') throw new AiRouterError('Append action requires text content.', 'INVALID_ACTION');
@@ -126,7 +143,9 @@ export class ActionMediator {
       if (Buffer.byteLength(updated) > this.maxFileBytes) throw new AiRouterError('Appended file exceeds mediator size limit.', 'FILE_TOO_LARGE');
       if (dryRun) return { would_append: action.target, before_sha256: contentHash(source), after_sha256: contentHash(updated) };
       const backup = await this.backup(action.action_id, action.target, source);
+      await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
       await writeAtomic(safe.path, updated);
+      await this.faultInjector?.('during-action-after-write', { action, target: safe.path });
       return { appended: action.target, before_sha256: contentHash(source), after_sha256: contentHash(updated), backup };
     });
   }

@@ -1,6 +1,8 @@
 import { inspectGit, createCheckpointMetadata } from '../checkpoints/git-checkpoint.js';
 import { parseStructuredResponse, validateStructuredResponse } from '../providers/core/structured-response.js';
 import { AiRouterError } from './errors.js';
+import { descriptorFromTask } from './task-execution-descriptor.js';
+import { actionExecutionIdentity, receiptHashes } from '../actions/idempotency.js';
 
 function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}`; }
 
@@ -11,7 +13,10 @@ function failureFrom(error) {
 }
 
 export class ResilientOrchestrator {
-  constructor(dependencies) { Object.assign(this, dependencies); }
+  constructor(dependencies) {
+    Object.assign(this, dependencies);
+    if (this.descriptorStore && this.taskStore) this.taskStore.descriptorStore = this.descriptorStore;
+  }
 
   async checkpoint(project, task, attempt, stage, validation = []) {
     const state = inspectGit(project.workspacePath);
@@ -68,6 +73,12 @@ export class ResilientOrchestrator {
     const lease = await this.projectCoordinator.acquire(project.projectId, { timeoutMs: options.lockTimeoutMs });
     try {
       await this.memoryManager.initialize(project);
+      if (!options.resume && this.descriptorStore) {
+        const descriptor = descriptorFromTask({ ...task, max_attempts: options.maxAttempts ?? task.max_attempts }, project);
+        await this.descriptorStore.create(descriptor);
+        await this.executionPlanStore?.create(descriptor);
+        await this.recoveryJournal?.record(task.project_id, task.task_id, 'task_intent', { descriptor_revision: descriptor.descriptor_revision, objective: descriptor.objective });
+      }
       if (options.resume) {
         const interrupted = (await this.attemptStore.list(task.project_id, task.task_id)).filter((attempt) => attempt.status === 'running');
         for (const attempt of interrupted) {
@@ -78,23 +89,26 @@ export class ResilientOrchestrator {
         }
       }
       await this.prepareState(task, options.resume ?? false);
+      await this.executionPlanStore?.advance(task.project_id, task.task_id, 'PREPARE', { resume: options.resume ?? false });
       await this.memoryManager.updateCurrentTask(project.projectId, {
         task_id: task.task_id, objective: task.objective, status: 'in-progress',
         acceptance_criteria: task.acceptance_criteria ?? [], completed_work: [],
         remaining_work: [task.objective], constraints: task.constraints ?? [],
         do_not_modify: task.do_not_modify ?? []
       });
-      const taskCheckpoint = await this.checkpoint(project, task, null, 'pre-task');
+      const taskCheckpoint = task.checkpoint_policy?.pre_task === false ? null : await this.checkpoint(project, task, null, 'pre-task');
       if (task.require_clean_workspace && taskCheckpoint?.dirty) {
         await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'dirty-workspace' });
         return { status: 'blocked', reason: 'dirty_workspace', checkpoint: taskCheckpoint };
       }
       const priorAttempts = await this.attemptStore.list(task.project_id, task.task_id);
-      const usedCandidates = new Set(priorAttempts.map((attempt) => candidateKey(attempt)));
+      const countedAttempts = priorAttempts.filter((attempt) => attempt.resume_disposition !== 'retry-safe');
+      const usedCandidates = new Set(countedAttempts.map((attempt) => candidateKey(attempt)));
       const executedActionIds = new Set(priorAttempts.flatMap((attempt) => attempt.approved_actions ?? []).map((action) => action.action_id));
       const profiles = await this.profileRegistry.list();
+      await this.executionPlanStore?.advance(task.project_id, task.task_id, 'ROUTE');
       const route = await this.routingPolicy.explain({ ...task, recent_failures: priorAttempts.filter((attempt) => attempt.failure_category) }, this.providerRegistry, profiles);
-      const remainingAttempts = Math.max(0, maxAttempts - priorAttempts.length);
+      const remainingAttempts = Math.max(0, maxAttempts - countedAttempts.length);
       const candidates = route.accepted_candidates.filter((candidate) => !usedCandidates.has(candidateKey(candidate))).slice(0, remainingAttempts);
       if (!candidates.length) {
         await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'no-eligible-unused-candidate' });
@@ -108,7 +122,7 @@ export class ResilientOrchestrator {
         if (taskRecord.state === 'CANCELLED' || options.signal?.aborted) return { status: 'cancelled', route, attempts: await this.attemptStore.list(task.project_id, task.task_id) };
         if (taskRecord.state !== 'ROUTING') await this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'next-attempt-routing', attempt: priorAttempts.length + index + 1 });
         await this.taskStore.transition(task.project_id, task.task_id, 'RUNNING', { reason: 'attempt-started', attempt: priorAttempts.length + index + 1 });
-        const preCheckpoint = await this.checkpoint(project, task, priorAttempts.length + index + 1, 'pre-attempt');
+        const preCheckpoint = task.checkpoint_policy?.pre_attempt === false ? null : await this.checkpoint(project, task, priorAttempts.length + index + 1, 'pre-attempt');
         if (task.require_clean_workspace && preCheckpoint?.dirty) {
           await this.taskStore.transition(task.project_id, task.task_id, 'FAILED', { reason: 'dirty-workspace' });
           await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'dirty-workspace' });
@@ -118,16 +132,21 @@ export class ResilientOrchestrator {
           ...candidate, task_version: task.task_version ?? 1, memory_version: '0.1', workspace_checkpoint: preCheckpoint
         });
         await this.auditLog?.record('provider_called', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id });
+        await this.executionPlanStore?.advance(task.project_id, task.task_id, 'PROVIDER', { attempt: attempt.attempt_number });
 
         let structured;
         let providerResult;
         let failureCategory = null;
         let failureCode = null;
         try {
-          const context = await this.contextBuilder.build(project.projectId, task, { providerContextTokens: candidate.context_size });
+          const context = await this.contextBuilder.build(project.projectId, task, { providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
           const provider = this.providerRegistry.get(candidate.provider_id);
-          const request = { task, project, profile: profiles.find((item) => item.profile_id === candidate.profile_id), model: candidate.model_id ?? task.model, context: context.rendered, prompt: task.prompt ?? context.rendered, signal: options.signal };
+          const request = { task, project, profile: profiles.find((item) => item.profile_id === candidate.profile_id), model: candidate.model_id ?? task.model, context: context.rendered, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: task.execution_limits?.provider_timeout_ms };
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id });
+          await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_response', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, response_received: true });
+          await options.faultInjector?.('after-provider-response', { attempt, candidate });
           structured = providerResult.structured ? validateStructuredResponse(providerResult.structured) : parseStructuredResponse(providerResult.output, { allowTextFallback: false }).response;
           if (structured.status === 'failed') throw new AiRouterError('Provider reported failed structured execution.', 'PROVIDER_REPORTED_FAILURE');
         } catch (error) {
@@ -141,17 +160,36 @@ export class ResilientOrchestrator {
         let rejectedActions = [];
         let executionResults = [];
         if (!failureCategory) {
+          await this.executionPlanStore?.advance(task.project_id, task.task_id, 'ACTIONS', { attempt: attempt.attempt_number, proposed: proposedActions.length });
           await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: proposedActions, summary: structured.summary });
           await this.auditLog?.record('actions_proposed', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_ids: proposedActions.map((action) => action.action_id) });
           const mediator = this.actionMediatorFactory?.({ project, task, attempt });
-          for (const action of proposedActions) {
+          const actionLimit = task.execution_limits?.max_actions_per_attempt ?? 20;
+          if (proposedActions.length > actionLimit) {
+            rejectedActions = proposedActions;
+            executionResults = proposedActions.map((action) => ({ action_id: action.action_id ?? null, type: action.type ?? null, target: action.target ?? null, status: 'rejected', result: null, error: { code: 'ACTION_LIMIT_EXCEEDED', message: 'Provider proposed more actions than the descriptor permits.' } }));
+            await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: proposedActions, approved_actions: [], rejected_actions: rejectedActions, execution_results: executionResults });
+          } else for (const action of proposedActions) {
             let result;
+            const executionId = actionExecutionIdentity(task.project_id, task.task_id, action);
             if (executedActionIds.has(action.action_id)) {
-              result = { action_id: action.action_id, type: action.type, target: action.target ?? null, status: 'skipped-duplicate', result: { reason: 'already-completed' }, error: null };
+              result = { action_id: action.action_id, execution_id: executionId, type: action.type, target: action.target ?? null, status: 'skipped-duplicate', result: { reason: 'already-completed' }, error: null };
             } else if (!mediator) {
-              result = { action_id: action.action_id, status: 'rejected', error: { code: 'ACTION_MEDIATOR_UNAVAILABLE', message: 'No action mediator is configured.' } };
+              result = { action_id: action.action_id, execution_id: executionId, status: 'rejected', error: { code: 'ACTION_MEDIATOR_UNAVAILABLE', message: 'No action mediator is configured.' } };
             } else {
+              const preview = await mediator.execute(action, { dryRun: true });
+              const previewHashes = receiptHashes(preview);
+              await this.recoveryJournal?.record(task.project_id, task.task_id, 'action_intent', {
+                attempt_number: attempt.attempt_number, execution_id: executionId, action_id: action.action_id,
+                action_type: action.type, target: action.target ?? null, action,
+                precondition_hash: previewHashes.precondition_hash, postcondition_hash: previewHashes.postcondition_hash
+              });
+              await options.faultInjector?.('before-action', { action, attempt, preview });
               result = await mediator.execute(action, { dryRun: options.dryRun });
+              await options.faultInjector?.('after-action-before-receipt', { action, result, attempt, preview });
+              const hashes = receiptHashes(result);
+              result = { ...result, execution_id: executionId, ...hashes };
+              await this.recoveryJournal?.record(task.project_id, task.task_id, 'action_side_effect', { attempt_number: attempt.attempt_number, execution_id: executionId, action_id: action.action_id, status: result.status, precondition_hash: hashes.precondition_hash, postcondition_hash: hashes.postcondition_hash });
             }
             executionResults.push(result);
             if (['completed', 'dry-run', 'skipped-duplicate'].includes(result.status)) {
@@ -159,6 +197,7 @@ export class ResilientOrchestrator {
               executedActionIds.add(action.action_id);
             } else rejectedActions.push(action);
             await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { approved_actions: approvedActions, rejected_actions: rejectedActions, execution_results: executionResults });
+            await this.recoveryJournal?.record(task.project_id, task.task_id, 'action_receipt', { attempt_number: attempt.attempt_number, execution_id: executionId, action_id: action.action_id, status: result.status, precondition_hash: result.precondition_hash ?? null, postcondition_hash: result.postcondition_hash ?? null });
             await this.auditLog?.record(['completed', 'dry-run', 'skipped-duplicate'].includes(result.status) ? 'action_approved' : 'action_rejected', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_id: action.action_id, action_type: action.type, target: action.target ?? null, error_code: result.error?.code ?? null });
             if (result.status === 'completed' && ['create_file', 'modify_file', 'append_file'].includes(action.type)) {
               await this.auditLog?.record('file_modified', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_id: action.action_id, action_type: action.type, target: action.target });
@@ -171,16 +210,22 @@ export class ResilientOrchestrator {
         let validation = null;
         if (!failureCategory) {
           await this.taskStore.transition(task.project_id, task.task_id, 'WAITING_VALIDATION', { reason: 'actions-finished', attempt: attempt.attempt_number });
+          await this.executionPlanStore?.advance(task.project_id, task.task_id, 'VALIDATE', { attempt: attempt.attempt_number });
           const engine = this.validationEngineFactory?.({ project, task, attempt });
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'validation_intent', { attempt_number: attempt.attempt_number, validation_ids: (task.validation_requirements ?? []).map((item) => item.validation_id) });
+          await options.faultInjector?.('before-validation', { attempt });
           validation = task.validation_requirements?.length
             ? engine ? await engine.validate(task.validation_requirements) : { passed: false, results: [{ passed: false, error: { code: 'VALIDATION_ENGINE_UNAVAILABLE' } }] }
             : { passed: true, results: [], validated_at: new Date().toISOString() };
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'validation_receipt', { attempt_number: attempt.attempt_number, passed: validation.passed, result_count: validation.results.length });
+          await options.faultInjector?.('after-validation-before-state-update', { attempt, validation });
           await this.auditLog?.record('validation', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, passed: validation.passed, result_count: validation.results.length });
           if (!validation.passed) { failureCategory = 'validation_failure'; failureCode = 'VALIDATION_FAILED'; }
         }
 
-        const postCheckpoint = await this.checkpoint(project, task, attempt.attempt_number, 'post-attempt', validation?.results?.map((result) => `${result.validation_id}:${result.passed}`) ?? []);
-        const next = candidates[index + 1] ?? null;
+        const postCheckpoint = task.checkpoint_policy?.post_attempt === false ? null : await this.checkpoint(project, task, attempt.attempt_number, 'post-attempt', validation?.results?.map((result) => `${result.validation_id}:${result.passed}`) ?? []);
+        const escalationAllowed = !task.escalation_policy || (task.escalation_policy.enabled !== false && (task.escalation_policy.categories ?? []).includes(failureCategory));
+        const next = failureCategory && !escalationAllowed ? null : candidates[index + 1] ?? null;
         if (!failureCategory) {
           if (structured.status === 'partial') {
             await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
@@ -214,7 +259,7 @@ export class ResilientOrchestrator {
           });
           await this.circuitBreaker?.recordSuccess(candidate.provider_id, candidate.profile_id, candidate.model_id);
           await this.profileRegistry.markSuccessful(candidate.profile_id);
-          const finalCheckpoint = await this.checkpoint(project, task, attempt.attempt_number, 'final-validated', validation.results.map((result) => `${result.validation_id}:${result.passed}`));
+          const finalCheckpoint = task.checkpoint_policy?.final_validated === false ? null : await this.checkpoint(project, task, attempt.attempt_number, 'final-validated', validation.results.map((result) => `${result.validation_id}:${result.passed}`));
           await this.handoff(project, task, candidate, attempt, 'completed', {
             completed_work: [structured.summary], remaining_work: structured.remaining_work,
             files_touched: executionResults.filter((result) => result.status === 'completed').map((result) => result.target).filter(Boolean),
@@ -224,6 +269,7 @@ export class ResilientOrchestrator {
             confidence: structured.uncertainty.length ? 0.7 : 1, uncertainty: structured.uncertainty
           });
           await this.taskStore.transition(task.project_id, task.task_id, 'COMPLETED', { reason: 'router-validation-passed', attempt: attempt.attempt_number });
+          await this.executionPlanStore?.advance(task.project_id, task.task_id, 'FINALIZE', { attempt: attempt.attempt_number, status: 'completed' });
           await this.memoryManager.updateCurrentTask(project.projectId, {
             task_id: task.task_id, objective: task.objective, status: 'completed',
             acceptance_criteria: task.acceptance_criteria ?? [], completed_work: [structured.summary],
@@ -254,8 +300,11 @@ export class ResilientOrchestrator {
           return { status: 'cancelled', attempts: await this.attemptStore.list(task.project_id, task.task_id) };
         }
         if (next) {
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'escalation_intent', { attempt_number: attempt.attempt_number, failure_category: failureCategory, next_candidate: { provider_id: next.provider_id, profile_id: next.profile_id, model_id: next.model_id } });
+          await options.faultInjector?.('during-escalation', { attempt, failureCategory, next });
           await this.taskStore.transition(task.project_id, task.task_id, 'ESCALATING', { reason: failureCategory, attempt: attempt.attempt_number });
           await this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'next-candidate', attempt: attempt.attempt_number + 1 });
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'escalation_receipt', { attempt_number: attempt.attempt_number, next_attempt: attempt.attempt_number + 1 });
         }
       }
       const final = await this.taskStore.get(task.project_id, task.task_id);
