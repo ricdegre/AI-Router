@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { ActionMediator } from '../actions/action-mediator.js';
+import { contentHash } from '../actions/changeset.js';
+import { temporaryDirectory } from './helpers.js';
+
+async function fixture(t) {
+  const base = await temporaryDirectory(t);
+  const workspace = path.join(base, 'workspace');
+  const backups = path.join(base, 'runtime', 'backups');
+  await mkdir(workspace);
+  return { workspace, backups, mediator: new ActionMediator({ workspaceRoot: workspace, backupRoot: backups, maxFileBytes: 1024 }) };
+}
+
+test('mediator creates, reads, lists, and dry-runs only inside workspace', async (t) => {
+  const { workspace, mediator } = await fixture(t);
+  const dry = await mediator.execute({ action_id: 'create-dry', type: 'create_file', target: 'dry.txt', parameters: { content: 'dry' } }, { dryRun: true });
+  assert.equal(dry.status, 'dry-run');
+  assert.equal(await readdir(workspace).then((items) => items.includes('dry.txt')), false);
+  const created = await mediator.execute({ action_id: 'create-real', type: 'create_file', target: 'safe.txt', parameters: { content: 'hello' } });
+  assert.equal(created.status, 'completed');
+  const read = await mediator.execute({ action_id: 'read-real', type: 'read_file', target: 'safe.txt', parameters: {} });
+  assert.equal(read.result.content, 'hello');
+  const list = await mediator.execute({ action_id: 'list-real', type: 'list_directory', target: '.', parameters: {} });
+  assert.ok(list.result.entries.some((entry) => entry.name === 'safe.txt'));
+});
+
+test('exact changeset succeeds and preserves a private backup', async (t) => {
+  const { workspace, backups, mediator } = await fixture(t);
+  const source = 'alpha\nbeta\n';
+  await writeFile(path.join(workspace, 'file.txt'), source);
+  const result = await mediator.execute({
+    action_id: 'patch-one', type: 'modify_file', target: 'file.txt',
+    parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash(source), search: 'beta', replacement: 'gamma' } }
+  });
+  assert.equal(result.status, 'completed');
+  assert.equal(await readFile(path.join(workspace, 'file.txt'), 'utf8'), 'alpha\ngamma\n');
+  assert.equal((await readdir(backups)).length, 1);
+});
+
+test('changeset rejects stale, ambiguous, invalid, and escaping actions', async (t) => {
+  const { workspace, mediator } = await fixture(t);
+  await writeFile(path.join(workspace, 'ambiguous.txt'), 'same same');
+  const stale = await mediator.execute({ action_id: 'stale-one', type: 'modify_file', target: 'ambiguous.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: '0'.repeat(64), search: 'same', replacement: 'x' } } });
+  assert.equal(stale.error.code, 'STALE_CHANGESET');
+  const ambiguous = await mediator.execute({ action_id: 'ambiguous-one', type: 'modify_file', target: 'ambiguous.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash('same same'), search: 'same', replacement: 'x' } } });
+  assert.equal(ambiguous.error.code, 'AMBIGUOUS_CHANGESET');
+  const invalid = await mediator.execute({ action_id: 'invalid-one', type: 'modify_file', target: 'ambiguous.txt', parameters: { patch: { kind: 'unified_diff' } } });
+  assert.equal(invalid.error.code, 'INVALID_CHANGESET');
+  const escape = await mediator.execute({ action_id: 'escape-one', type: 'create_file', target: '../escape.txt', parameters: { content: 'no' } });
+  assert.equal(escape.error.code, 'PATH_OUTSIDE_ROOT');
+});
+
+test('mediator rejects binary and oversized files', async (t) => {
+  const { workspace, mediator } = await fixture(t);
+  await writeFile(path.join(workspace, 'binary.bin'), Buffer.from([1, 0, 2]));
+  await writeFile(path.join(workspace, 'large.txt'), 'x'.repeat(2048));
+  assert.equal((await mediator.execute({ action_id: 'binary-read', type: 'read_file', target: 'binary.bin', parameters: {} })).error.code, 'BINARY_FILE_REJECTED');
+  assert.equal((await mediator.execute({ action_id: 'large-read', type: 'read_file', target: 'large.txt', parameters: {} })).error.code, 'FILE_TOO_LARGE');
+});
+
