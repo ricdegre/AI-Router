@@ -15,9 +15,9 @@ AI Router is split into a public source repository and a private runtime data ro
 3. **Shared Project Memory** stores layered, human-readable operational state outside the project workspace.
 4. **Handoff Service** records enough structured state for a new agent to continue without private chat history.
 5. **Checkpoint Service** reads Git state and records non-destructive checkpoint metadata. It never performs automatic rollback.
-6. **Provider Adapters** will expose normalized availability, authentication modes, capabilities, usage, execution, cancellation, and health information.
-7. **Account Profiles** will reference isolated provider state without storing passwords in the project registry or memory.
-8. **Policy Engine** will eventually choose a capable resource based on risk, availability, subscription capacity, cost, and prior failures.
+6. **Provider Adapters** expose normalized availability, authentication modes, capabilities, usage, execution, cancellation, and health information. Ollama is the first adapter.
+7. **Account Profiles** reference independently addressable provider resources without storing passwords in the project registry or memory.
+8. **Policy Engine** deterministically chooses a capable resource based on risk, availability, strength, cost category, and explicit preferences.
 9. **Interfaces** call core services. The CLI is the first interface; VS Code, a local API, desktop, or web interfaces may follow.
 
 ## Data flow
@@ -30,5 +30,4 @@ Interfaces depend on core services. Core services depend on configuration and st
 
 ## Current implementation
 
-The foundation implements configuration, a JSON project registry, filesystem-backed project memory, handoff/current-task operations, Git inspection, checkpoint metadata, a CLI, tests, and an artificial demo. Provider execution and policy routing remain design-only.
-
+The platform implements configuration, a JSON project registry, Memory/Handoff Protocol 0.1, filesystem-backed project memory, Git inspection, checkpoint metadata, Provider Protocol 0.1, private profiles, Ollama discovery/execution, deterministic routing, bounded escalation state, a continuity orchestrator, CLI, mocks, and integration tests. Cloud authentication and automatic escalation remain deferred.

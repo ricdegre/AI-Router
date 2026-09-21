@@ -20,10 +20,11 @@ export class OllamaProvider extends ProviderAdapter {
   async request(pathname, options = {}) {
     const controller = new AbortController();
     const requestId = options.requestId ?? randomUUID();
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? this.timeoutMs);
-    const upstreamAbort = () => controller.abort();
+    let abortReason = null;
+    const timeout = setTimeout(() => { abortReason = 'timeout'; controller.abort(); }, options.timeoutMs ?? this.timeoutMs);
+    const upstreamAbort = () => { abortReason = 'user_cancelled'; controller.abort(); };
     options.signal?.addEventListener('abort', upstreamAbort, { once: true });
-    this.activeRequests.set(requestId, controller);
+    this.activeRequests.set(requestId, { controller, cancel: () => { abortReason = 'user_cancelled'; controller.abort(); } });
     try {
       const response = await this.fetch(new URL(pathname, this.baseUrl), {
         method: options.method ?? 'GET',
@@ -40,6 +41,13 @@ export class OllamaProvider extends ProviderAdapter {
       }
       return await response.json();
     } catch (error) {
+      if (error?.name === 'AbortError' && abortReason === 'user_cancelled') {
+        throw new ProviderError('Provider request was cancelled.', 'PROVIDER_CANCELLED', {
+          providerId: this.descriptor.id,
+          retryable: false,
+          failureCategory: 'user_cancelled'
+        });
+      }
       throw safeProviderError(error, this.descriptor.id);
     } finally {
       clearTimeout(timeout);
@@ -85,7 +93,13 @@ export class OllamaProvider extends ProviderAdapter {
       requestId,
       signal: request.signal,
       timeoutMs: request.timeout_ms,
-      body: { model: request.model, messages, stream: false, ...(request.options ? { options: request.options } : {}) }
+      body: {
+        model: request.model,
+        messages,
+        stream: false,
+        ...(request.keep_alive !== undefined ? { keep_alive: request.keep_alive } : {}),
+        ...(request.options ? { options: request.options } : {})
+      }
     });
     return {
       request_id: requestId,
@@ -103,10 +117,9 @@ export class OllamaProvider extends ProviderAdapter {
   }
 
   async cancel(requestId) {
-    const controller = this.activeRequests.get(requestId);
-    if (!controller) return { cancelled: false, reason: 'request-not-active' };
-    controller.abort();
+    const active = this.activeRequests.get(requestId);
+    if (!active) return { cancelled: false, reason: 'request-not-active' };
+    active.cancel();
     return { cancelled: true, request_id: requestId };
   }
 }
-

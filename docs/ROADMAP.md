@@ -1,6 +1,6 @@
 # Roadmap
 
-## Foundation — current
+## Foundation — complete
 
 - Repository and documentation foundation
 - Private runtime configuration
@@ -10,17 +10,19 @@
 - Non-destructive Git inspection and checkpoint metadata
 - CLI, tests, and artificial continuity demo
 
-## Continuity proof
+## Provider-ready continuity — current
 
-- Exercise a real Agent A → Agent B handoff using an isolated test project
-- Define memory compatibility/versioning policy
-- Add explicit validation receipts and checkpoint confidence
+- Memory and Handoff Protocol 0.1
+- Provider Protocol 0.1 and private account/profile abstraction
+- Ollama adapter with mocked tests and safe discovery
+- Explainable deterministic routing and bounded escalation model
+- Fresh-instance Agent A → Agent B integration proof
 
 ## Provider integration
 
-- Define and test the provider adapter contract
-- Add local Ollama/Qwen adapter without rebuilding existing editor integration
-- Add an officially authenticated OpenAI/Codex profile
+- Harden Ollama live execution and structured-result prompting without changing the existing installation
+- Define provider conformance tests
+- Add an officially authenticated OpenAI/Codex profile only with explicit approval
 - Prove account-state isolation before adding another account
 - Add Gemini only after the adapter boundary is stable
 
@@ -33,4 +35,3 @@
 - Local API and additional interfaces
 
 Intelligent routing, automatic escalation, automatic rollback, and production deployment are intentionally outside the foundation milestone.
-

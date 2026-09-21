@@ -64,3 +64,12 @@ Review date: 2026-09-21. This is an architectural reconnaissance, not a code aud
 6. Never fetch upstream changes automatically at runtime or during normal builds.
 7. Never let profile experiments touch existing authentication state without an explicit migration and rollback plan.
 
+## Decision after Provider-Ready Continuity
+
+AI Router now has its own versioned memory/handoff contracts, provider protocol, profile registry, deterministic router, escalation model, Ollama adapter, and fresh-process continuity test. None of the evaluated projects fills a current foundation gap large enough to justify vendoring code.
+
+- `ai-memory` remains valuable for later study of scalable indexed retrieval, sanitization pipelines, and multi-user handoff claiming. Those capabilities are deliberately outside the file-based MVP.
+- Claude Code Router remains valuable for later protocol-transformation and provider-observability research. Its gateway/UI/plugin stack would add unnecessary coupling now.
+- Multi-account managers remain useful references for isolated process launch and diagnostics, but AI Router must first verify official Windows account-isolation boundaries. Importing auth-file switching code would violate the current safety boundary.
+
+Decision: vendor nothing in this block. If retrieval scale, protocol transformation, or official account isolation becomes a measured requirement, perform a new exact-commit code audit and name the smallest source files then. No module has yet passed that audit, so listing a file for incorporation now would imply unsupported confidence.

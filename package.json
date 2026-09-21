@@ -1,7 +1,7 @@
 {
   "name": "ai-work-router",
-  "version": "0.1.0",
-  "description": "Provider-independent continuity foundation for AI-assisted project work.",
+  "version": "0.2.0",
+  "description": "Provider-ready continuity platform for AI-assisted project work.",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -13,8 +13,9 @@
   },
   "scripts": {
     "test": "node --test",
+    "test:continuity": "node --test tests/orchestrator.integration.test.js",
     "demo": "node scripts/continuity-demo.js",
+    "smoke:ollama": "node scripts/ollama-smoke.js",
     "status": "node interfaces/cli/ai-router.js status"
   }
 }
-

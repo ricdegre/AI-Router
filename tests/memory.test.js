@@ -4,6 +4,7 @@ import { mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { ProjectRegistry } from '../core/project-registry.js';
 import { MemoryManager } from '../memory/memory-manager.js';
+import { normalizeProjectMetadata } from '../memory/protocol.js';
 import { temporaryDirectory } from './helpers.js';
 
 async function fixture(t) {
@@ -59,4 +60,20 @@ test('handoff protocol validates status and confidence', async (t) => {
   await assert.rejects(() => memory.createHandoff(project.projectId, {
     task: 'x', agent: 'a', provider: 'p', status: 'completed', confidence: 2
   }), { code: 'INVALID_HANDOFF_CONFIDENCE' });
+});
+
+test('foundation metadata has an explicit non-destructive compatibility path', () => {
+  const normalized = normalizeProjectMetadata({
+    memoryVersion: 1,
+    projectId: 'legacy-project',
+    displayName: 'Legacy Project',
+    workspacePath: 'C:/synthetic/legacy',
+    initializedAt: '2026-01-01T00:00:00.000Z'
+  });
+  assert.equal(normalized.memory_schema_version, '0.1');
+  assert.equal(normalized.project_id, 'legacy-project');
+  assert.equal(normalized.compatibility.status, 'legacy-compatible');
+  assert.throws(() => normalizeProjectMetadata({
+    memory_schema_version: '9.0', project_id: 'future', display_name: 'Future', workspace_path: '/future', initialized_at: 'now'
+  }), { code: 'UNSUPPORTED_MEMORY_SCHEMA' });
 });

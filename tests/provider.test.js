@@ -45,7 +45,7 @@ test('Ollama adapter cancels an active request by request ID', async () => {
   }) });
   const pending = provider.execute({ request_id: 'cancel-me', model: 'installed-model', prompt: 'short' });
   assert.deepEqual(await provider.cancel('cancel-me'), { cancelled: true, request_id: 'cancel-me' });
-  await assert.rejects(() => pending, { code: 'PROVIDER_TIMEOUT' });
+  await assert.rejects(() => pending, { code: 'PROVIDER_CANCELLED', failureCategory: 'user_cancelled' });
 });
 
 test('provider registry supports zero, disabled, and unavailable providers', async () => {
@@ -56,4 +56,16 @@ test('provider registry supports zero, disabled, and unavailable providers', asy
   assert.equal((await registry.status())[0].health.status, 'unavailable');
   registry.setEnabled('offline', false);
   assert.equal((await registry.status())[0].health.status, 'disabled');
+});
+
+test('Ollama HTTP errors do not expose response bodies', async () => {
+  const provider = new OllamaProvider({ fetch: async () => new Response('server-secret-value', { status: 401 }) });
+  await assert.rejects(async () => {
+    try {
+      await provider.listModels();
+    } catch (error) {
+      assert.equal(error.message.includes('server-secret-value'), false);
+      throw error;
+    }
+  }, { code: 'OLLAMA_HTTP_ERROR' });
 });
