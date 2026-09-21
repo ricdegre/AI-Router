@@ -1,6 +1,6 @@
 # Security Model
 
-AI Router 0.6.0-pre.0 is a pre-release local execution platform. It is not a general-purpose sandbox and must not be treated as production-ready.
+AI Router 0.6.0-pre.1 is a pre-release local execution platform. It is not a general-purpose sandbox and must not be treated as production-ready.
 
 ## Trust boundaries
 
@@ -11,6 +11,7 @@ AI Router 0.6.0-pre.0 is a pre-release local execution platform. It is not a gen
 - Durable descriptors and execution plans are strictly validated; recovery journals are append-only and hash-chained.
 - Secrets, credentials, tokens, API keys, private prompts, and full private conversations do not belong in shared memory or audit data. Secret-shaped fields are rejected.
 - Optional decision engines are untrusted classifiers. They receive bounded, minimized routing state and cannot bypass provider availability, capabilities, cost controls, manual overrides, action approval, or project constraints. Jev is off by default and its current transport is mock-only.
+- Profile Test Chat is isolated from project files, tools, memory, Git, tasks, and routing. Its short message and response are not audited. Connect/Reconnect never starts authentication automatically.
 
 ## Filesystem protections
 

@@ -29,3 +29,5 @@ Mock providers used by integration tests can modify only test-created temporary 
 Never commit `config/local.json`, the runtime data root, authentication files, environment files, tokens, credentials, logs, account state, or project memory.
 
 Decision-engine state is deliberately compact and excludes private chat transcripts, secrets, full source files, full prompts, and irrelevant project memory. The hard policy gate runs before optional classification. Audit records contain question identifiers and normalized classification only, never credentials or the complete routing input.
+
+Profile Test Chat has a separate provider method and does not call the orchestrator or normal provider execution path. Requests contain only the selected profile, explicit model, short message, bounded output limit, and timeout. Messages and responses are not written to audit logs; only status, model, latency, and usage availability are recorded.

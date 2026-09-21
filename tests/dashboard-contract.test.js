@@ -45,3 +45,10 @@ test('dashboard exposes optional Jev controls, status, and auditable route evide
   assert.match(app, /\/api\/decision-engines\/config/);
   assert.match(app, /connect-jev/);
 });
+
+test('profiles UI supports multi-account management and isolated connection tests', async () => {
+  const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
+  for (const text of ['Add Profile', 'Developer/Test Mode', 'Connect', 'Reconnect', 'Disconnect', 'Enable', 'Disable', 'Edit', 'Test Connection', 'Test Chat', 'Delete Profile', 'Maximum output tokens', 'no project files, tools, memory, Git, tasks, or routing']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  assert.match(app, /\/api\/profiles\/\$\{encodeURIComponent\(profileId\)\}\/test-chat/);
+  assert.match(app, /developer_test_mode/);
+});

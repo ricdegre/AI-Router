@@ -178,6 +178,13 @@ export class OllamaProvider extends ProviderAdapter {
     };
   }
 
+  async testChat({ profile_id, model, message, max_output_tokens = 32, timeout_ms = 10_000 }) {
+    if (typeof model !== 'string' || !model) throw new ProviderError('Test Chat requires an explicit Ollama model.', 'OLLAMA_MODEL_REQUIRED', { providerId: this.descriptor.id });
+    const started = performance.now();
+    const result = await this.request('/api/chat', { method: 'POST', timeoutMs: timeout_ms, body: { model, messages: [{ role: 'user', content: message }], stream: false, think: false, options: { num_predict: max_output_tokens } } });
+    return { status: 'connected', profile_id, response: result.message?.content ?? '', model: result.model ?? model, latency_ms: Math.round(performance.now() - started), usage_delta: result.prompt_eval_count == null && result.eval_count == null ? null : { input_tokens: result.prompt_eval_count ?? null, output_tokens: result.eval_count ?? null } };
+  }
+
   async executeStructured(request) {
     const raw = await this.execute({
       ...request,

@@ -6,6 +6,7 @@ import { descriptorFromTask } from '../../core/task-execution-descriptor.js';
 import { inspectGit, createCheckpointMetadata } from '../../checkpoints/git-checkpoint.js';
 import { AiRouterError } from '../../core/errors.js';
 import { ControlSettingsStore } from '../../core/control-settings-store.js';
+import { isSyntheticProfile } from '../../core/profile-test-service.js';
 
 const MEMORY_DOCUMENTS = ['context.md', 'decisions.md', 'constraints.md', 'current-task.md', 'handoff.md', 'ai-changelog.md'];
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{1,79}$/;
@@ -18,6 +19,11 @@ function requiredId(value, label) {
 function cleanText(value, label, max = 4_000) {
   if (typeof value !== 'string' || !value.trim() || value.length > max || value.includes('\0')) throw new AiRouterError(`${label} is invalid.`, 'INVALID_CONTROL_INPUT');
   return value.trim();
+}
+
+function rejectSecretFields(value) {
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) { if (/(password|secret|token|api.?key|credential)/i.test(key)) throw new AiRouterError('Secret fields are not accepted by the control API.', 'SENSITIVE_PROFILE_FIELD'); rejectSecretFields(child); }
 }
 
 function queryFilters(query) {
@@ -99,6 +105,13 @@ export class ControlApi {
     return models;
   }
 
+  async profiles(query) {
+    const [profiles, settings] = await Promise.all([this.services.profileRegistry.list(query.get('provider') || undefined), this.settingsStore.load()]);
+    if (settings.developer_test_mode && query.get('include_test') === 'true') return profiles;
+    const providers = new Map(this.services.providerRegistry.list().map((item) => [item.id, item]));
+    return profiles.filter((profile) => !isSyntheticProfile(profile, providers.get(profile.provider_id)));
+  }
+
   async tasks(query) {
     const projectId = query.get('project') || null;
     const [descriptors, states] = await Promise.all([this.services.descriptorStore.list(), this.services.taskStore.list(projectId)]);
@@ -148,7 +161,7 @@ export class ControlApi {
     if (pathname === '/api/version') return { version: this.version };
     if (pathname === '/api/projects') return this.projects();
     if (pathname === '/api/providers') return this.providers(query.get('refresh') === 'true');
-    if (pathname === '/api/profiles') return this.services.profileRegistry.list(query.get('provider') || undefined);
+    if (pathname === '/api/profiles') return this.profiles(query);
     if (pathname === '/api/models') return this.models({ detailed: query.get('detailed') === 'true', force: query.get('refresh') === 'true' });
     if (pathname === '/api/tasks') return this.tasks(query);
     if (pathname === '/api/routing/explain') return this.routing(query);
@@ -186,6 +199,32 @@ export class ControlApi {
       const saved = await this.services.decisionEngineConfigStore.update(body ?? {});
       await this.services.auditLog.record('decision_engine_config_changed', { enabled: saved.enabled, routing_mode: saved.mode, transport: saved.transport, fallback_enabled: saved.fallback_enabled, usage_categories: saved.usage_categories, budgets: saved.budgets });
       return saved;
+    }
+    if (pathname === '/api/profiles') {
+      rejectSecretFields(body);
+      const profileId = requiredId(body?.profile_id, 'Profile ID');
+      let existing = null; try { existing = await this.services.profileRegistry.get(profileId); } catch (error) { if (error.code !== 'PROFILE_NOT_FOUND') throw error; }
+      const profile = { ...(existing ?? {}),
+        profile_id: profileId, provider_id: requiredId(body?.provider_id, 'Provider ID'),
+        display_name: cleanText(body?.display_name, 'Display name', 120), auth_mode: typeof body?.auth_mode === 'string' ? body.auth_mode.slice(0, 40) : 'not-configured',
+        location: body?.location === 'local' ? 'local' : 'cloud', cost_category: typeof body?.cost_category === 'string' ? body.cost_category : 'UNKNOWN',
+        enabled: body?.enabled ?? existing?.enabled ?? true, status: body?.enabled === false ? 'disabled' : existing?.status ?? 'unknown', profile_type: body?.profile_type === 'synthetic' ? 'synthetic' : existing?.profile_type ?? 'real',
+        models: Array.isArray(body?.models) ? body.models.filter((item) => typeof item === 'object').slice(0, 100) : existing?.models ?? []
+      };
+      const result = await this.services.profileRegistry.register(profile);
+      await this.services.auditLog.record(result.created ? 'profile_added' : 'profile_updated', { profile_id: profile.profile_id, provider_id: profile.provider_id });
+      return result;
+    }
+    const profileAction = pathname.match(/^\/api\/profiles\/([^/]+)\/(connect|reconnect|disconnect|enable|disable|test-connection|test-chat|delete)$/);
+    if (profileAction) {
+      const profileId = requiredId(decodeURIComponent(profileAction[1]), 'Profile ID'); const action = profileAction[2];
+      const profile = await this.services.profileRegistry.get(profileId);
+      if (action === 'connect' || action === 'reconnect') return { profile_id: profileId, provider_id: profile.provider_id, started: false, status: 'not-configured', message: 'Automatic authentication is not enabled. Configure credentials in a backend secret store when a real connector is added.' };
+      if (action === 'disconnect') { const result = await this.services.profileRegistry.setConnectionStatus(profileId, 'unavailable'); await this.services.auditLog.record('profile_disconnected', { profile_id: profileId, provider_id: profile.provider_id }); return result; }
+      if (action === 'enable' || action === 'disable') { const result = await this.services.profileRegistry.setEnabled(profileId, action === 'enable'); await this.services.auditLog.record('profile_state_changed', { profile_id: profileId, provider_id: profile.provider_id, enabled: action === 'enable' }); return result; }
+      if (action === 'test-connection') { const result = await this.services.profileTestService.connection(profileId); await this.services.auditLog.record('profile_connection_tested', { profile_id: profileId, provider_id: profile.provider_id, reachable: result.reachable, health_status: result.health.status, model_count: result.models.length }); return result; }
+      if (action === 'test-chat') { const result = await this.services.profileTestService.chat(profileId, body); await this.services.auditLog.record('profile_chat_tested', { profile_id: profileId, provider_id: profile.provider_id, model_id: result.model, status: result.status, latency_ms: result.latency_ms, usage_available: result.usage_delta != null }); return result; }
+      const removed = await this.services.profileRegistry.remove(profileId); await this.services.auditLog.record('profile_deleted', { profile_id: profileId, provider_id: removed.provider_id }); return { deleted: true, profile_id: profileId };
     }
     const memoryMatch = pathname.match(/^\/api\/projects\/([^/]+)\/memory\/initialize$/);
     if (memoryMatch) { const projectId = decodeURIComponent(memoryMatch[1]); return this.services.memoryManager.initialize(await this.services.projectRegistry.get(requiredId(projectId, 'Project ID'))); }

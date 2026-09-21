@@ -8,7 +8,7 @@ The AI Router dashboard is a dependency-free web interface for operating the exi
 - **Decision Engines** shows Jev as an optional classifier, including mode, health, confidence, latency, fallback, honest usage/cost availability, and the unavailable real-connection placeholder. It is deliberately separate from execution providers.
 - **Projects** shows workspace availability, observed Git state, memory readiness, and active tasks. Registration and configured-root scanning are explicit actions.
 - **Providers** reports adapter registration and live health. Enable/disable is persisted as non-secret control state.
-- **Profiles / Accounts** reports profile metadata and cost categories. OpenAI and Gemini cards are clearly marked unimplemented placeholders; they do not imitate authentication.
+- **Profiles / Accounts** supports multiple identities per provider, Add/Edit/Delete, enable/disable, disconnect, safe Connect/Reconnect placeholders, Test Connection, and isolated Test Chat. Developer/Test Mode is off by default and hides synthetic identities.
 - **Models** discovers real adapter inventory and distinguishes discovered, configured, heuristic, and unknown facts.
 - **Tasks** creates durable descriptors, shows lifecycle and attempts, and exposes cancel/resume only through core safety checks.
 - **Routing** calls the deterministic explanation policy and displays accepted and rejected reasons without executing work.

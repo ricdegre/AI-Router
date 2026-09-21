@@ -2,6 +2,14 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.6.0-pre.1 — Multi-profile connection testing
+
+- Added visual creation, editing, enable/disable, disconnect, and deletion for multiple independent profiles per provider.
+- Added separate Test Connection and isolated Test Chat flows with explicit model, bounded output, latency, status, response, and honest usage delta.
+- Test Chat uses a dedicated adapter method and cannot receive project files, tools, memory, Git state, tasks, or routing authority.
+- Added Developer/Test Mode, off by default, to hide synthetic, demo, doctor, and mock identities from normal operation.
+- Connect and Reconnect remain safe placeholders; no authentication starts automatically and no browser credential field exists.
+
 ## 0.6.0-pre.0 — Optional decision engines
 
 - Added provider-independent Decision Engine Protocol 0.1 and deterministic-only, Jev-assisted, and hybrid routing modes.

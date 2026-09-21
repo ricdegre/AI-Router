@@ -20,3 +20,10 @@ Future provider integrations may reference a provider-managed credential store o
 
 The current implementation does not authenticate, log in, log out, copy credentials, or modify existing provider state.
 
+## Dashboard management and tests
+
+The dashboard can add multiple named profiles for the same provider and edit, enable/disable, disconnect, or delete their non-secret metadata. Connect and Reconnect are explicit placeholders: they do not launch OAuth, request credentials, or change an external account.
+
+Test Connection checks adapter health, reachability, authentication state, and model discovery when available. Test Chat is a separate bounded inference call. It accepts at most 500 message characters, requires an explicit model, and permits 1–256 output tokens. Its adapter receives only `profile_id`, `model`, `message`, output limit, and timeout. It receives no project path, source files, context builder output, tools, memory, Git state, task descriptor, or routing interface.
+
+Synthetic/demo/mock identities are hidden unless the persistent `developer_test_mode` setting is enabled. This affects visibility only; hard routing and provider controls remain independent.

@@ -69,6 +69,12 @@ export class ProfileRegistry {
     return providerId ? profiles.filter((profile) => profile.provider_id === providerId) : profiles;
   }
 
+  async get(profileId) {
+    const profile = (await this.list()).find((item) => item.profile_id === profileId);
+    if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
+    return profile;
+  }
+
   async register(profileInput) {
     const profile = validateProfile(profileInput);
     let outcome;
@@ -99,6 +105,28 @@ export class ProfileRegistry {
       profile.updated_at = new Date().toISOString();
       outcome = profile;
       return state;
+    });
+    return outcome;
+  }
+
+  async remove(profileId) {
+    let removed;
+    await updateJsonAtomic(this.filePath, { version: PROFILE_SCHEMA_VERSION, profiles: [] }, (state) => {
+      const index = (state.profiles ?? []).findIndex((item) => item.profile_id === profileId);
+      if (index < 0) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
+      [removed] = state.profiles.splice(index, 1);
+      return state;
+    });
+    return removed;
+  }
+
+  async setConnectionStatus(profileId, status) {
+    if (!STATUSES.includes(status)) throw new AiRouterError('Profile status is invalid.', 'INVALID_PROFILE');
+    let outcome;
+    await updateJsonAtomic(this.filePath, { version: PROFILE_SCHEMA_VERSION, profiles: [] }, (state) => {
+      const profile = (state.profiles ?? []).find((item) => item.profile_id === profileId);
+      if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
+      profile.status = status; profile.updated_at = new Date().toISOString(); outcome = profile; return state;
     });
     return outcome;
   }

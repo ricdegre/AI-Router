@@ -1,6 +1,6 @@
 # Optional Jev integration
 
-Jev is **optional and off by default**. AI Router works completely without it. Version 0.6.0-pre.0 includes architecture, private configuration, a deterministic mock, normalization, confidence handling, budgets, health, dashboard controls, auditing, tests, and a synthetic benchmark. It does not include a real TypeSafe/Jev network transport.
+Jev is **optional and off by default**. AI Router 0.6 pre-releases include architecture, private configuration, a deterministic mock, normalization, confidence handling, budgets, health, dashboard controls, auditing, tests, and a synthetic benchmark. They do not include a real TypeSafe/Jev network transport.
 
 Modes:
 

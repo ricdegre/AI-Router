@@ -77,6 +77,10 @@ export class ProviderAdapter {
     throw new ProviderError('Provider execute() is not implemented.', 'PROVIDER_NOT_IMPLEMENTED', { providerId: this.descriptor.id });
   }
 
+  async testChat() {
+    throw new ProviderError('Provider test chat is not implemented.', 'PROVIDER_TEST_CHAT_NOT_IMPLEMENTED', { providerId: this.descriptor.id });
+  }
+
   async cancel() {
     return { cancelled: false, reason: 'not-supported' };
   }
@@ -91,4 +95,3 @@ export function safeProviderError(error, providerId) {
     failureCategory: error?.name === 'AbortError' ? 'timeout' : 'execution_failure'
   });
 }
-

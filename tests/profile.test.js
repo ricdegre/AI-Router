@@ -25,3 +25,11 @@ test('profile metadata rejects secrets and provider reassignment', async (t) => 
   await assert.rejects(() => registry.register(localProfile({ provider_id: 'different' })), { code: 'PROFILE_PROVIDER_MISMATCH' });
 });
 
+test('profile registry removes one identity without affecting siblings', async (t) => {
+  const registry = new ProfileRegistry(path.join(await temporaryDirectory(t), 'runtime'));
+  await registry.register(localProfile());
+  await registry.register(localProfile({ profile_id: 'ollama-secondary', display_name: 'Secondary' }));
+  await registry.remove('ollama-secondary');
+  assert.deepEqual((await registry.list('ollama')).map((item) => item.profile_id), ['ollama-local']);
+  await assert.rejects(() => registry.get('ollama-secondary'), { code: 'PROFILE_NOT_FOUND' });
+});

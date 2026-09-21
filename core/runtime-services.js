@@ -24,6 +24,7 @@ import { DecisionEngineConfigStore } from '../decision-engines/core/config-store
 import { DecisionUsageStore } from '../decision-engines/core/usage-store.js';
 import { DecisionStateBuilder } from '../decision-engines/core/state-builder.js';
 import { DecisionRouter } from '../decision-engines/core/decision-router.js';
+import { ProfileTestService } from './profile-test-service.js';
 
 export function createRuntimeServices(config, options = {}) {
   const dataRoot = config.dataRoot;
@@ -50,11 +51,12 @@ export function createRuntimeServices(config, options = {}) {
     configStore: decisionEngineConfigStore, usageStore: decisionUsageStore,
     stateBuilder: new DecisionStateBuilder(), auditLog
   });
+  const profileTestService = new ProfileTestService({ profileRegistry, providerRegistry });
   const dependencies = {
     projectRegistry, profileRegistry, providerRegistry, memoryManager, descriptorStore,
     taskStore, attemptStore, executionPlanStore, recoveryJournal,
     auditLog, projectCoordinator, contextBuilder: new ContextBuilder(memoryManager),
-    circuitBreaker, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, jevEngine,
+    circuitBreaker, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, jevEngine, profileTestService,
     actionMediatorFactory: ({ project, task }) => new ActionMediator({
       workspaceRoot: project.workspacePath, backupRoot: path.join(dataRoot, 'backups', project.projectId),
       maxFileBytes: task.execution_limits?.max_file_bytes, actionPolicy: task.action_policy, filesystemScope: task.filesystem_scope,

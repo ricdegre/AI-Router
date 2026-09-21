@@ -27,6 +27,7 @@ This repository currently provides:
 - a continuity orchestrator tested across isolated Agent A and Agent B instances, including a live local Ollama stage;
 - operator commands and a privacy-conscious diagnostic report;
 - a local-only operational control panel with explainable routing, continuity inspection, durable task controls, and system diagnostics;
+- multi-account profile management with isolated connection checks and bounded Test Chat inference that has no project or tool access;
 - an artificial continuity demo and isolated tests.
 
 Real cloud-provider execution, OpenAI/Gemini/Claude account authentication, automatic rollback, and real TypeSafe/Jev connectivity are **not implemented**. Cloud providers and real Jev connection are shown only as explicit placeholders. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
@@ -87,7 +88,7 @@ From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is sel
 
 ## Development status
 
-AI Router 0.6.0-pre.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.6.0-pre.1 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [account profiles](docs/ACCOUNT_PROFILES.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## License
 
