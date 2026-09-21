@@ -4,7 +4,7 @@ import { readJson, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
 
 export const PROFILE_SCHEMA_VERSION = '0.1';
-const COST_CATEGORIES = ['local', 'subscription', 'metered'];
+const COST_CATEGORIES = ['local', 'subscription', 'metered', 'LOCAL', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN'];
 const LOCATIONS = ['local', 'cloud'];
 const STATUSES = ['unknown', 'available', 'unavailable', 'disabled'];
 const SENSITIVE_PROFILE_KEY = /(password|secret|token|api.?key|credential)/i;
@@ -36,6 +36,7 @@ export function validateProfile(input) {
       throw new AiRouterError('Capability overrides must be string arrays.', 'INVALID_PROFILE');
     }
   }
+  if (input.models !== undefined && !Array.isArray(input.models)) throw new AiRouterError('Profile models must be an array.', 'INVALID_PROFILE');
   return {
     profile_schema_version: PROFILE_SCHEMA_VERSION,
     enabled: true,

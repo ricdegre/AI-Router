@@ -2,7 +2,8 @@ import { AiRouterError } from '../core/errors.js';
 
 export const FAILURE_CATEGORIES = Object.freeze([
   'unavailable', 'rate_limited', 'timeout', 'insufficient_capability', 'execution_failure',
-  'validation_failure', 'user_cancelled'
+  'validation_failure', 'user_cancelled', 'malformed_output', 'action_rejected',
+  'lock_contention', 'project_missing', 'dirty_workspace'
 ]);
 
 export class EscalationPlan {
@@ -43,4 +44,3 @@ export class EscalationPlan {
     };
   }
 }
-

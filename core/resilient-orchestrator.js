@@ -1,0 +1,261 @@
+import { inspectGit, createCheckpointMetadata } from '../checkpoints/git-checkpoint.js';
+import { parseStructuredResponse, validateStructuredResponse } from '../providers/core/structured-response.js';
+import { AiRouterError } from './errors.js';
+
+function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}`; }
+
+function failureFrom(error) {
+  if (error.code === 'MALFORMED_STRUCTURED_RESPONSE' || error.code === 'INVALID_STRUCTURED_RESPONSE' || error.code === 'UNSUPPORTED_STRUCTURED_RESPONSE') return 'malformed_output';
+  if (error.code === 'LOCK_TIMEOUT') return 'lock_contention';
+  return error.failureCategory ?? 'execution_failure';
+}
+
+export class ResilientOrchestrator {
+  constructor(dependencies) { Object.assign(this, dependencies); }
+
+  async checkpoint(project, task, attempt, stage, validation = []) {
+    const state = inspectGit(project.workspacePath);
+    if (!state.isRepository) return null;
+    const checkpoint = createCheckpointMetadata(state, {
+      label: `${stage} task ${task.task_id} attempt ${attempt ?? '-'}`,
+      validation,
+      stage, task_id: task.task_id, attempt
+    });
+    checkpoint.stage = stage;
+    checkpoint.task_id = task.task_id;
+    checkpoint.attempt = attempt;
+    await this.memoryManager.addCheckpoint(project.projectId, checkpoint);
+    return checkpoint;
+  }
+
+  async prepareState(task, resume) {
+    if (!resume) {
+      await this.taskStore.create(task);
+      await this.auditLog?.record('task_created', { project_id: task.project_id, task_id: task.task_id });
+      await this.taskStore.transition(task.project_id, task.task_id, 'READY', { reason: 'inputs-validated' });
+      return this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'routing-started' });
+    }
+    let record = await this.taskStore.get(task.project_id, task.task_id);
+    if (['COMPLETED', 'CANCELLED'].includes(record.state)) throw new AiRouterError(`Cannot resume terminal task ${record.state}.`, 'TASK_TERMINAL');
+    if (['RUNNING', 'WAITING_VALIDATION'].includes(record.state)) {
+      record = await this.taskStore.transition(task.project_id, task.task_id, 'FAILED', { reason: 'interrupted-at-resume' });
+    }
+    if (record.state === 'BLOCKED') record = await this.taskStore.transition(task.project_id, task.task_id, 'READY', { reason: 'operator-resume' });
+    if (record.state === 'FAILED') record = await this.taskStore.transition(task.project_id, task.task_id, 'ESCALATING', { reason: 'resume-after-failure' });
+    if (record.state === 'ESCALATING') return this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'resume-routing' });
+    if (record.state === 'CREATED') record = await this.taskStore.transition(task.project_id, task.task_id, 'READY', { reason: 'resume-created' });
+    if (record.state === 'READY') return this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'resume-routing' });
+    return record;
+  }
+
+  async handoff(project, task, candidate, attempt, status, details) {
+    return this.memoryManager.createHandoff(project.projectId, {
+      project_id: project.projectId, task_id: task.task_id, provider_id: candidate.provider_id,
+      profile_id: candidate.profile_id, agent_id: details.agent_id ?? candidate.provider_id,
+      started_at: attempt.started_at, stopped_at: new Date().toISOString(), status,
+      objective: task.objective, completed_work: details.completed_work ?? [], remaining_work: details.remaining_work ?? [task.objective],
+      files_touched: details.files_touched ?? [], validation_performed: details.validation_performed ?? [],
+      validation_results: details.validation_results ?? [], failed_attempts: details.failed_attempts ?? [],
+      known_issues: details.known_issues ?? [], constraints: task.constraints ?? [], do_not_modify: task.do_not_modify ?? [],
+      checkpoint: details.checkpoint ?? null, recommended_next_action: details.recommended_next_action ?? '',
+      confidence: details.confidence ?? null, uncertainty_notes: details.uncertainty ?? []
+    });
+  }
+
+  async run(task, options = {}) {
+    const maxAttempts = Math.min(Math.max(options.maxAttempts ?? 3, 1), 10);
+    const project = await this.projectRegistry.get(task.project_id);
+    const lease = await this.projectCoordinator.acquire(project.projectId, { timeoutMs: options.lockTimeoutMs });
+    try {
+      await this.memoryManager.initialize(project);
+      if (options.resume) {
+        const interrupted = (await this.attemptStore.list(task.project_id, task.task_id)).filter((attempt) => attempt.status === 'running');
+        for (const attempt of interrupted) {
+          await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
+            status: 'interrupted', failure_category: 'execution_failure',
+            summary: 'Interrupted process detected during resume.', escalation_decision: 'resume'
+          });
+        }
+      }
+      await this.prepareState(task, options.resume ?? false);
+      await this.memoryManager.updateCurrentTask(project.projectId, {
+        task_id: task.task_id, objective: task.objective, status: 'in-progress',
+        acceptance_criteria: task.acceptance_criteria ?? [], completed_work: [],
+        remaining_work: [task.objective], constraints: task.constraints ?? [],
+        do_not_modify: task.do_not_modify ?? []
+      });
+      const priorAttempts = await this.attemptStore.list(task.project_id, task.task_id);
+      const usedCandidates = new Set(priorAttempts.map((attempt) => candidateKey(attempt)));
+      const executedActionIds = new Set(priorAttempts.flatMap((attempt) => attempt.approved_actions ?? []).map((action) => action.action_id));
+      const profiles = await this.profileRegistry.list();
+      const route = await this.routingPolicy.explain({ ...task, recent_failures: priorAttempts.filter((attempt) => attempt.failure_category) }, this.providerRegistry, profiles);
+      const remainingAttempts = Math.max(0, maxAttempts - priorAttempts.length);
+      const candidates = route.accepted_candidates.filter((candidate) => !usedCandidates.has(candidateKey(candidate))).slice(0, remainingAttempts);
+      if (!candidates.length) {
+        await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'no-eligible-unused-candidate' });
+        return { status: 'blocked', route, attempts: priorAttempts, reason: 'no-eligible-unused-candidate' };
+      }
+      await this.auditLog?.record('route_selected', { project_id: task.project_id, task_id: task.task_id, candidates: candidates.map((candidate) => ({ provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id })) });
+
+      for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index];
+        const taskRecord = await this.taskStore.get(task.project_id, task.task_id);
+        if (taskRecord.state === 'CANCELLED' || options.signal?.aborted) return { status: 'cancelled', route, attempts: await this.attemptStore.list(task.project_id, task.task_id) };
+        if (taskRecord.state !== 'ROUTING') await this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'next-attempt-routing', attempt: priorAttempts.length + index + 1 });
+        await this.taskStore.transition(task.project_id, task.task_id, 'RUNNING', { reason: 'attempt-started', attempt: priorAttempts.length + index + 1 });
+        const preCheckpoint = await this.checkpoint(project, task, priorAttempts.length + index + 1, 'pre-attempt');
+        if (task.require_clean_workspace && preCheckpoint?.dirty) {
+          await this.taskStore.transition(task.project_id, task.task_id, 'FAILED', { reason: 'dirty-workspace' });
+          await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'dirty-workspace' });
+          return { status: 'blocked', reason: 'dirty_workspace', checkpoint: preCheckpoint };
+        }
+        const attempt = await this.attemptStore.start(task.project_id, task.task_id, {
+          ...candidate, task_version: task.task_version ?? 1, memory_version: '0.1', workspace_checkpoint: preCheckpoint
+        });
+        await this.auditLog?.record('provider_called', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id });
+
+        let structured;
+        let providerResult;
+        let failureCategory = null;
+        let failureCode = null;
+        try {
+          const context = await this.contextBuilder.build(project.projectId, task, { providerContextTokens: candidate.context_size });
+          const provider = this.providerRegistry.get(candidate.provider_id);
+          const request = { task, project, profile: profiles.find((item) => item.profile_id === candidate.profile_id), model: candidate.model_id ?? task.model, context: context.rendered, prompt: task.prompt ?? context.rendered, signal: options.signal };
+          providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
+          structured = providerResult.structured ? validateStructuredResponse(providerResult.structured) : parseStructuredResponse(providerResult.output, { allowTextFallback: false }).response;
+          if (structured.status === 'failed') throw new AiRouterError('Provider reported failed structured execution.', 'PROVIDER_REPORTED_FAILURE');
+        } catch (error) {
+          if (error.code === 'SIMULATED_CRASH') throw error;
+          failureCategory = failureFrom(error);
+          failureCode = error.code ?? 'PROVIDER_EXECUTION_FAILED';
+        }
+
+        const proposedActions = structured?.proposed_actions ?? [];
+        let approvedActions = [];
+        let rejectedActions = [];
+        let executionResults = [];
+        if (!failureCategory) {
+          await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: proposedActions, summary: structured.summary });
+          await this.auditLog?.record('actions_proposed', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_ids: proposedActions.map((action) => action.action_id) });
+          const mediator = this.actionMediatorFactory?.({ project, task, attempt });
+          for (const action of proposedActions) {
+            let result;
+            if (executedActionIds.has(action.action_id)) {
+              result = { action_id: action.action_id, type: action.type, target: action.target ?? null, status: 'skipped-duplicate', result: { reason: 'already-completed' }, error: null };
+            } else if (!mediator) {
+              result = { action_id: action.action_id, status: 'rejected', error: { code: 'ACTION_MEDIATOR_UNAVAILABLE', message: 'No action mediator is configured.' } };
+            } else {
+              result = await mediator.execute(action, { dryRun: options.dryRun });
+            }
+            executionResults.push(result);
+            if (['completed', 'dry-run', 'skipped-duplicate'].includes(result.status)) {
+              approvedActions.push(action);
+              executedActionIds.add(action.action_id);
+            } else rejectedActions.push(action);
+            await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { approved_actions: approvedActions, rejected_actions: rejectedActions, execution_results: executionResults });
+            await this.auditLog?.record(['completed', 'dry-run', 'skipped-duplicate'].includes(result.status) ? 'action_approved' : 'action_rejected', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_id: action.action_id, action_type: action.type, target: action.target ?? null, error_code: result.error?.code ?? null });
+            await options.faultInjector?.('after-action-persisted', { action, result, attempt });
+          }
+          if (rejectedActions.length) { failureCategory = 'action_rejected'; failureCode = executionResults.find((result) => result.status === 'rejected')?.error?.code; }
+        }
+
+        let validation = null;
+        if (!failureCategory) {
+          await this.taskStore.transition(task.project_id, task.task_id, 'WAITING_VALIDATION', { reason: 'actions-finished', attempt: attempt.attempt_number });
+          const engine = this.validationEngineFactory?.({ project, task, attempt });
+          validation = task.validation_requirements?.length
+            ? engine ? await engine.validate(task.validation_requirements) : { passed: false, results: [{ passed: false, error: { code: 'VALIDATION_ENGINE_UNAVAILABLE' } }] }
+            : { passed: true, results: [], validated_at: new Date().toISOString() };
+          await this.auditLog?.record('validation', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, passed: validation.passed, result_count: validation.results.length });
+          if (!validation.passed) { failureCategory = 'validation_failure'; failureCode = 'VALIDATION_FAILED'; }
+        }
+
+        const postCheckpoint = await this.checkpoint(project, task, attempt.attempt_number, 'post-attempt', validation?.results?.map((result) => `${result.validation_id}:${result.passed}`) ?? []);
+        const next = candidates[index + 1] ?? null;
+        if (!failureCategory) {
+          if (structured.status === 'partial') {
+            await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
+              status: 'partial', proposed_actions: proposedActions, approved_actions: approvedActions,
+              rejected_actions: rejectedActions, execution_results: executionResults, validation,
+              summary: structured.summary, escalation_decision: 'planned-handoff', next_candidate: null
+            });
+            await this.circuitBreaker?.recordSuccess(candidate.provider_id, candidate.profile_id, candidate.model_id);
+            await this.profileRegistry.markSuccessful(candidate.profile_id);
+            await this.handoff(project, task, candidate, attempt, 'ready-for-handoff', {
+              completed_work: [structured.summary], remaining_work: structured.remaining_work,
+              files_touched: executionResults.filter((result) => result.status === 'completed').map((result) => result.target).filter(Boolean),
+              validation_performed: validation.results.map((result) => result.validation_id),
+              validation_results: validation.results.map((result) => `${result.validation_id}:${result.passed}`),
+              checkpoint: postCheckpoint, recommended_next_action: structured.handoff_notes[0] ?? 'Continue from the persisted handoff.',
+              confidence: structured.uncertainty.length ? 0.7 : 1, uncertainty: structured.uncertainty
+            });
+            await this.memoryManager.updateCurrentTask(project.projectId, {
+              task_id: task.task_id, objective: task.objective, status: 'ready-for-handoff',
+              acceptance_criteria: task.acceptance_criteria ?? [], completed_work: [structured.summary],
+              remaining_work: structured.remaining_work, constraints: task.constraints ?? [], do_not_modify: task.do_not_modify ?? []
+            });
+            await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'planned-handoff', attempt: attempt.attempt_number });
+            await this.auditLog?.record('handoff_ready', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number });
+            return { status: 'ready-for-handoff', route, selected: candidate, attempt: attempt.attempt_number, validation, checkpoint: postCheckpoint };
+          }
+          await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
+            status: 'success', proposed_actions: proposedActions, approved_actions: approvedActions,
+            rejected_actions: rejectedActions, execution_results: executionResults, validation,
+            summary: structured.summary, escalation_decision: 'stop-success', next_candidate: null
+          });
+          await this.circuitBreaker?.recordSuccess(candidate.provider_id, candidate.profile_id, candidate.model_id);
+          await this.profileRegistry.markSuccessful(candidate.profile_id);
+          await this.handoff(project, task, candidate, attempt, 'completed', {
+            completed_work: [structured.summary], remaining_work: structured.remaining_work,
+            files_touched: executionResults.filter((result) => result.status === 'completed').map((result) => result.target).filter(Boolean),
+            validation_performed: validation.results.map((result) => result.validation_id),
+            validation_results: validation.results.map((result) => `${result.validation_id}:${result.passed}`),
+            checkpoint: postCheckpoint, recommended_next_action: structured.handoff_notes[0] ?? 'No remaining work.',
+            confidence: structured.uncertainty.length ? 0.7 : 1, uncertainty: structured.uncertainty
+          });
+          await this.taskStore.transition(task.project_id, task.task_id, 'COMPLETED', { reason: 'router-validation-passed', attempt: attempt.attempt_number });
+          await this.memoryManager.updateCurrentTask(project.projectId, {
+            task_id: task.task_id, objective: task.objective, status: 'completed',
+            acceptance_criteria: task.acceptance_criteria ?? [], completed_work: [structured.summary],
+            remaining_work: structured.remaining_work, constraints: task.constraints ?? [], do_not_modify: task.do_not_modify ?? []
+          });
+          await this.auditLog?.record('completion', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, status: 'completed' });
+          return { status: 'completed', route, selected: candidate, attempt: attempt.attempt_number, validation, checkpoint: postCheckpoint };
+        }
+
+        await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
+          status: 'failed', proposed_actions: proposedActions, approved_actions: approvedActions,
+          rejected_actions: rejectedActions, execution_results: executionResults, validation,
+          failure_category: failureCategory, summary: structured?.summary ?? failureCode,
+          escalation_decision: next ? 'escalate' : 'block', next_candidate: next
+        });
+        await this.circuitBreaker?.recordFailure(candidate.provider_id, candidate.profile_id, candidate.model_id, failureCategory);
+        const current = await this.taskStore.get(task.project_id, task.task_id);
+        if (current.state === 'WAITING_VALIDATION' || current.state === 'RUNNING') await this.taskStore.transition(task.project_id, task.task_id, 'FAILED', { reason: failureCategory, attempt: attempt.attempt_number });
+        await this.handoff(project, task, candidate, attempt, next ? 'ready-for-handoff' : 'blocked', {
+          completed_work: approvedActions.map((action) => `Executed ${action.action_id}`), remaining_work: structured?.remaining_work?.length ? structured.remaining_work : [task.objective],
+          failed_attempts: [failureCode ?? failureCategory], known_issues: [failureCategory], checkpoint: postCheckpoint,
+          recommended_next_action: next ? `Escalate to ${next.provider_id}/${next.profile_id}.` : 'Operator review required.',
+          uncertainty: structured?.uncertainty ?? []
+        });
+        await this.auditLog?.record('escalation', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, failure_category: failureCategory, next_candidate: next ? { provider_id: next.provider_id, profile_id: next.profile_id, model_id: next.model_id } : null });
+        if (failureCategory === 'user_cancelled' || options.signal?.aborted) {
+          await this.taskStore.transition(task.project_id, task.task_id, 'CANCELLED', { reason: 'user-cancelled', attempt: attempt.attempt_number });
+          return { status: 'cancelled', attempts: await this.attemptStore.list(task.project_id, task.task_id) };
+        }
+        if (next) {
+          await this.taskStore.transition(task.project_id, task.task_id, 'ESCALATING', { reason: failureCategory, attempt: attempt.attempt_number });
+          await this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'next-candidate', attempt: attempt.attempt_number + 1 });
+        }
+      }
+      const final = await this.taskStore.get(task.project_id, task.task_id);
+      if (final.state === 'FAILED') await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'attempts-exhausted' });
+      return { status: 'blocked', route, attempts: await this.attemptStore.list(task.project_id, task.task_id), reason: 'attempts-exhausted' };
+    } finally {
+      await lease.release();
+    }
+  }
+
+  resume(task, options = {}) { return this.run(task, { ...options, resume: true }); }
+}
