@@ -1,0 +1,20 @@
+{
+  "name": "ai-work-router",
+  "version": "0.1.0",
+  "description": "Provider-independent continuity foundation for AI-assisted project work.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "ai-router": "./interfaces/cli/ai-router.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "demo": "node scripts/continuity-demo.js",
+    "status": "node interfaces/cli/ai-router.js status"
+  }
+}
+

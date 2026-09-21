@@ -1,0 +1,49 @@
+# Dependencies and build outputs
+node_modules/
+coverage/
+dist/
+build/
+
+# Environment and private configuration
+.env
+.env.*
+!.env.example
+config/local.json
+config/local.*.json
+*.local.json
+*.private.json
+secrets/
+credentials/
+**/auth.json
+**/*token*
+**/*secret*
+**/*credential*
+
+# AI Router private runtime state (including sibling data directories)
+AI-Router-Data/
+**/AI-Router-Data/
+runtime/
+runtime-data/
+state/
+accounts/
+profiles/
+project-memories/
+projects-memory/
+
+# Logs, caches, and temporary files
+*.log
+logs/
+.cache/
+cache/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
