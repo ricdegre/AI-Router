@@ -14,10 +14,15 @@ The orchestrator persists the task transition, attempt, proposed actions, and ex
 2. moves a non-terminal task back through escalation and routing;
 3. excludes already attempted provider/profile/model candidates;
 4. loads persisted memory and handoff;
-5. skips an action ID whose approved receipt already exists;
-6. reruns router-owned validation before completion.
+5. verifies the hash-chained recovery journal;
+6. classifies workspace drift and inspects any intent without a receipt;
+7. recovers observed postconditions or permits replay only while the precondition still holds;
+8. skips an action identity whose approved/recovered receipt already exists;
+9. reruns router-owned validation before completion.
 
-Terminal tasks cannot be resumed. CLI resume is intentionally disabled until the full executable task descriptor can be durably reconstructed without guessing.
+Terminal tasks cannot be rerun. CLI resume is enabled only for validated Task Execution Descriptor 0.1 records whose task doctor recommendation is `RESUMABLE`. `BLOCKED` requires review; `CANCELLED` and `COMPLETED` are terminal.
+
+Independent-process tests prove that process B can reconstruct a process A task from runtime files alone. A separate-process lease test proves that concurrent resume of one project is blocked within a bounded wait.
 
 ## Checkpoints
 

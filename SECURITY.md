@@ -1,6 +1,6 @@
 # Security Model
 
-AI Router 0.3.0 is a pre-release local execution platform. It is not a general-purpose sandbox and must not be treated as production-ready.
+AI Router 0.4.0 is a pre-release local execution platform. It is not a general-purpose sandbox and must not be treated as production-ready.
 
 ## Trust boundaries
 
@@ -8,6 +8,7 @@ AI Router 0.3.0 is a pre-release local execution platform. It is not a general-p
 - The Action Mediator permits only named action types, verifies the workspace boundary, rejects links by default, limits text size, rejects binary content, and uses stale-source hashes for modifications.
 - Validation is performed by router-owned validators. A model's success claim cannot complete a task.
 - Runtime memory, profiles, attempts, backups, locks, and audit events live outside the source repository.
+- Durable descriptors and execution plans are strictly validated; recovery journals are append-only and hash-chained.
 - Secrets, credentials, tokens, API keys, private prompts, and full private conversations do not belong in shared memory or audit data. Secret-shaped fields are rejected.
 
 ## Filesystem protections
@@ -22,12 +23,12 @@ Arbitrary shell execution is not implemented. Validation commands must be regist
 
 ## Concurrency and recovery
 
-Project leases prevent two orchestrators from editing one project concurrently. Runtime JSON mutations use bounded exclusive locks, atomic replacement, stale-lock recovery, and ownership-checked release. Attempts and action receipts are persisted before continuation so resume can skip an already completed action ID.
+Project leases prevent two orchestrators from editing or resuming one project concurrently. Runtime JSON mutations use bounded exclusive locks, atomic replacement, stale-lock recovery, and ownership-checked release. Stable action identities, intent records, pre/post hashes, and receipts let resume inspect an uncertain mutation instead of blindly replaying it.
 
 ## Known limits
 
-- Action IDs provide at-most-once behavior only within one persisted task history; they are not a distributed transaction protocol.
-- A process can fail between an operating-system file write and receipt persistence. Exact source hashes and validation make recovery conservative, but do not make all external side effects transactional.
+- Recovery is not a distributed transaction protocol. It is limited to local, mediated effects with observable pre/postconditions.
+- A process can fail inside operating-system operations. Atomic text replacement plus hash inspection makes supported file actions conservative; unobservable or non-file side effects remain blocking.
 - Junction/reparse behavior varies by platform and filesystem; regression tests cover the host capabilities available during testing.
 - Provider content can still be misleading even when schema-valid. Human review remains appropriate for consequential work.
 - Cloud authentication, paid APIs, remote execution, and destructive rollback are intentionally absent.

@@ -8,6 +8,7 @@ const RISKS = new Set(['low', 'medium', 'high', 'critical']);
 const VALIDATORS = new Set(['file_exists', 'file_absent', 'exact_content', 'contains_text', 'json_parses', 'git_inspected', 'command']);
 const PROVIDER_KEYS = new Set(['allowed_provider_ids', 'denied_provider_ids', 'allowed_profile_ids', 'denied_profile_ids', 'require_local', 'allow_metered']);
 const MODEL_KEYS = new Set(['allowed_model_ids', 'denied_model_ids', 'minimum_strength', 'minimum_context_tokens', 'require_tool_support']);
+const COST_KEYS = new Set(['prefer_local', 'prefer_subscription', 'allow_metered', 'allow_unknown_cost', 'max_metered_cost']);
 const SENSITIVE = /^(password|secret|token|tokens|api[_-]?key|credential|credentials|private[_-]?prompt)$/i;
 
 function object(value, field) {
@@ -76,6 +77,19 @@ function timestamp(value, field, fallback) {
   return result;
 }
 
+function boundedInteger(value, fallback, minimum, maximum, field) {
+  const result = value ?? fallback;
+  if (!Number.isInteger(result) || result < minimum || result > maximum) throw new AiRouterError(`${field} must be an integer between ${minimum} and ${maximum}.`, 'UNSAFE_EXECUTION_LIMIT');
+  return result;
+}
+
+function optionalId(value, field) { return value === null || value === undefined ? null : safeId(value, field); }
+function optionalModelId(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value) || value.includes('..')) throw new AiRouterError('manual model is invalid.', 'INVALID_TASK_DESCRIPTOR');
+  return value;
+}
+
 export function validateTaskExecutionDescriptor(input, options = {}) {
   rejectSensitive(input);
   object(input, 'descriptor');
@@ -94,7 +108,7 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
   if (typeof workspacePath !== 'string' || !path.isAbsolute(workspacePath)) throw new AiRouterError('filesystem_scope.workspace_path must be absolute.', 'UNSAFE_TASK_PATH');
   const allowedPaths = strings(input.filesystem_scope?.allowed_paths, 'filesystem_scope.allowed_paths', ['.']).map((entry) => safeRelative(entry, 'allowed path'));
   const deniedPaths = strings(input.filesystem_scope?.denied_paths, 'filesystem_scope.denied_paths', []).map((entry) => safeRelative(entry, 'denied path'));
-  const cost = object(input.preferred_cost_policy ?? {}, 'preferred_cost_policy');
+  const cost = constrainedObject(input.preferred_cost_policy, COST_KEYS, 'cost policy');
   if (cost.allow_metered !== true && provider.allow_metered === true) throw new AiRouterError('Provider constraints cannot implicitly activate metered APIs.', 'IMPLICIT_PAID_API_ACTIVATION');
   const now = new Date().toISOString();
   return {
@@ -102,7 +116,7 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
     task_id: safeId(input.task_id, 'task_id'), project_id: safeId(input.project_id, 'project_id'),
     created_at: timestamp(input.created_at, 'created_at', now), updated_at: timestamp(input.updated_at, 'updated_at', now),
     objective: typeof input.objective === 'string' && input.objective.trim() ? input.objective.trim() : (() => { throw new AiRouterError('objective is required.', 'INVALID_TASK_DESCRIPTOR'); })(),
-    task_type: input.task_type ?? 'general', risk: RISKS.has(input.risk ?? 'low') ? input.risk ?? 'low' : (() => { throw new AiRouterError('risk is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(),
+    task_type: typeof (input.task_type ?? 'general') === 'string' ? input.task_type ?? 'general' : (() => { throw new AiRouterError('task_type is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(), risk: RISKS.has(input.risk ?? 'low') ? input.risk ?? 'low' : (() => { throw new AiRouterError('risk is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(),
     required_capabilities: strings(input.required_capabilities, 'required_capabilities', []),
     preferred_cost_policy: { prefer_local: true, prefer_subscription: true, allow_metered: false, allow_unknown_cost: false, ...cost },
     provider_constraints: {
@@ -112,17 +126,18 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
     },
     model_constraints: {
       allowed_model_ids: strings(model.allowed_model_ids, 'allowed_model_ids', []), denied_model_ids: strings(model.denied_model_ids, 'denied_model_ids', []),
-      minimum_strength: model.minimum_strength ?? null, minimum_context_tokens: model.minimum_context_tokens ?? null, require_tool_support: model.require_tool_support ?? false
+      minimum_strength: model.minimum_strength == null ? null : ['basic', 'standard', 'strong'].includes(model.minimum_strength) ? model.minimum_strength : (() => { throw new AiRouterError('minimum_strength is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(),
+      minimum_context_tokens: model.minimum_context_tokens == null ? null : boundedInteger(model.minimum_context_tokens, null, 1, 10_000_000, 'minimum_context_tokens'), require_tool_support: model.require_tool_support ?? false
     },
-    manual_overrides: { provider_id: input.manual_overrides?.provider_id ?? null, profile_id: input.manual_overrides?.profile_id ?? null, model_id: input.manual_overrides?.model_id ?? null },
+    manual_overrides: { provider_id: optionalId(input.manual_overrides?.provider_id, 'manual provider'), profile_id: optionalId(input.manual_overrides?.profile_id, 'manual profile'), model_id: optionalModelId(input.manual_overrides?.model_id) },
     validation_requirements: validationRequirements(input.validation_requirements), action_policy: actionPolicy(input.action_policy),
     filesystem_scope: { workspace_path: path.resolve(workspacePath), allowed_paths: allowedPaths, denied_paths: deniedPaths },
-    execution_limits: { max_attempts: maxAttempts, max_actions_per_attempt: Math.min(Math.max(limits.max_actions_per_attempt ?? 20, 0), 100), max_file_bytes: Math.min(Math.max(limits.max_file_bytes ?? 1_048_576, 1), 10_485_760), provider_timeout_ms: timeoutMs },
-    timeout_policy: { on_timeout: input.timeout_policy?.on_timeout ?? 'escalate', max_timeouts: Math.min(Math.max(input.timeout_policy?.max_timeouts ?? 2, 0), maxAttempts) },
+    execution_limits: { max_attempts: maxAttempts, max_actions_per_attempt: boundedInteger(limits.max_actions_per_attempt, 20, 0, 100, 'max_actions_per_attempt'), max_file_bytes: boundedInteger(limits.max_file_bytes, 1_048_576, 1, 10_485_760, 'max_file_bytes'), provider_timeout_ms: timeoutMs },
+    timeout_policy: { on_timeout: ['escalate', 'block'].includes(input.timeout_policy?.on_timeout ?? 'escalate') ? input.timeout_policy?.on_timeout ?? 'escalate' : (() => { throw new AiRouterError('timeout policy is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(), max_timeouts: boundedInteger(input.timeout_policy?.max_timeouts, Math.min(2, maxAttempts), 0, maxAttempts, 'max_timeouts') },
     escalation_policy: { enabled: input.escalation_policy?.enabled ?? true, categories: strings(input.escalation_policy?.categories, 'escalation categories', ['timeout', 'execution_failure', 'malformed_output', 'validation_failure', 'action_rejected']) },
-    context_policy: { budget_chars: Math.min(Math.max(input.context_policy?.budget_chars ?? 16_000, 1_000), 200_000), include_handoff: input.context_policy?.include_handoff ?? true, include_decisions: input.context_policy?.include_decisions ?? true },
+    context_policy: { budget_chars: boundedInteger(input.context_policy?.budget_chars, 16_000, 1_000, 200_000, 'context budget'), include_handoff: input.context_policy?.include_handoff ?? true, include_decisions: input.context_policy?.include_decisions ?? true },
     checkpoint_policy: { pre_task: input.checkpoint_policy?.pre_task ?? true, pre_attempt: input.checkpoint_policy?.pre_attempt ?? true, post_attempt: input.checkpoint_policy?.post_attempt ?? true, final_validated: input.checkpoint_policy?.final_validated ?? true, require_clean_workspace: input.checkpoint_policy?.require_clean_workspace ?? false },
-    resume_policy: { automatic_states: strings(input.resume_policy?.automatic_states, 'automatic_states', ['CREATED', 'READY', 'ROUTING', 'ESCALATING', 'WAITING_VALIDATION']), failed: input.resume_policy?.failed ?? 'escalate', workspace_drift: input.resume_policy?.workspace_drift ?? 'block' },
+    resume_policy: { automatic_states: strings(input.resume_policy?.automatic_states, 'automatic_states', ['CREATED', 'READY', 'ROUTING', 'ESCALATING', 'WAITING_VALIDATION']), failed: ['escalate', 'review'].includes(input.resume_policy?.failed ?? 'escalate') ? input.resume_policy?.failed ?? 'escalate' : (() => { throw new AiRouterError('failed resume policy is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(), workspace_drift: ['block', 'review'].includes(input.resume_policy?.workspace_drift ?? 'block') ? input.resume_policy?.workspace_drift ?? 'block' : (() => { throw new AiRouterError('workspace drift policy is invalid.', 'INVALID_TASK_DESCRIPTOR'); })() },
     execution_input: { instruction: typeof input.execution_input?.instruction === 'string' ? input.execution_input.instruction.slice(0, 64 * 1024) : '' },
     current_state: state, last_successful_step: input.last_successful_step ?? null, next_safe_action: input.next_safe_action ?? null,
     memory_version: input.memory_version ?? '0.1', descriptor_revision: Number.isInteger(input.descriptor_revision) ? input.descriptor_revision : 1,

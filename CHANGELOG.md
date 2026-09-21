@@ -2,6 +2,15 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.4.0 — Durable resumable task execution
+
+- Added Task Execution Descriptor Protocol 0.1 with strict validation, safe defaults, persistent plans, and explicit migration hooks with backups.
+- Added Recovery Journal Protocol 0.1 with hash chaining and intent/side-effect/receipt/validation boundaries.
+- Added stable action execution identities, pre/postcondition receipts, and uncertain-effect reconciliation.
+- Added workspace drift classification, state resume matrix, resume explainability, task doctor, and safe CLI task operations.
+- Added crash injection across provider/action/validation/escalation boundaries and independent-process recovery/locking tests.
+- Cloud-provider authentication remains intentionally absent.
+
 ## 0.3.0 — Safe local execution and resilient orchestration
 
 - Added Structured Response Protocol 0.1 and adversarial parsing tests.

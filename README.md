@@ -22,11 +22,12 @@ This repository currently provides:
 - a structured response protocol that treats model output as untrusted proposals;
 - safe paths, controlled text actions, exact stale-protected changesets, private backups, and independent validation;
 - persistent task states, attempt history, bounded executable escalation, audit events, project leases, and crash recovery;
+- Task Execution Descriptor 0.1, persistent execution plans, hash-chained recovery journals, workspace drift classification, and safe disk-only resume;
 - a continuity orchestrator tested across isolated Agent A and Agent B instances, including a live local Ollama stage;
 - operator commands and a privacy-conscious diagnostic report;
 - an artificial continuity demo and isolated tests.
 
-Real cloud-provider execution, account authentication, automatic rollback, model-driven routing, and graphical interfaces are **not implemented**. Ollama execution requires an explicit installed model and is never activated implicitly by startup.
+Real cloud-provider execution, OpenAI/Gemini/Claude account authentication, automatic rollback, model-driven routing, and graphical interfaces are **not implemented**. Ollama execution requires an explicit installed model and is never activated implicitly by startup.
 
 ## Conceptual architecture
 
@@ -44,6 +45,8 @@ flowchart LR
     ORCH --> ACTIONS[Action Mediator]
     ORCH --> VALIDATE[Validation Engine]
     ORCH --> ATTEMPTS[Task and Attempt Store]
+    ORCH --> DESC[Task Descriptor and Plan]
+    ORCH --> JOURNAL[Recovery Journal]
     POLICY --> PREG[Provider Registry]
     POLICY --> PROFILES[Private Profile Registry]
     PREG --> OLLAMA[Ollama adapter]
@@ -70,11 +73,11 @@ Environment variables override local configuration:
 - `AI_ROUTER_DATA`: private runtime data root.
 - `PROJECT_ROOTS`: project roots separated by the operating system path delimiter.
 
-Run `node interfaces/cli/ai-router.js help` for available commands, including `doctor`, provider health, task attempts, audit inspection, memory validation, and `route explain`.
+Run `node interfaces/cli/ai-router.js help` for available commands, including `doctor`, provider health, task list/show/attempts/resume/validate/doctor, audit inspection, memory validation, and `route explain`.
 
 ## Development status
 
-AI Router 0.3.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [the roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [security model](SECURITY.md), [operator guide](docs/OPERATIONS.md), [memory protocol](docs/MEMORY_PROTOCOL.md), and [provider protocol](docs/PROVIDER_PROTOCOL.md).
+AI Router 0.4.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [the task descriptor](docs/TASK_EXECUTION_DESCRIPTOR.md), [recovery journal](docs/RECOVERY_JOURNAL.md), [roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md), [security model](SECURITY.md), and [operator guide](docs/OPERATIONS.md).
 
 ## License
 

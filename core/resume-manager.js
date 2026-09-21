@@ -6,14 +6,15 @@ export class ResumeManager {
   constructor(dependencies) { Object.assign(this, dependencies); }
 
   async explain(taskId, options = {}) {
+    try {
     const descriptor = await this.descriptorStore.find(taskId, options.projectId);
     const project = await this.projectRegistry.get(descriptor.project_id);
-    const [task, attempts, memory, lock, journalIntegrity, pending] = await Promise.all([
+    const [task, attempts, memory, lock, journalIntegrity] = await Promise.all([
       this.taskStore.get(descriptor.project_id, descriptor.task_id), this.attemptStore.list(descriptor.project_id, descriptor.task_id),
       this.memoryManager.summary(descriptor.project_id), this.projectCoordinator.inspect(descriptor.project_id),
-      this.recoveryJournal.verify(descriptor.project_id, descriptor.task_id),
-      this.recoveryJournal.inspectPending(descriptor.project_id, descriptor.task_id, project.workspacePath)
+      this.recoveryJournal.verify(descriptor.project_id, descriptor.task_id)
     ]);
+    const pending = journalIntegrity.valid ? await this.recoveryJournal.inspectPending(descriptor.project_id, descriptor.task_id, project.workspacePath) : [];
     const drift = await detectWorkspaceDrift({ descriptor, project, memory, attempts, pendingActions: pending });
     if (descriptor.current_state !== task.state) {
       drift.findings.push({ classification: 'BLOCKING', code: 'descriptor-state-mismatch', descriptor: descriptor.current_state, task: task.state });
@@ -36,6 +37,15 @@ export class ResumeManager {
       provider_candidate: route?.selected ?? null, validation_pending: task.state === 'WAITING_VALIDATION' || lastAttempt?.validation === null,
       checkpoint_reference: drift.checkpoint?.commit ?? null, last_attempt: lastAttempt ? { attempt_number: lastAttempt.attempt_number, status: lastAttempt.status, failure_category: lastAttempt.failure_category } : null
     };
+    } catch (error) {
+      return {
+        resume_explanation_version: '0.1', recommendation: 'BLOCKED', automatic: false,
+        reasons: [error.code ?? 'resume-inspection-failed'], task: { task_id: taskId, project_id: options.projectId ?? null, state: null, descriptor_revision: null },
+        workspace_drift: null, lock: null, journal: { valid: false, pending: [], reason: error.code ?? 'resume-inspection-failed' },
+        last_completed_action: null, pending_action: null, provider_candidate: null, validation_pending: null,
+        checkpoint_reference: null, last_attempt: null, error: { code: error.code ?? 'RESUME_INSPECTION_FAILED', message: error.message }
+      };
+    }
   }
 
   async reconcile(explanation) {

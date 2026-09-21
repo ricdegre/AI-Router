@@ -90,9 +90,11 @@ async function run() {
     return print({
       status: 'ready',
       version: packageMetadata.version,
-      platform_stage: 'safe-local-execution-resilient-orchestration',
+      platform_stage: 'durable-resumable-task-execution',
       memory_protocol: '0.1',
       provider_protocol: '0.1',
+      task_execution_descriptor_protocol: '0.1',
+      recovery_journal_protocol: '0.1',
       configuration: publicConfigSummary(config),
       registeredProjects: projects.length,
       registeredProviders: providerRegistry.list().length,

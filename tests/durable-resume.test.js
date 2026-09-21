@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -83,6 +83,15 @@ test('blocking external drift prevents resume instead of guessing', async (t) =>
   const explanation = await item.services.resumeManager.explain(item.task.task_id);
   assert.equal(explanation.recommendation, 'BLOCKED');
   assert.ok(explanation.journal.pending.some((entry) => entry.recovery === 'BLOCKING'));
+});
+
+test('corrupt recovery journal produces BLOCKED explanation', async (t) => {
+  const item = await setup(t, { taskId: 'corrupt-journal-01' });
+  await assert.rejects(() => item.services.orchestrator.run(item.task, { maxAttempts: 2, faultInjector: async (stage) => { if (stage === 'before-provider-call') throw new AiRouterError('crash', 'SIMULATED_CRASH'); } }), { code: 'SIMULATED_CRASH' });
+  await appendFile(item.services.recoveryJournal.path(item.project.projectId, item.task.task_id), '{truncated\n');
+  const explanation = await item.services.resumeManager.explain(item.task.task_id);
+  assert.equal(explanation.recommendation, 'BLOCKED');
+  assert.equal(explanation.journal.valid, false);
 });
 
 test('descriptor action count limit rejects the whole batch before mutation', async (t) => {

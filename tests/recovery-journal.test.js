@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { temporaryDirectory } from './helpers.js';
 import { RecoveryJournal } from '../core/recovery-journal.js';
@@ -12,6 +12,16 @@ test('recovery journal preserves an append-only hash chain', async (t) => {
   await journal.record('project-01', 'task-01', 'task_intent', { objective: 'synthetic' });
   await journal.record('project-01', 'task-01', 'provider_intent', { attempt_number: 1, provider_id: 'mock-a' });
   assert.deepEqual(await journal.verify('project-01', 'task-01'), { valid: true, events: 2, last_hash: (await journal.list('project-01', 'task-01'))[1].event_hash });
+});
+
+test('corrupt or tampered journals fail verification without unsafe continuation', async (t) => {
+  const root = await temporaryDirectory(t);
+  const journal = new RecoveryJournal(root);
+  await journal.record('project-01', 'task-01', 'task_intent', { objective: 'synthetic' });
+  await appendFile(journal.path('project-01', 'task-01'), '{truncated\n');
+  const verification = await journal.verify('project-01', 'task-01');
+  assert.equal(verification.valid, false);
+  assert.equal(verification.reason, 'CORRUPT_RECOVERY_JOURNAL');
 });
 
 test('pending side effects are recovered, replay-safe, or blocked from actual state', async (t) => {

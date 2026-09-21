@@ -19,8 +19,9 @@ test('descriptor safe defaults are bounded and reconstruct an executable task', 
   assert.equal(descriptor.action_policy.allow_arbitrary_shell, false);
   assert.deepEqual(descriptor.action_policy.allowed, ['read_file', 'list_directory', 'inspect_git_status']);
   assert.equal(descriptorToTask(descriptor).max_attempts, 3);
-  const fromTask = descriptorFromTask({ task_id: 'task-02', project_id: 'project-01', objective: 'x', validation_requirements: [] }, { workspacePath: root });
+  const fromTask = descriptorFromTask({ task_id: 'task-02', project_id: 'project-01', objective: 'x', manual_model: 'qwen3.5:9b', validation_requirements: [] }, { workspacePath: root });
   assert.equal(fromTask.current_state, 'CREATED');
+  assert.equal(fromTask.manual_overrides.model_id, 'qwen3.5:9b');
 });
 
 test('descriptor rejects unsupported, unsafe, unlimited, paid, and malformed inputs', async (t) => {
@@ -28,6 +29,7 @@ test('descriptor rejects unsupported, unsafe, unlimited, paid, and malformed inp
   assert.throws(() => validateTaskExecutionDescriptor({ ...valid(root), schema_version: '9.0' }), { code: 'UNSUPPORTED_TASK_DESCRIPTOR_VERSION' });
   assert.throws(() => validateTaskExecutionDescriptor({ ...valid(root), filesystem_scope: { workspace_path: root, allowed_paths: ['../escape'] } }), { code: 'UNSAFE_TASK_PATH' });
   assert.throws(() => validateTaskExecutionDescriptor({ ...valid(root), execution_limits: { max_attempts: 0 } }), { code: 'UNSAFE_EXECUTION_LIMIT' });
+  assert.throws(() => validateTaskExecutionDescriptor({ ...valid(root), execution_limits: { max_actions_per_attempt: 'many' } }), { code: 'UNSAFE_EXECUTION_LIMIT' });
   assert.throws(() => validateTaskExecutionDescriptor({ ...valid(root), action_policy: { allowed: ['delete_tree'] } }), { code: 'UNSAFE_ACTION_PERMISSION' });
   assert.throws(() => validateTaskExecutionDescriptor({ ...valid(root), provider_constraints: { allow_metered: true } }), { code: 'IMPLICIT_PAID_API_ACTIVATION' });
   assert.throws(() => validateTaskExecutionDescriptor({ ...valid(root), provider_constraints: { magical_gateway: true } }), { code: 'UNSUPPORTED_TASK_CONSTRAINT' });

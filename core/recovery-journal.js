@@ -8,7 +8,7 @@ import { contentHash } from '../actions/changeset.js';
 import { AiRouterError } from './errors.js';
 
 const TYPES = new Set(['task_intent', 'provider_intent', 'provider_response', 'action_intent', 'action_side_effect', 'action_receipt', 'action_recovered', 'validation_intent', 'validation_receipt', 'transition_intent', 'transition_receipt', 'escalation_intent', 'escalation_receipt']);
-const SENSITIVE = /(password|secret|token|api.?key|credential|private.?prompt)/i;
+const SENSITIVE = /^(password|secret|token|tokens|api[_-]?key|credential|credentials|private[_-]?prompt)$/i;
 
 function rejectSensitive(value) {
   if (!value || typeof value !== 'object') return;
@@ -23,7 +23,7 @@ export class RecoveryJournal {
 
   async list(projectId, taskId) {
     try { return (await readFile(this.path(projectId, taskId), 'utf8')).split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)); }
-    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    catch (error) { if (error.code === 'ENOENT') return []; if (error instanceof SyntaxError) throw new AiRouterError('Recovery journal contains invalid JSON.', 'CORRUPT_RECOVERY_JOURNAL'); throw error; }
   }
 
   async record(projectId, taskId, type, data = {}) {
@@ -42,7 +42,8 @@ export class RecoveryJournal {
   }
 
   async verify(projectId, taskId) {
-    const events = await this.list(projectId, taskId);
+    let events;
+    try { events = await this.list(projectId, taskId); } catch (error) { return { valid: false, events: 0, reason: error.code ?? 'journal-unreadable' }; }
     let previous = null;
     for (let index = 0; index < events.length; index += 1) {
       const { event_hash: hash, ...body } = events[index];

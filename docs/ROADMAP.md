@@ -39,3 +39,9 @@
 Implemented: structured provider output, model-aware deterministic routing, controlled workspace actions, exact changesets, independent validation, executable bounded escalation, task/attempt persistence, runtime and project locking, circuit state, generic limits and cost policy, audit events, crash recovery, diagnostics, and a synthetic live Ollama-to-mock handoff.
 
 Still deferred: LLM-driven routing, real cloud-provider authentication, remote execution, destructive rollback, graphical interfaces, distributed coordination, and production deployment.
+
+## Durable resume milestone (0.4.0)
+
+Implemented: Task Execution Descriptor 0.1, persistent execution plans, Recovery Journal 0.1, stable action identity, pre/postcondition reconciliation, resume safety matrix, drift detection, explainable CLI resume, task doctor, crash-boundary tests, and independent-process resume/locking.
+
+Next: harden provider credential references without storing credentials, define cloud-adapter capability/conformance fixtures, and add operator-mediated connection setup. No real cloud account should be connected until that security design is reviewed.

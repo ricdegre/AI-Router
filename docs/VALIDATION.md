@@ -28,3 +28,17 @@ No model was downloaded, no Ollama setting was changed, and the service was not 
 - Failure injection: timeout, provider unavailability, malformed JSON, stale/rejected action, validation failure, lock contention, corrupt JSON registry, missing project, dirty Git, and mocked Ollama offline paths are covered.
 
 All live work was confined to synthetic repositories under the private runtime root. No model was downloaded, no service or GPU setting was changed, no external account was accessed, and no paid API was called.
+
+## Durable resumable task execution block — 2026-09-21
+
+- Full automated suite: 92 passed, 0 failed.
+- Task Execution Descriptor 0.1 validation covers unsupported versions, unsafe paths, unbounded/invalid limits, unknown actions, implicit metered activation, malformed validation, invalid state combinations, persistence, lookup, and explicit backed-up migration.
+- Crash matrix passed before provider call, after provider response, before action, inside action before write, inside action after write, after action before receipt, before validation, after validation before state update, and during escalation.
+- Independent-process test passed: process B resumed process A using only registry, descriptor, plan, memory, attempts, checkpoints, profiles, task state, and recovery journal on disk.
+- Separate-process locking test passed: a concurrent resume observed the project lease and returned blocked.
+- Drift tests passed for clean state, working-tree review, changed Git commit, moved project path, memory version mismatch, and changed touched-file hash.
+- CLI task operations passed for list, show, attempts, validate, resume explain, terminal resume, and task doctor.
+- Live synthetic task doctor: `COMPLETED`, workspace drift `SAFE`, journal chain valid with 15 events, no pending effects, and no active lock.
+- Global `ai-router doctor`: `ok`, version 0.4.0, no active project locks.
+
+No real user project, cloud account, paid API, Ollama configuration, model installation, or GPU setting was used or modified in this block.

@@ -24,6 +24,9 @@ AI Router is split into a public source repository and a private runtime data ro
 12. **Validation Engine** evaluates router-owned acceptance requirements independently from provider claims.
 13. **Resilient Orchestrator** persists states and attempts, coordinates one writer per project, escalates through bounded candidates, and reconstructs work after interruption.
 14. **Audit and Diagnostics** expose operational evidence without private prompts or secret fields.
+15. **Task Execution Descriptor** persists complete task policy and execution limits independently of process memory.
+16. **Execution Plan and Recovery Journal** preserve step progress and intent/receipt evidence across crashes.
+17. **Resume Manager** validates state, journal, drift, locks, checkpoints, providers, attempts, and safety matrix before reconstructing work.
 
 ## Data flow
 
@@ -35,7 +38,28 @@ Interfaces depend on core services. Core services depend on configuration and st
 
 ## Current implementation
 
-The platform implements configuration, a locked JSON project registry, Memory/Handoff Protocol 0.1, filesystem-backed project memory, Git inspection and staged checkpoint metadata, Provider Protocol 0.1, Structured Response Protocol 0.1, private profiles, model-aware Ollama discovery/execution, deterministic routing, controlled actions, independent validation, bounded executable escalation, crash recovery, diagnostics, CLI, mocks, and integration tests. Cloud authentication remains deferred.
+The platform implements configuration, locked registries, Memory/Handoff Protocol 0.1, Task Execution Descriptor 0.1, Recovery Journal 0.1, persistent execution plans, Git checkpoint metadata, Provider and Structured Response Protocol 0.1, private profiles, model-aware Ollama execution, deterministic routing, controlled actions, independent validation, bounded escalation, drift-aware disk-only resume, diagnostics, CLI, mocks, and multiprocess tests. Cloud authentication remains deferred.
+
+```mermaid
+flowchart TD
+    D[Validated task descriptor] --> P[Persistent execution plan]
+    P --> I[Journal intent]
+    I --> S[Controlled side effect]
+    S --> R[Durable receipt]
+    R --> V[Independent validation]
+    V --> C[State + checkpoint + handoff]
+    X[Process restart] --> E[Resume explain / task doctor]
+    E --> J[Verify journal]
+    E --> W[Classify workspace drift]
+    E --> L[Check project lock]
+    E --> A[Inspect attempts and providers]
+    J --> Q{RESUMABLE?}
+    W --> Q
+    L --> Q
+    A --> Q
+    Q -->|yes| P
+    Q -->|review/block| B[Stop without guessing]
+```
 
 ```mermaid
 stateDiagram-v2
