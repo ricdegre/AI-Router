@@ -72,9 +72,8 @@ process.stdout.write(`${JSON.stringify({
   detected: scan.candidates >= 1,
   registered: true,
   memoryInitialized: true,
-  agentBUnderstandsRemaining: agentBView.handoff.remainingWork,
-  recommendedNextAction: agentBView.handoff.recommendedNextAction,
+  agentBUnderstandsRemaining: agentBView.handoff.remaining_work,
+  recommendedNextAction: agentBView.handoff.recommended_next_action,
   checkpoint: checkpoint.commit,
   projectStatus: project.status
 }, null, 2)}\n`);
-

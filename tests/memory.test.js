@@ -33,13 +33,14 @@ test('handoff and current task round-trip structured continuity data', async (t)
   await memory.updateCurrentTask(project.projectId, { task: 'Test continuity', status: 'in-progress', remainingWork: ['Finish it'] });
   await memory.createHandoff(project.projectId, {
     task: 'Test continuity', agent: 'Agent A', provider: 'test-provider', accountProfile: 'profile-a',
-    status: 'ready', completedWork: ['Setup'], remainingWork: ['Finish it'], filesTouched: [], validation: ['Tests pass'],
+    status: 'ready-for-handoff', completedWork: ['Setup'], remainingWork: ['Finish it'], filesTouched: [], validation: ['Tests pass'],
     failures: [], doNotModify: ['Unrelated files'], lastCheckpoint: 'abc', recommendedNextAction: 'Finish it'
   });
   const summary = await memory.summary(project.projectId);
-  assert.equal(summary.currentTask.task, 'Test continuity');
-  assert.equal(summary.handoff.agent, 'Agent A');
-  assert.deepEqual(summary.handoff.remainingWork, ['Finish it']);
+  assert.equal(summary.memory_schema_version, '0.1');
+  assert.equal(summary.currentTask.objective, 'Test continuity');
+  assert.equal(summary.handoff.agent_id, 'Agent A');
+  assert.deepEqual(summary.handoff.remaining_work, ['Finish it']);
 });
 
 test('shared memory rejects secret-shaped fields and unsafe project IDs', async (t) => {
@@ -49,3 +50,13 @@ test('shared memory rejects secret-shaped fields and unsafe project IDs', async 
   assert.throws(() => memory.projectDirectory('../escape'), { code: 'INVALID_PROJECT_ID' });
 });
 
+test('handoff protocol validates status and confidence', async (t) => {
+  const { project, memory } = await fixture(t);
+  await memory.initialize(project);
+  await assert.rejects(() => memory.createHandoff(project.projectId, {
+    task: 'x', agent: 'a', provider: 'p', status: 'invented', confidence: 2
+  }), { code: 'INVALID_HANDOFF_STATUS' });
+  await assert.rejects(() => memory.createHandoff(project.projectId, {
+    task: 'x', agent: 'a', provider: 'p', status: 'completed', confidence: 2
+  }), { code: 'INVALID_HANDOFF_CONFIDENCE' });
+});

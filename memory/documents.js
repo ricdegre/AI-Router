@@ -24,7 +24,7 @@ export function renderCurrentTask(data) {
 
 ## Task
 
-${clean(data.task)}
+${clean(data.objective)}
 
 ## Status
 
@@ -32,19 +32,23 @@ ${clean(data.status)}
 
 ## Acceptance criteria
 
-${clean(data.acceptanceCriteria)}
+${clean(data.acceptance_criteria)}
 
 ## Completed work
 
-${clean(data.completedWork)}
+${clean(data.completed_work)}
 
 ## Remaining work
 
-${clean(data.remainingWork)}
+${clean(data.remaining_work)}
+
+## Constraints
+
+${clean(data.constraints)}
 
 ## Do not modify
 
-${clean(data.doNotModify)}
+${clean(data.do_not_modify)}
 
 ${structuredBlock(data)}
 `;
@@ -55,50 +59,69 @@ export function renderHandoff(data) {
 
 ## Task
 
-${clean(data.task)}
+${clean(data.objective)}
 
 ## Agent and resource
 
-- Agent: ${clean(data.agent)}
-- Provider: ${clean(data.provider)}
-- Account/profile: ${clean(data.accountProfile)}
+- Agent: ${clean(data.agent_id)}
+- Provider: ${clean(data.provider_id)}
+- Account/profile: ${clean(data.profile_id)}
 - Status: ${clean(data.status)}
-- Started: ${clean(data.startedAt)}
-- Completed: ${clean(data.completedAt)}
+- Started: ${clean(data.started_at)}
+- Stopped/completed: ${clean(data.stopped_at)}
 
 ## Completed work
 
-${clean(data.completedWork)}
+${clean(data.completed_work)}
 
 ## Remaining work
 
-${clean(data.remainingWork)}
+${clean(data.remaining_work)}
 
 ## Files touched
 
-${clean(data.filesTouched)}
+${clean(data.files_touched)}
 
 ## Validation
 
-${clean(data.validation)}
+### Performed
+
+${clean(data.validation_performed)}
+
+### Results
+
+${clean(data.validation_results)}
 
 ## Failures already attempted
 
-${clean(data.failures)}
+${clean(data.failed_attempts)}
+
+## Known issues
+
+${clean(data.known_issues)}
+
+## Constraints
+
+${clean(data.constraints)}
 
 ## Do not modify
 
-${clean(data.doNotModify)}
+${clean(data.do_not_modify)}
 
 ## Last checkpoint
 
-${clean(data.lastCheckpoint)}
+${clean(data.checkpoint)}
 
 ## Recommended next action
 
-${clean(data.recommendedNextAction)}
+${clean(data.recommended_next_action)}
+
+## Confidence and uncertainty
+
+- Confidence: ${clean(data.confidence)}
+
+${clean(data.uncertainty_notes)}
 
 ${structuredBlock(data)}
 `;
 }
-
