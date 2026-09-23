@@ -52,6 +52,9 @@ test('profiles UI supports multi-account management and isolated connection test
   for (const text of ['Add Profile', 'Developer/Test Mode', 'Connect', 'Reconnect', 'Disconnect', 'Enable', 'Disable', 'Edit', 'Test Connection', 'Test Chat', 'Delete Profile', 'Maximum output tokens', 'no project files, tools, memory, Git, tasks, or routing']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   assert.match(app, /\/api\/profiles\/\$\{encodeURIComponent\(profileId\)\}\/test-chat/);
   assert.match(app, /developer_test_mode/);
+  assert.match(app, /Continue with ChatGPT/);
+  assert.match(app, /\/auth-status/);
+  assert.doesNotMatch(app, /Codex access token/);
 });
 
 test('Add Profile discovers provider models, filters embeddings, and requires explicit multi-model choice', async () => {

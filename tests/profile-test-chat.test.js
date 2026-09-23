@@ -50,6 +50,16 @@ test('cloud profiles can be saved unconfigured without models while local profil
   assert.equal(cloudCandidate.eligible, false); assert.ok(cloudCandidate.rejected.includes('provider-not-registered')); assert.notEqual(route.selected?.profile_id, 'openai-later');
 });
 
+test('a connected cloud profile becomes ready when its discovered model is selected', async (t) => {
+  const f = await fixture(t);
+  await f.services.profileRegistry.register({ profile_id: 'connected-cloud', provider_id: 'real-provider', display_name: 'Connected Cloud', auth_mode: 'chatgpt-oauth', location: 'cloud', cost_category: 'SUBSCRIPTION_INCLUDED', status: 'model-required', enabled: false });
+  await f.api.handlePost('/api/profiles', { profile_id: 'connected-cloud', provider_id: 'real-provider', display_name: 'Connected Cloud', auth_mode: 'chatgpt-oauth', location: 'cloud', cost_category: 'SUBSCRIPTION_INCLUDED', selected_model_id: 'gpt-test', models: [{ provider_id: 'real-provider', model_id: 'gpt-test' }] });
+  const profile = await f.services.profileRegistry.get('connected-cloud');
+  assert.equal(profile.status, 'ready');
+  assert.equal(profile.enabled, true);
+  assert.equal(profile.selected_model_id, 'gpt-test');
+});
+
 test('Test Connection reports auth, health, reachability, and model availability separately', async (t) => {
   const f = await fixture(t); const result = await f.api.handlePost('/api/profiles/account-one/test-connection', {});
   assert.equal(result.auth.status, 'not-required'); assert.equal(result.reachable, true); assert.equal(result.health.status, 'healthy'); assert.equal(result.model_list_available, false);

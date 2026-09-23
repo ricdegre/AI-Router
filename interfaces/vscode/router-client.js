@@ -21,8 +21,12 @@ class RouterClient {
     if (existing) return existing;
     const result = await this.post('/api/projects/register', { path: workspacePath, display_name: displayName }); return result.project;
   }
-  explain(objective) { return this.get(`/api/routing/explain?objective=${encodeURIComponent(objective)}&task_type=coding&risk=low&capability=coding`); }
-  createTask(projectId, objective, instruction) { return this.post('/api/tasks', { project_id: projectId, objective, instruction, task_type: 'coding', risk: 'low', required_capabilities: ['coding'], action_policy: { allowed: ['read_file', 'list_directory', 'inspect_git_status', 'create_file', 'modify_file', 'append_file', 'run_validation_command'], denied: [] } }); }
+  explain(objective, selection = {}) {
+    const query = new URLSearchParams({ objective, task_type: 'coding', risk: 'low', capability: 'coding' });
+    if (selection.provider_id) query.set('provider', selection.provider_id); if (selection.profile_id) query.set('profile', selection.profile_id); if (selection.model_id) query.set('model', selection.model_id);
+    return this.get(`/api/routing/explain?${query}`);
+  }
+  createTask(projectId, objective, instruction, selection = {}) { return this.post('/api/tasks', { project_id: projectId, objective, instruction, task_type: 'coding', risk: 'low', required_capabilities: ['coding'], provider_id: selection.provider_id || null, profile_id: selection.profile_id || null, model_id: selection.model_id || null, action_policy: { allowed: ['read_file', 'list_directory', 'inspect_git_status', 'create_file', 'modify_file', 'append_file', 'run_validation_command'], denied: [] } }); }
   resume(projectId, taskId) { return this.post(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/resume`); }
   task(projectId, taskId) { return this.get(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`); }
 }

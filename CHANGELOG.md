@@ -2,6 +2,15 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.9.0-pre.0 — Personal ChatGPT subscription worker
+
+- Replaced the OpenAI access-token form with official App Server `chatgpt` browser authentication for personal subscription profiles.
+- Added a separate `CODEX_HOME` and App Server process per profile, automatic token refresh, callback polling, logout, and complete isolated-state removal.
+- Added real subscription model discovery, provider-reported plan and multi-bucket limits, isolated Test Chat, and structured task execution without API-key fallback.
+- Kept AI Router authoritative: the Codex worker runs read-only in an empty profile workspace and returns untrusted proposals for router mediation and independent validation.
+- Added optional provider/profile/model selection to the VS Code-only client and validated an end-to-end VS Code → AI Router → ChatGPT subscription task with a mediated file change, validation, and handoff.
+- Added protocol, UI, isolation, and selected-resource tests; stable account identifiers and credential material are excluded from dashboard responses.
+
 ## 0.8.0-pre.0 — Provider diagnostics and isolated Codex accounts
 
 - Fixed OpenRouter connection validation to use `GET /key` before model discovery and credential persistence.

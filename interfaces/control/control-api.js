@@ -228,8 +228,8 @@ export class ControlApi {
       const selectedModelId = typeof body?.selected_model_id === 'string' ? cleanText(body.selected_model_id, 'Selected model', 160) : body?.selected_model_id === null ? null : existing?.selected_model_id ?? null;
       if (requiresModel && !selectedModelId) throw new AiRouterError('Local profiles require a discovered model.', 'MODEL_REQUIRED');
       const authMode = typeof body?.auth_mode === 'string' ? body.auth_mode.slice(0, 40) : 'not-configured';
-      const configured = Boolean(selectedModelId) && (provider?.type === 'local' || authMode === 'none' || existing?.status === 'connected' || existing?.status === 'ready' || existing?.status === 'available');
-      const enabled = configured ? body?.enabled ?? existing?.enabled ?? true : false;
+      const configured = Boolean(selectedModelId) && (provider?.type === 'local' || authMode === 'none' || existing?.status === 'connected' || existing?.status === 'model-required' || existing?.status === 'ready' || existing?.status === 'available');
+      const enabled = configured ? body?.enabled ?? (existing?.status === 'model-required' ? true : existing?.enabled ?? true) : false;
       const profile = { ...(existing ?? {}),
         profile_id: profileId, provider_id: providerId,
         display_name: cleanText(body?.display_name, 'Display name', 120), auth_mode: authMode,
@@ -242,7 +242,7 @@ export class ControlApi {
       await this.services.auditLog.record(result.created ? 'profile_added' : 'profile_updated', { profile_id: profile.profile_id, provider_id: profile.provider_id });
       return result;
     }
-    const profileAction = pathname.match(/^\/api\/profiles\/([^/]+)\/(connect|reconnect|disconnect|enable|disable|test-connection|test-chat|delete)$/);
+    const profileAction = pathname.match(/^\/api\/profiles\/([^/]+)\/(connect|reconnect|auth-status|disconnect|enable|disable|test-connection|test-chat|delete)$/);
     if (profileAction) {
       const profileId = requiredId(decodeURIComponent(profileAction[1]), 'Profile ID'); const action = profileAction[2];
       const profile = await this.services.profileRegistry.get(profileId);
@@ -251,12 +251,26 @@ export class ControlApi {
         if (typeof adapter.connect !== 'function') throw new AiRouterError('This provider does not support profile authentication.', 'PROVIDER_CONNECT_NOT_SUPPORTED');
         await this.services.profileRegistry.updateConnection(profileId, { status: 'connecting', enabled: false });
         try {
-          const connected = await adapter.connect({ profile_id: profileId, credential: body?.credential, metered_opt_in: body?.metered_opt_in === true });
+          const connected = await adapter.connect({ profile_id: profileId, credential: body?.credential, metered_opt_in: body?.metered_opt_in === true, reconnect: action === 'reconnect' });
+          if (connected.status === 'auth-pending') {
+            const updated = await this.services.profileRegistry.updateConnection(profileId, { status: 'auth-pending', enabled: false, auth_mode: 'chatgpt-oauth' });
+            await this.services.auditLog.record('profile_authentication_started', { profile_id: profileId, provider_id: profile.provider_id });
+            return { profile: updated, ...connected, message: 'Complete the official ChatGPT sign-in in your browser.' };
+          }
           const updated = await this.services.profileRegistry.updateConnection(profileId, { status: profile.selected_model_id ? 'ready' : 'model-required', enabled: Boolean(profile.selected_model_id), auth_mode: adapter.authenticationModes()[0] ?? profile.auth_mode, ...(connected.plan_type ? { plan_type: connected.plan_type } : {}), ...(connected.rate_limits_available !== undefined ? { usage_available: connected.rate_limits_available, limits_available: connected.rate_limits_available } : {}) });
           this.modelCache.clear(); this.providerCache.at = 0;
           await this.services.auditLog.record('profile_connected', { profile_id: profileId, provider_id: profile.provider_id, model_count: connected.model_count ?? null });
           return { profile: updated, ...connected, message: profile.selected_model_id ? 'Connection validated.' : 'Connection validated. Edit the profile and choose a discovered model.' };
         } catch (error) { await this.services.profileRegistry.updateConnection(profileId, { status: action === 'reconnect' ? profile.status : 'unconfigured', enabled: action === 'reconnect' ? profile.enabled : false, auth_mode: profile.auth_mode }); throw error; }
+      }
+      if (action === 'auth-status') {
+        if (typeof adapter.connectionStatus !== 'function') throw new AiRouterError('This provider does not expose interactive authentication status.', 'PROVIDER_AUTH_STATUS_NOT_SUPPORTED');
+        const connected = await adapter.connectionStatus({ profile_id: profileId });
+        if (connected.status !== 'connected') return { profile, ...connected };
+        const updated = await this.services.profileRegistry.updateConnection(profileId, { status: profile.selected_model_id ? 'ready' : 'model-required', enabled: Boolean(profile.selected_model_id), auth_mode: 'chatgpt-oauth', plan_type: connected.plan_type ?? null, usage_available: connected.rate_limits_available, limits_available: connected.rate_limits_available });
+        this.modelCache.clear(); this.providerCache.at = 0;
+        await this.services.auditLog.record('profile_connected', { profile_id: profileId, provider_id: profile.provider_id, model_count: connected.model_count ?? null, plan_type: connected.plan_type ?? null });
+        return { profile: updated, ...connected, message: profile.selected_model_id ? 'ChatGPT subscription connected and ready.' : 'ChatGPT subscription connected. Choose a model to enable routing.' };
       }
       if (action === 'disconnect') { if (typeof adapter.disconnect === 'function') await adapter.disconnect({ profile_id: profileId }); const result = await this.services.profileRegistry.updateConnection(profileId, { status: 'unconfigured', enabled: false }); this.modelCache.clear(); this.providerCache.at = 0; await this.services.auditLog.record('profile_disconnected', { profile_id: profileId, provider_id: profile.provider_id }); return result; }
       if (action === 'enable' || action === 'disable') {

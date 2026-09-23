@@ -7,7 +7,7 @@ import { validateProviderTimeouts } from './provider-timeout-policy.js';
 export const PROFILE_SCHEMA_VERSION = '0.1';
 const COST_CATEGORIES = ['local', 'subscription', 'metered', 'LOCAL', 'FREE', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN'];
 const LOCATIONS = ['local', 'cloud'];
-const STATUSES = ['unknown', 'unconfigured', 'connecting', 'connected', 'model-required', 'ready', 'available', 'unavailable', 'disabled'];
+const STATUSES = ['unknown', 'unconfigured', 'connecting', 'auth-pending', 'connected', 'model-required', 'ready', 'available', 'unavailable', 'disabled'];
 const SENSITIVE_PROFILE_KEY = /(password|secret|token|api.?key|credential)/i;
 
 function rejectSecrets(value, trail = '') {

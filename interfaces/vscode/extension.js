@@ -25,12 +25,13 @@ function activate(context) {
     try {
       const router = client(); const project = await router.ensureProject(folder.uri.fsPath, folder.name);
       await router.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
-      const route = await router.explain(instruction); outputLine(channel, 'Routing status', route.selected ? 'Selected' : 'No eligible route'); outputLine(channel, 'Provider / profile / model', route.selected ? `${route.selected.provider_id} / ${route.selected.profile_id} / ${route.selected.model_id || 'provider default'}` : route.error);
+      const configuration=vscode.workspace.getConfiguration('aiRouter');const selection={provider_id:configuration.get('provider',''),profile_id:configuration.get('profile',''),model_id:configuration.get('model','')};
+      const route = await router.explain(instruction,selection); outputLine(channel, 'Routing status', route.selected ? 'Selected' : 'No eligible route'); outputLine(channel, 'Provider / profile / model', route.selected ? `${route.selected.provider_id} / ${route.selected.profile_id} / ${route.selected.model_id || 'provider default'}` : route.error);
       if (!route.selected) return;
-      const created = await router.createTask(project.projectId, instruction, taskInstruction); const taskId = created.descriptor.task_id; outputLine(channel, 'Task', taskId); outputLine(channel, 'Progress', created.state.state);
+      const created = await router.createTask(project.projectId, instruction, taskInstruction,selection); const taskId = created.descriptor.task_id; outputLine(channel, 'Task', taskId); outputLine(channel, 'Progress', created.state.state);
       await router.resume(project.projectId, taskId); const detail = await router.task(project.projectId, taskId);
       outputLine(channel, 'Final state', detail.state.state); outputLine(channel, 'Result', detail.attempts.at(-1)?.result ?? detail.attempts.at(-1)?.structured_response ?? 'See Dashboard for complete durable record.');
-      const changedFiles = detail.workspace_changes?.changedFiles ?? []; outputLine(channel, 'Changed files', changedFiles);
+      const gitFiles = detail.workspace_changes?.changedFiles ?? []; const mediatedFiles=(detail.attempts??[]).flatMap(attempt=>(attempt.execution_results??[]).filter(result=>result.status==='completed'&&result.target).map(result=>result.target)); const changedFiles=[...new Set([...gitFiles,...mediatedFiles])]; outputLine(channel, 'Changed files', changedFiles);
       if (detail.state.state === 'COMPLETED') { const choice = await vscode.window.showInformationMessage(`AI Router completed ${taskId}.`, ...(changedFiles.length ? ['Open Source Control'] : [])); if (choice === 'Open Source Control') await vscode.commands.executeCommand('workbench.view.scm'); }
       else vscode.window.showWarningMessage(`AI Router stopped in ${detail.state.state}. See the output and Dashboard.`);
       status.text = detail.state.state === 'COMPLETED' ? '$(check) AI Router: completed' : `$(warning) AI Router: ${detail.state.state}`;

@@ -18,9 +18,9 @@ Google also documents OAuth/ADC for applications with a Cloud project and consen
 
 ## OpenAI / Codex subscription
 
-OpenAI now officially documents Codex access tokens for trusted App Server automation in ChatGPT Business and Enterprise workspaces. AI Router can store one such token per profile, launch App Server with a profile-specific `CODEX_HOME`, validate that the identity is a ChatGPT account, discover the models reported to that account, and read the exact rate-limit payload including `rateLimitsByLimitId`. It does not assume a five-hour bucket or invent missing values.
+OpenAI officially documents App Server `account/login/start` with `type: "chatgpt"` for its managed browser flow. AI Router uses that flow for personal subscription profiles, gives each profile a separate `CODEX_HOME`, validates the returned ChatGPT account, discovers only the models reported to it, and displays the exact multi-bucket rate-limit payload. It does not assume a five-hour bucket or invent missing values.
 
-AI Router does not copy the desktop/CLI login, ask for a password, expose tokens in process arguments, or fall back to an OpenAI API key. Personal Free/Go/Plus/Pro subscriptions do not currently have the documented Codex access-token path, and managed workload identity remains a Business/Enterprise administrator feature. App Server task execution remains disabled until the full isolated turn and approval lifecycle is implemented.
+AI Router does not copy the desktop/CLI login, ask for a password, expose tokens in process arguments, or fall back to an OpenAI API key. The isolated Codex worker runs against a blank read-only workspace and returns untrusted proposals; AI Router retains routing, action mediation, validation, checkpoints, memory, and handoff authority. Disconnect invokes App Server logout and removes that profile's isolated local runtime state.
 
 ## Secret storage
 

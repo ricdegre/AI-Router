@@ -99,21 +99,26 @@ test('Gemini requires explicit metered opt-in before storing a credential', asyn
   await provider.connect({ profile_id: 'gemini-work', credential: 'gemini-key', metered_opt_in: true }); assert.equal(await vault.has('gemini-work', 'gemini-api-key'), true);
 });
 
-test('OpenAI Codex access-token profiles stay isolated and expose exact App Server models and buckets', async (t) => {
-  const root = await temporaryDirectory(t, 'openai-codex-profile-'); const vault = new SecretStore(root, { protector: new TestProtector() }); const calls = [];
+test('OpenAI ChatGPT subscription profiles use isolated OAuth state and expose exact App Server models and buckets', async (t) => {
+  const root = await temporaryDirectory(t, 'openai-codex-profile-'); const vault = new SecretStore(root, { protector: new TestProtector() }); const calls = []; let signedIn = false;
   const appServer = {
-    account: async (options) => { calls.push(['account', options.profileId, options.accessToken]); return { account: { type: 'chatgpt', planType: 'business', email: null }, requiresOpenaiAuth: false }; },
-    models: async (options) => { calls.push(['models', options.profileId, options.accessToken]); return { data: [{ id: 'model-one', model: 'model-one', displayName: 'Model One', hidden: false, inputModalities: ['text', 'image'], supportedReasoningEfforts: ['medium'], modelSpecialty: 'coding' }] }; },
-    rateLimits: async (options) => { calls.push(['limits', options.profileId, options.accessToken]); return { rateLimits: { primary: { usedPercent: 12, resetsAt: 1234 } }, rateLimitsByLimitId: { codex: { primary: { usedPercent: 12, resetsAt: 1234 } } } }; }
+    account: async (options) => { calls.push(['account', options.profileId]); return signedIn ? { account: { type: 'chatgpt', planType: 'pro', email: null }, requiresOpenaiAuth: true } : { account: null, requiresOpenaiAuth: true }; },
+    startLogin: async (options) => { calls.push(['login', options.profileId]); return { status: 'auth-pending', type: 'chatgpt', login_id: 'login-one', auth_url: 'https://chatgpt.com/auth' }; },
+    loginState: () => ({ status: signedIn ? 'completed' : 'pending' }),
+    models: async (options) => { calls.push(['models', options.profileId]); return { data: [{ id: 'model-one', model: 'model-one', displayName: 'Model One', hidden: false, inputModalities: ['text', 'image'], supportedReasoningEfforts: ['medium'], modelSpecialty: 'coding' }] }; },
+    rateLimits: async (options) => { calls.push(['limits', options.profileId]); return { rateLimits: { primary: { usedPercent: 12, windowDurationMins: 180, resetsAt: 1234 } }, rateLimitsByLimitId: { codex: { primary: { usedPercent: 12, windowDurationMins: 180, resetsAt: 1234 } } } }; },
+    logout: async () => { signedIn = false; },
+    runTurn: async (options) => ({ status: 'completed', model: options.model, output: 'OK', tool_used: false })
   };
   const provider = new CodexSubscriptionProvider({ secretStore: vault, appServer });
-  const connected = await provider.connect({ profile_id: 'openai-work', credential: ' codex-token ' });
-  assert.equal(connected.status, 'connected'); assert.equal(connected.plan_type, 'business'); assert.equal(connected.model_count, 1);
-  assert.equal(await vault.get('openai-work', 'openai-codex-access-token'), 'codex-token');
-  const models = await provider.discoverModels({ profile_id: 'openai-work' }); assert.equal(models[0].model_id, 'model-one'); assert.equal(models[0].discovered_facts.vision, true);
-  const limits = await provider.limits({ profile_id: 'openai-work' }); assert.equal(limits.rateLimitsByLimitId.codex.primary.usedPercent, 12);
-  assert.equal(calls.every(([, profile, accessToken]) => profile === 'openai-work' && accessToken === 'codex-token'), true);
-  const apiAccount = new CodexSubscriptionProvider({ secretStore: vault, appServer: { ...appServer, account: async () => ({ account: { type: 'apiKey' }, requiresOpenaiAuth: false }) } });
-  await assert.rejects(() => apiAccount.connect({ profile_id: 'openai-api', credential: 'api-token' }), { code: 'OPENAI_CODEX_ACCESS_TOKEN_REJECTED' });
-  assert.equal(await vault.has('openai-api', 'openai-codex-access-token'), false);
+  const pending = await provider.connect({ profile_id: 'openai-pro' });
+  assert.equal(pending.status, 'auth-pending'); assert.equal(pending.auth_url, 'https://chatgpt.com/auth');
+  assert.equal(await vault.has('openai-pro', 'openai-codex-access-token'), false);
+  signedIn = true;
+  const connected = await provider.connectionStatus({ profile_id: 'openai-pro' });
+  assert.equal(connected.status, 'connected'); assert.equal(connected.plan_type, 'pro'); assert.equal(connected.model_count, 1);
+  const models = await provider.discoverModels({ profile_id: 'openai-pro' }); assert.equal(models[0].model_id, 'model-one'); assert.equal(models[0].discovered_facts.vision, true);
+  const limits = await provider.limits({ profile_id: 'openai-pro' }); assert.equal(limits.rateLimitsByLimitId.codex.primary.windowDurationMins, 180);
+  const chat = await provider.testChat({ profile_id: 'openai-pro', model: 'model-one', message: 'Reply only with OK', max_output_tokens: 8, timeout_ms: 5000 }); assert.equal(chat.response, 'OK');
+  assert.equal(calls.every(([, profile]) => profile === 'openai-pro'), true);
 });

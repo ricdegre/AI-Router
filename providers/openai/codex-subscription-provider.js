@@ -1,50 +1,105 @@
 import { ProviderAdapter, ProviderError } from '../core/protocol.js';
 import { createModelDescriptor } from '../core/model-descriptor.js';
+import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
 import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
 import { CodexAppServerClient } from './codex-app-server-client.js';
 
-const SECRET_NAME = 'openai-codex-access-token';
+function authenticated(account) { return account?.account?.type === 'chatgpt'; }
+function modelRows(result) { return result?.data ?? result?.models ?? []; }
 
-function token(value) {
-  if (typeof value !== 'string' || !value.trim() || /\s/.test(value.trim())) throw new ProviderError('A Codex access token is required.', 'OPENAI_CODEX_ACCESS_TOKEN_REQUIRED', { providerId: 'openai', failureCategory: 'authentication' });
-  return value.trim();
+function safeRateLimits(value) {
+  if (!value || typeof value !== 'object') return value;
+  const safe = structuredClone(value); delete safe.accountId;
+  if (Array.isArray(safe.rateLimitResetCredits?.credits)) safe.rateLimitResetCredits.credits = safe.rateLimitResetCredits.credits.map(({ id: _id, ...credit }) => credit);
+  return safe;
+}
+
+function limitDelta(before, after) {
+  const previous = before?.rateLimitsByLimitId ?? (before?.rateLimits ? { default: before.rateLimits } : null);
+  const current = after?.rateLimitsByLimitId ?? (after?.rateLimits ? { default: after.rateLimits } : null);
+  if (!previous || !current) return null;
+  const deltas = {};
+  for (const [id, bucket] of Object.entries(current)) {
+    const old = previous[id]; if (!old) continue;
+    const windows = {};
+    for (const name of ['primary', 'secondary']) {
+      if (Number.isFinite(bucket?.[name]?.usedPercent) && Number.isFinite(old?.[name]?.usedPercent)) windows[name] = { used_percent_delta: bucket[name].usedPercent - old[name].usedPercent, window_duration_mins: bucket[name].windowDurationMins ?? null, resets_at: bucket[name].resetsAt ?? null };
+    }
+    if (Object.keys(windows).length) deltas[id] = windows;
+  }
+  return Object.keys(deltas).length ? deltas : null;
 }
 
 export class CodexSubscriptionProvider extends ProviderAdapter {
   constructor(options = {}) {
-    super({ id: 'openai', name: 'OpenAI / Codex subscription', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context', 'tool_use'], authentication_modes: ['codex-access-token-business-enterprise'] });
+    super({ id: 'openai', name: 'OpenAI / ChatGPT subscription', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['chatgpt-oauth'] });
     this.secretStore = options.secretStore;
     this.timeoutPolicy = validateProviderTimeouts(options.timeoutPolicy ?? {});
     this.appServer = options.appServer ?? new CodexAppServerClient({ dataRoot: options.dataRoot });
   }
-  async credential(profileId) { return this.secretStore.get(profileId, SECRET_NAME); }
-  async inspect(profileId, suppliedToken) {
-    const accessToken = token(suppliedToken ?? await this.credential(profileId));
+
+  async inspect(profileId) {
     const timeoutMs = resolveProviderTimeout('connection_test', { provider: this.timeoutPolicy });
-    const account = await this.appServer.account({ profileId, accessToken, timeoutMs });
-    if (account?.requiresOpenaiAuth || account?.account?.type !== 'chatgpt') throw new ProviderError('Codex access token was not accepted as an isolated ChatGPT workspace identity.', 'OPENAI_CODEX_ACCESS_TOKEN_REJECTED', { providerId: 'openai', retryable: false, failureCategory: 'authentication' });
-    const [models, rateLimits] = await Promise.all([
-      this.appServer.models({ profileId, accessToken, timeoutMs }),
-      this.appServer.rateLimits({ profileId, accessToken, timeoutMs })
-    ]);
-    return { accessToken, account: account.account, models: models?.data ?? [], rateLimits };
+    const account = await this.appServer.account({ profileId, timeoutMs });
+    if (!authenticated(account)) throw new ProviderError('This profile is not signed in with ChatGPT.', 'OPENAI_CHATGPT_LOGIN_REQUIRED', { providerId: 'openai', failureCategory: 'authentication' });
+    const [models, rateLimits] = await Promise.all([this.appServer.models({ profileId, timeoutMs }), this.appServer.rateLimits({ profileId, timeoutMs })]);
+    return { account: account.account, models: modelRows(models), rateLimits };
   }
-  async connect({ profile_id, credential }) {
-    const result = await this.inspect(profile_id, credential);
-    await this.secretStore.set(profile_id, SECRET_NAME, result.accessToken);
-    return { status: 'connected', model_count: result.models.length, account_type: result.account.type, plan_type: result.account.planType ?? null, rate_limits_available: Boolean(result.rateLimits?.rateLimits || result.rateLimits?.rateLimitsByLimitId) };
+
+  async connect({ profile_id, reconnect = false }) {
+    if (!reconnect) {
+      try { const current = await this.inspect(profile_id); return { status: 'connected', model_count: current.models.length, account_type: current.account.type, plan_type: current.account.planType ?? null, rate_limits_available: Boolean(current.rateLimits?.rateLimits || current.rateLimits?.rateLimitsByLimitId), already_authenticated: true }; }
+      catch (error) { if (error.code !== 'OPENAI_CHATGPT_LOGIN_REQUIRED') throw error; }
+    }
+    return this.appServer.startLogin({ profileId: profile_id, reconnect, timeoutMs: resolveProviderTimeout('connection_test', { provider: this.timeoutPolicy }) });
   }
-  async disconnect({ profile_id }) { await this.secretStore.remove(profile_id, SECRET_NAME); return { status: 'disconnected' }; }
+
+  async connectionStatus({ profile_id }) {
+    try {
+      const result = await this.inspect(profile_id);
+      return { status: 'connected', model_count: result.models.length, account_type: result.account.type, plan_type: result.account.planType ?? null, rate_limits_available: Boolean(result.rateLimits?.rateLimits || result.rateLimits?.rateLimitsByLimitId), rate_limits: safeRateLimits(result.rateLimits) };
+    } catch (error) {
+      const login = this.appServer.loginState(profile_id);
+      if (login.status === 'failed') throw new ProviderError('ChatGPT sign-in did not complete.', 'OPENAI_CHATGPT_LOGIN_FAILED', { providerId: 'openai', failureCategory: 'authentication' });
+      if (error.code === 'OPENAI_CHATGPT_LOGIN_REQUIRED') return { status: 'auth-pending' };
+      throw error;
+    }
+  }
+
+  async disconnect({ profile_id }) { await this.appServer.logout({ profileId: profile_id, removeState: true }); await this.secretStore?.remove(profile_id).catch(() => {}); return { status: 'disconnected' }; }
+
   async health({ profile_id } = {}) {
     if (!profile_id) return { status: 'unknown', reachable: null, reason: 'profile-required' };
-    try { const result = await this.inspect(profile_id); return { status: 'healthy', reachable: true, model_count: result.models.length, plan_type: result.account.planType ?? null }; }
+    try { const result = await this.inspect(profile_id); return { status: 'healthy', reachable: true, model_count: result.models.length, plan_type: result.account.planType ?? null, auth_mode: 'chatgpt' }; }
     catch (error) { return { status: 'unavailable', reachable: false, error_code: error.code }; }
   }
+
   async discoverModels({ profile_id } = {}) {
     const result = await this.inspect(profile_id);
-    return result.models.filter((model) => !model.hidden).map((model) => createModelDescriptor({ providerId: 'openai', modelId: model.model ?? model.id, discovered: { display_name: model.displayName ?? model.model ?? model.id, family: null, local: false, context_size: null, tool_support: true, structured_output_support: null, vision: model.inputModalities?.includes('image') ?? null, embedding: false, coding_suitability: model.modelSpecialty === 'coding' ? 'high' : 'likely', reasoning_support: Array.isArray(model.supportedReasoningEfforts) && model.supportedReasoningEfforts.length > 0, loaded: null, parameter_size: null } }));
+    return result.models.filter((model) => !model.hidden).map((model) => createModelDescriptor({ providerId: 'openai', modelId: model.model ?? model.id, discovered: { display_name: model.displayName ?? model.model ?? model.id, family: model.family ?? null, local: false, context_size: model.contextWindow ?? null, tool_support: true, structured_output_support: true, vision: model.inputModalities?.includes('image') ?? null, embedding: false, coding_suitability: model.modelSpecialty === 'coding' ? 'high' : 'likely', reasoning_support: Array.isArray(model.supportedReasoningEfforts) && model.supportedReasoningEfforts.length > 0, loaded: null, parameter_size: null } }));
   }
-  async limits({ profile_id } = {}) { const result = await this.inspect(profile_id); return { available: Boolean(result.rateLimits?.rateLimits || result.rateLimits?.rateLimitsByLimitId), ...(result.rateLimits ?? {}) }; }
+
+  async limits({ profile_id } = {}) { const result = await this.inspect(profile_id); const safe = safeRateLimits(result.rateLimits); return { available: Boolean(safe?.rateLimits || safe?.rateLimitsByLimitId), ...(safe ?? {}) }; }
   async usage({ profile_id } = {}) { return this.limits({ profile_id }); }
-  async testChat() { throw new ProviderError('Codex App Server execution is not enabled until the isolated turn lifecycle and approval boundary are implemented.', 'OPENAI_CODEX_EXECUTION_NOT_READY', { providerId: 'openai', retryable: false, failureCategory: 'execution_failure' }); }
+
+  async testChat({ profile_id, model, message, max_output_tokens = 32, timeout_ms }) {
+    const before = await this.appServer.rateLimits({ profileId: profile_id, timeoutMs: 15_000 }).catch(() => null);
+    const started = performance.now();
+    const result = await this.appServer.runTurn({ profileId: profile_id, model, timeoutMs: timeout_ms, purpose: 'connection-test', prompt: `This is an isolated connection test. Do not use tools, commands, files, Git, memory, or external resources. Reply directly to the user in no more than ${max_output_tokens} output tokens.\n\nUser message:\n${message}` });
+    if (result.tool_used) throw new ProviderError('The Codex worker attempted to use a tool during isolated Test Chat.', 'OPENAI_TEST_CHAT_TOOL_BLOCKED', { providerId: 'openai', failureCategory: 'policy_rejection' });
+    const after = await this.appServer.rateLimits({ profileId: profile_id, timeoutMs: 15_000 }).catch(() => null);
+    return { status: 'connected', response: result.output, model: result.model, latency_ms: Math.round(performance.now() - started), usage_delta: limitDelta(before, after) };
+  }
+
+  async execute(request) {
+    const profileId = request.profile_id ?? request.profile?.profile_id;
+    const prompt = `You are a subordinate execution worker for AI Router. You do not own routing, files, Git, memory, validation, checkpoints, or handoff. Analyze only the context supplied below. Do not use tools or attempt to inspect or modify the project.\n\nRESPONSE CONTRACT\nReturn only one JSON object, with no Markdown fence or commentary. It must contain exactly these top-level fields: schema_version (the string "0.1"), status (one of "ok", "partial", "blocked", "failed"), summary (a non-empty string), observations (string array), proposed_actions (object array), validation_requested (string array), remaining_work (string array), uncertainty (string array), and handoff_notes (string array). Preserve any proposed action object supplied by the task exactly.\n\nTASK\n${request.prompt ?? request.task?.objective ?? ''}\n\nROUTER CONTEXT\n${request.context ?? ''}`;
+    return this.appServer.runTurn({ profileId, model: request.model, prompt, timeoutMs: request.timeout_ms, purpose: 'router-task' });
+  }
+
+  async executeStructured(request) {
+    const raw = await this.execute({ ...request, format: request.format ?? STRUCTURED_RESPONSE_JSON_SCHEMA });
+    const parsed = parseStructuredResponse(raw.output, { allowTextFallback: false });
+    return { ...raw, structured: parsed.response, structured_valid: parsed.valid };
+  }
 }
