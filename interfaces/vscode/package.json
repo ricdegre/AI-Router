@@ -2,13 +2,12 @@
   "name": "ai-router-vscode",
   "displayName": "AI Router",
   "description": "Send coding work to the local AI Router control service.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "publisher": "ai-router-local",
   "private": true,
   "type": "commonjs",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
-  "activationEvents": ["onStartupFinished", "onView:aiRouter.control", "onCommand:aiRouter.runTask", "onCommand:aiRouter.explainRoute", "onCommand:aiRouter.openDashboard"],
   "main": "./extension.js",
   "contributes": {
     "viewsContainers": { "activitybar": [{ "id": "aiRouter", "title": "AI Router", "icon": "media/router.svg" }] },
@@ -16,7 +15,8 @@
     "commands": [
       { "command": "aiRouter.runTask", "title": "AI Router: Run Task" },
       { "command": "aiRouter.explainRoute", "title": "AI Router: Explain Route" },
-      { "command": "aiRouter.openDashboard", "title": "AI Router: Open Dashboard" }
+      { "command": "aiRouter.openDashboard", "title": "AI Router: Open Dashboard" },
+      { "command": "aiRouter.refresh", "title": "AI Router: Refresh" }
     ],
     "configuration": {
       "title": "AI Router",
@@ -31,7 +31,7 @@
       }
     }
   },
-  "scripts": { "package": "vsce package --allow-missing-repository --out ../../dist/ai-router-vscode-0.5.1.vsix" },
-  "files": ["extension.js", "router-client.js", "README.md", "LICENSE", "media/router.svg"],
+  "scripts": { "package": "vsce package --allow-missing-repository --out ../../dist/ai-router-vscode-0.5.2.vsix" },
+  "files": ["extension.js", "router-client.js", "webview.js", "webview.css", "README.md", "LICENSE", "media/router.svg"],
   "devDependencies": { "@vscode/vsce": "^3.6.2" }
 }

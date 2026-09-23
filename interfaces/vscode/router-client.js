@@ -5,13 +5,17 @@ class RouterError extends Error {
 }
 
 class RouterClient {
-  constructor(baseUrl, fetchImpl = globalThis.fetch) { this.baseUrl = String(baseUrl).replace(/\/$/, ''); this.fetch = fetchImpl; this.nonce = ''; }
+  constructor(baseUrl, fetchImpl = globalThis.fetch, logger = () => {}) { this.baseUrl = String(baseUrl).replace(/\/$/, ''); this.fetch = fetchImpl; this.nonce = ''; this.logger = logger; }
   async request(path, options = {}) {
-    const response = await this.fetch(`${this.baseUrl}${path}`, { ...options, headers: { ...(options.body ? { 'content-type': 'application/json' } : {}), ...(this.nonce ? { 'x-ai-router-control': this.nonce } : {}), ...(options.method === 'POST' ? { origin: this.baseUrl } : {}), ...(options.headers || {}) } });
-    const nonce = response.headers.get('x-ai-router-control'); if (nonce) this.nonce = nonce;
-    const body = await response.json().catch(() => ({ error: 'INVALID_RESPONSE', message: 'AI Router returned an invalid response.' }));
-    if (!response.ok) throw new RouterError(body.message || 'AI Router request failed.', body.error || 'REQUEST_FAILED', response.status);
-    return body;
+    const method = options.method || 'GET'; const startedAt = Date.now(); this.logger('started', { method, path });
+    try {
+      const response = await this.fetch(`${this.baseUrl}${path}`, { ...options, headers: { ...(options.body ? { 'content-type': 'application/json' } : {}), ...(this.nonce ? { 'x-ai-router-control': this.nonce } : {}), ...(options.method === 'POST' ? { origin: this.baseUrl } : {}), ...(options.headers || {}) } });
+      const nonce = response.headers.get('x-ai-router-control'); if (nonce) this.nonce = nonce;
+      const body = await response.json().catch(() => ({ error: 'INVALID_RESPONSE', message: 'AI Router returned an invalid response.' }));
+      this.logger('completed', { method, path, status: response.status, duration_ms: Date.now() - startedAt });
+      if (!response.ok) throw new RouterError(body.message || 'AI Router request failed.', body.error || 'REQUEST_FAILED', response.status);
+      return body;
+    } catch (error) { this.logger('failed', { method, path, status: error.status ?? null, code: error.code || 'NETWORK_ERROR', duration_ms: Date.now() - startedAt }); throw error; }
   }
   get(path) { return this.request(path); }
   async post(path, body = {}) { if (!this.nonce) await this.get('/api/health'); return this.request(path, { method: 'POST', body: JSON.stringify(body) }); }
@@ -26,7 +30,7 @@ class RouterClient {
     if (selection.provider_id) query.set('provider', selection.provider_id); if (selection.profile_id) query.set('profile', selection.profile_id); if (selection.model_id) query.set('model', selection.model_id); if (selection.execution_channel) query.set('channel', selection.execution_channel); if (selection.reasoning_effort) query.set('effort', selection.reasoning_effort);
     return this.get(`/api/routing/explain?${query}`);
   }
-  createTask(projectId, objective, instruction, selection = {}) { return this.post('/api/tasks', { project_id: projectId, objective, instruction, task_type: 'coding', risk: 'low', required_capabilities: ['coding'], provider_id: selection.provider_id || null, profile_id: selection.profile_id || null, model_id: selection.model_id || null, execution_channel: selection.execution_channel || null, reasoning_effort: selection.reasoning_effort || null, action_policy: { allowed: ['read_file', 'list_directory', 'inspect_git_status', 'create_file', 'modify_file', 'append_file', 'run_validation_command'], denied: [] } }); }
+  createTask(projectId, objective, instruction, selection = {}, options = {}) { const allowed = options.readOnly ? ['read_file', 'list_directory', 'inspect_git_status'] : ['read_file', 'list_directory', 'inspect_git_status', 'create_file', 'modify_file', 'append_file', 'run_validation_command']; return this.post('/api/tasks', { project_id: projectId, objective, instruction, task_type: 'coding', risk: 'low', required_capabilities: ['coding'], provider_id: selection.provider_id || null, profile_id: selection.profile_id || null, model_id: selection.model_id || null, execution_channel: selection.execution_channel || null, reasoning_effort: selection.reasoning_effort || null, action_policy: { allowed, denied: options.readOnly ? ['create_file', 'modify_file', 'append_file', 'run_validation_command'] : [] } }); }
   resume(projectId, taskId) { return this.post(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/resume`); }
   task(projectId, taskId) { return this.get(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`); }
 }

@@ -25,6 +25,20 @@ test('VS Code client reports router errors and never falls back to a provider en
   await assert.rejects(() => client.explain('work'), { code: 'NO_ELIGIBLE_PROVIDER' });
 });
 
+test('VS Code client reports offline and malformed router responses safely', async () => {
+  const offline = new RouterClient('http://127.0.0.1:43127', async () => { throw new TypeError('fetch failed'); });
+  await assert.rejects(() => offline.get('/api/readiness'), /fetch failed/);
+  const malformed = new RouterClient('http://127.0.0.1:43127', async () => new Response('not-json', { status: 502 }));
+  await assert.rejects(() => malformed.get('/api/readiness'), { code: 'INVALID_RESPONSE', status: 502 });
+});
+
+test('VS Code client surfaces a stale configured endpoint without falling back', async () => {
+  const calls = [];
+  const client = new RouterClient('http://127.0.0.1:49999', async (url) => { calls.push(url); return new Response(JSON.stringify({ error: 'ENDPOINT_NOT_FOUND', message: 'The configured AI Router endpoint is stale.' }), { status: 404, headers: { 'content-type': 'application/json' } }); });
+  await assert.rejects(() => client.get('/api/readiness'), { code: 'ENDPOINT_NOT_FOUND', status: 404 });
+  assert.deepEqual(calls, ['http://127.0.0.1:49999/api/readiness']);
+});
+
 test('VS Code client sends selected provider, channel, profile, model, and effort only to AI Router', async () => {
   const calls = [];
   const fetch = async (url, options = {}) => { calls.push({ url, options }); return new Response(JSON.stringify({ selected: { provider_id: 'openai', profile_id: 'chatgpt', model_id: 'gpt-6-luna' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce-2' } }); };
@@ -41,9 +55,69 @@ test('packaged VS Code extension contributes a local-only activity panel and hea
   const manifest = JSON.parse(await fs.readFile(new URL('../interfaces/vscode/package.json', import.meta.url), 'utf8'));
   const extension = await fs.readFile(new URL('../interfaces/vscode/extension.js', import.meta.url), 'utf8');
   assert.equal(manifest.contributes.views.aiRouter[0].id, 'aiRouter.control'); assert.match(manifest.scripts.package, /\.vsix/);
-  assert.equal(manifest.version, '0.5.1'); assert.equal(manifest.engines.vscode, '^1.85.0'); assert.equal(manifest.contributes.configuration.properties['aiRouter.url'].default, 'http://127.0.0.1:43127');
+  assert.equal(manifest.version, '0.5.2'); assert.equal(manifest.engines.vscode, '^1.85.0'); assert.equal(manifest.contributes.configuration.properties['aiRouter.url'].default, 'http://127.0.0.1:43127');
   assert.match(extension, /\/api\/readiness\/vscode-heartbeat/); assert.match(extension, /extension_id/); assert.match(extension, /endpoint: baseUrl\(\)/); assert.match(extension, /registerWebviewViewProvider/);
+  assert.equal(manifest.activationEvents, undefined); assert.ok(manifest.contributes.commands.some(item => item.command === 'aiRouter.refresh'));
+  assert.ok(manifest.files.includes('webview.js')); assert.ok(manifest.files.includes('webview.css'));
+  assert.match(extension, /Content-Security-Policy/); assert.match(extension, /asWebviewUri/); assert.doesNotMatch(extension, /<script>const vscode=acquireVsCodeApi/);
   assert.doesNotMatch(extension, /openai\.com|anthropic\.com|openrouter\.ai|generativelanguage\.googleapis/);
+});
+
+test('extension activates, registers every command, and handles every webview action', async () => {
+  const messages = []; const commands = new Map(); const logs = []; let opened = 0; let messageHandler; let provider; let createOptions;
+  const disposable = () => ({ dispose() {} });
+  const configuration = { url: 'http://127.0.0.1:43127', includeSelection: true, provider: '', profile: '', model: '', executionChannel: '', reasoningEffort: '' };
+  const vscode = {
+    StatusBarAlignment: { Left: 1 },
+    Uri: { parse: value => value, joinPath: (...values) => values.join('/') },
+    env: { async openExternal() { opened += 1; return true; } },
+    commands: {
+      registerCommand(id, handler) { commands.set(id, handler); return disposable(); },
+      executeCommand(id, ...args) { return commands.get(id)(...args); }
+    },
+    workspace: {
+      workspaceFolders: [{ name: 'SND-YDB', uri: { fsPath: 'D:\\Workspace\\PROJECTOS\\SND-YDB' } }],
+      getConfiguration() { return { get(name, fallback) { return configuration[name] ?? fallback; } }; }
+    },
+    window: {
+      activeTextEditor: null,
+      createOutputChannel() { return { appendLine(line) { logs.push(line); }, clear() {}, show() {}, dispose() {} }; },
+      createStatusBarItem() { return { show() {}, dispose() {}, text: '', command: '', tooltip: '' }; },
+      registerWebviewViewProvider(_id, value) { provider = value; return disposable(); },
+      async showInputBox() { return 'inspect'; },
+      showErrorMessage() {}
+    }
+  };
+  class FakeClient {
+    async post() { return { status: 'ok' }; }
+    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY', blockers: [] }; return {}; }
+    async explain() { return { selected: { provider_id: 'ollama', model_id: 'qwen' } }; }
+    async ensureProject() { return { projectId: 'snd-ydb' }; }
+    async createTask(_project, _objective, _instruction, _selection, options) { createOptions = options; return { descriptor: { task_id: 'read-only-task' } }; }
+    async resume() { return {}; }
+    async task() { return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Read-only inspection complete.' }], workspace_changes: { changedFiles: [] } }; }
+  }
+  const Module = require('node:module'); const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) { if (request === 'vscode') return vscode; return originalLoad.call(this, request, parent, isMain); };
+  let createExtension;
+  try { ({ createExtension } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
+  const context = { subscriptions: [], extension: { packageJSON: { version: '0.5.2' }, id: 'ai-router-local.ai-router-vscode' }, extensionUri: 'extension-root' };
+  const api = createExtension(vscode, FakeClient)(context);
+  assert.deepEqual([...commands.keys()].sort(), ['aiRouter.explainRoute', 'aiRouter.openDashboard', 'aiRouter.refresh', 'aiRouter.runTask']);
+  const webview = { cspSource: 'vscode-webview:', options: null, html: '', asWebviewUri: value => `webview:${value}`, postMessage(message) { messages.push(message); }, onDidReceiveMessage(handler) { messageHandler = handler; return disposable(); } };
+  provider.resolveWebviewView({ webview }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(webview.options.enableScripts, true); assert.match(webview.html, /Content-Security-Policy/); assert.match(webview.html, /webview\.js/); assert.match(webview.html, /readOnly/);
+  await messageHandler({ type: 'dashboard' }); await messageHandler({ type: 'refresh' }); await messageHandler({ type: 'explain', instruction: 'Inspect only', selection: {} }); await messageHandler({ type: 'run', instruction: 'Inspect only', selection: {}, readOnly: true });
+  assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'task'));
+  assert.ok(logs.some(line => line.includes('extension.activated'))); assert.ok(logs.some(line => line.includes('webview.message'))); assert.ok(logs.every(line => !line.includes('Inspect only')));
+  for (const item of context.subscriptions) item.dispose?.(); void api;
+});
+
+test('read-only tasks deny every file-changing action', async () => {
+  const calls = [];
+  const fetch = async (url, options = {}) => { calls.push({ url, options }); if (url.endsWith('/api/health')) return new Response('{}', { headers: { 'x-ai-router-control': 'nonce' } }); return new Response(JSON.stringify({ descriptor: { task_id: 'task' } }), { headers: { 'content-type': 'application/json' } }); };
+  await new RouterClient('http://127.0.0.1:43127', fetch).createTask('project', 'Inspect', 'Read only', {}, { readOnly: true });
+  const body = JSON.parse(calls.at(-1).options.body); assert.deepEqual(body.action_policy.allowed, ['read_file', 'list_directory', 'inspect_git_status']); assert.deepEqual(body.action_policy.denied, ['create_file', 'modify_file', 'append_file', 'run_validation_command']);
 });
 
 test('Windows one-click launchers use only the fixed local extension manager', async () => {

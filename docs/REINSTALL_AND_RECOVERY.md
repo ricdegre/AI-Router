@@ -7,7 +7,7 @@ AI Router keeps its source and durable runtime on `D:` so Windows can be reinsta
 1. Confirm the repository is clean and copy `<workspace>\AI-Router` with its `.git` directory.
 2. Preserve `<workspace>\AI-Router-Data`. This contains profiles, task journals, memory, checkpoints, audit records and encrypted credential records. DPAPI-protected records may not decrypt after reinstall; they are evidence and metadata, not a portable secret backup.
 3. Preserve the actual project directories separately, including each `.git` directory and any uncommitted work.
-4. Preserve `<workspace>\AI-Router\dist\ai-router-vscode-0.5.1.vsix` and both one-click `.vbs` extension launchers in the repository root.
+4. Preserve `<workspace>\AI-Router\dist\ai-router-vscode-0.5.2.vsix` and both one-click `.vbs` extension launchers in the repository root.
 5. Do not export ChatGPT, Claude, Google or provider OAuth tokens to text files. Plan to reconnect those profiles after Windows is installed.
 
 ## Minimum clean-install stack
@@ -37,7 +37,7 @@ Docker, Python, a global AI provider API key and PowerShell scripting are not re
 
 ### Manual fallback
 
-If the launcher cannot detect an unusual or portable VS Code installation, use **Extensions: Install from VSIX...** and select `<workspace>\AI-Router\dist\ai-router-vscode-0.5.1.vsix`. Then use Dashboard → VS Code → **Test Connection**. The expected extension ID is `ai-router-local.ai-router-vscode`, expected version is `0.5.1`, minimum VS Code is `1.85.0`, and the default endpoint is `http://127.0.0.1:43127`.
+If the launcher cannot detect an unusual or portable VS Code installation, use **Extensions: Install from VSIX...** and select `<workspace>\AI-Router\dist\ai-router-vscode-0.5.2.vsix`. Then use Dashboard → VS Code → **Test Connection**. The expected extension ID is `ai-router-local.ai-router-vscode`, expected version is `0.5.2`, minimum VS Code is `1.85.0`, and the default endpoint is `http://127.0.0.1:43127`.
 
 ## Recovery checks
 

@@ -1,0 +1,14 @@
+body { font-family: var(--vscode-font-family); padding: 10px; color: var(--vscode-foreground); }
+label { display: block; margin-top: 10px; font-size: 12px; }
+select, textarea, button { box-sizing: border-box; width: 100%; margin-top: 4px; padding: 7px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
+textarea { min-height: 90px; resize: vertical; }
+button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; cursor: pointer; }
+button:hover { background: var(--vscode-button-hoverBackground); }
+.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.status { padding: 8px; margin: 8px 0; background: var(--vscode-editor-background); white-space: pre-wrap; word-break: break-word; }
+.ok { color: var(--vscode-testing-iconPassed); }
+.bad { color: var(--vscode-testing-iconFailed); }
+.check { display: flex; align-items: center; gap: 7px; }
+.check input { width: auto; margin: 0; }

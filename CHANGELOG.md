@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0-pre.2
+
+- Fixed the VS Code control panel by moving its client logic into a CSP-approved packaged script.
+- Added functional Refresh command registration, safe extension/request diagnostics, state-preserving resource refresh, and read-only task execution mode.
+- Packaged VS Code extension 0.5.2 with activation, webview-message, offline, malformed-response, and reinstall coverage.
+
 ## 0.11.0-pre.1
 
 - Added idempotent one-click Windows install and repair launchers for the packaged VS Code extension.
