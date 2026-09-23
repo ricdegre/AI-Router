@@ -1,11 +1,13 @@
 import { inspectGit, createCheckpointMetadata } from '../checkpoints/git-checkpoint.js';
 import { parseStructuredResponse, validateStructuredResponse } from '../providers/core/structured-response.js';
 import { AiRouterError } from './errors.js';
-import { resolveProviderTimeout } from './provider-timeout-policy.js';
+import { resolveExecutionTimeouts, resolveProviderTimeout } from './provider-timeout-policy.js';
 import { descriptorFromTask } from './task-execution-descriptor.js';
 import { actionExecutionIdentity, receiptHashes } from '../actions/idempotency.js';
 
 function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}:${candidate.reasoning_effort ?? '-'}`; }
+function resourceKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}`; }
+function readOnlyAnalysis(analysis) { return analysis?.write_mode === 'read_only' && ['project_analysis', 'architecture', 'code_review', 'research', 'documentation'].includes(analysis.intent); }
 
 function failureFrom(error) {
   if (error.code === 'MALFORMED_STRUCTURED_RESPONSE' || error.code === 'INVALID_STRUCTURED_RESPONSE' || error.code === 'UNSUPPORTED_STRUCTURED_RESPONSE') return 'malformed_output';
@@ -110,7 +112,16 @@ export class ResilientOrchestrator {
       await this.executionPlanStore?.advance(task.project_id, task.task_id, 'ROUTE');
       const route = await this.routingPolicy.explain({ ...task, recent_failures: priorAttempts.filter((attempt) => attempt.failure_category) }, this.providerRegistry, profiles);
       const remainingAttempts = Math.max(0, maxAttempts - countedAttempts.length);
-      const candidates = route.accepted_candidates.filter((candidate) => !usedCandidates.has(candidateKey(candidate))).slice(0, remainingAttempts);
+      const availableCandidates = route.accepted_candidates.filter((candidate) => !usedCandidates.has(candidateKey(candidate)));
+      const seenResources = new Set();
+      const automaticCandidates = availableCandidates.filter((candidate) => { const key = resourceKey(candidate); if (seenResources.has(key)) return false; seenResources.add(key); return true; });
+      const initialAutomatic = automaticCandidates[0];
+      const recoveryOrdered = initialAutomatic ? [
+        initialAutomatic,
+        ...automaticCandidates.slice(1).filter((candidate) => candidate.provider_id !== initialAutomatic.provider_id),
+        ...automaticCandidates.slice(1).filter((candidate) => candidate.provider_id === initialAutomatic.provider_id)
+      ] : [];
+      const candidates = (route.routing_mode === 'manual' ? availableCandidates.slice(0, 1) : recoveryOrdered).slice(0, remainingAttempts);
       if (!candidates.length) {
         await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'no-eligible-unused-candidate' });
         return { status: 'blocked', route, attempts: priorAttempts, reason: 'no-eligible-unused-candidate' };
@@ -140,13 +151,15 @@ export class ResilientOrchestrator {
         let failureCategory = null;
         let failureCode = null;
         try {
-          const context = await this.contextBuilder.build(project.projectId, task, { providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
+          const taskAnalysis = route.task_analysis ?? route.task?.task_analysis ?? null;
+          const context = await this.contextBuilder.build(project.projectId, { ...task, task_analysis: taskAnalysis }, { workspacePath: project.workspacePath, providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
           const provider = this.providerRegistry.get(candidate.provider_id);
           const profile = profiles.find((item) => item.profile_id === candidate.profile_id);
           const modelDescriptor = profile?.models?.find((item) => item.model_id === candidate.model_id) ?? null;
           const timeoutMs = resolveProviderTimeout('inference', { global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
-          const request = { task, project, profile, model: candidate.model_id ?? task.model, inference: candidate.inference, context: context.rendered, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: candidate.inference?.timeout_ms ?? timeoutMs };
-          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id });
+          const executionTimeouts = resolveExecutionTimeouts({ global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
+          const request = { task, task_analysis: taskAnalysis, project, profile, model: candidate.model_id ?? task.model, inference: candidate.inference, context: context.rendered, context_metadata: context.project_inspection, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: candidate.inference?.timeout_ms ?? timeoutMs, execution_timeouts: executionTimeouts };
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id, context_chars: context.used_chars, context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0 });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
           if (providerResult.limits) await this.profileRegistry.updateLimits(candidate.profile_id, providerResult.limits);
@@ -164,7 +177,11 @@ export class ResilientOrchestrator {
         let approvedActions = [];
         let rejectedActions = [];
         let executionResults = [];
-        if (!failureCategory) {
+        const analysisOnly = readOnlyAnalysis(route.task_analysis ?? route.task?.task_analysis);
+        if (!failureCategory && analysisOnly && proposedActions.length) {
+          rejectedActions = proposedActions; failureCategory = 'action_rejected'; failureCode = 'READ_ONLY_ANALYSIS_PROPOSED_ACTIONS';
+        }
+        if (!failureCategory && !analysisOnly) {
           await this.executionPlanStore?.advance(task.project_id, task.task_id, 'ACTIONS', { attempt: attempt.attempt_number, proposed: proposedActions.length });
           await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: proposedActions, summary: structured.summary });
           await this.auditLog?.record('actions_proposed', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_ids: proposedActions.map((action) => action.action_id) });
@@ -210,11 +227,14 @@ export class ResilientOrchestrator {
             await options.faultInjector?.('after-action-persisted', { action, result, attempt });
           }
           if (rejectedActions.length) { failureCategory = 'action_rejected'; failureCode = executionResults.find((result) => result.status === 'rejected')?.error?.code; }
+        } else if (!failureCategory) {
+          await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: [], approved_actions: [], rejected_actions: [], execution_results: [], summary: structured.summary });
+          await this.auditLog?.record('read_only_analysis_received', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, provider_id: candidate.provider_id });
         }
 
         let validation = null;
         if (!failureCategory) {
-          await this.taskStore.transition(task.project_id, task.task_id, 'WAITING_VALIDATION', { reason: 'actions-finished', attempt: attempt.attempt_number });
+          await this.taskStore.transition(task.project_id, task.task_id, 'WAITING_VALIDATION', { reason: analysisOnly ? 'analysis-received' : 'actions-finished', attempt: attempt.attempt_number });
           await this.executionPlanStore?.advance(task.project_id, task.task_id, 'VALIDATE', { attempt: attempt.attempt_number });
           const engine = this.validationEngineFactory?.({ project, task, attempt });
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'validation_intent', { attempt_number: attempt.attempt_number, validation_ids: (task.validation_requirements ?? []).map((item) => item.validation_id) });
@@ -228,9 +248,15 @@ export class ResilientOrchestrator {
           if (!validation.passed) { failureCategory = 'validation_failure'; failureCode = 'VALIDATION_FAILED'; }
         }
 
+        const partialFallback = !failureCategory && structured.status === 'partial' && route.routing_mode !== 'manual'
+          && candidates.slice(index + 1).some((item) => item.provider_id !== candidate.provider_id);
+        if (partialFallback) { failureCategory = 'execution_failure'; failureCode = 'PROVIDER_PARTIAL_RESULT'; }
         const postCheckpoint = task.checkpoint_policy?.post_attempt === false ? null : await this.checkpoint(project, task, attempt.attempt_number, 'post-attempt', validation?.results?.map((result) => `${result.validation_id}:${result.passed}`) ?? []);
         const escalationAllowed = !task.escalation_policy || (task.escalation_policy.enabled !== false && (task.escalation_policy.categories ?? []).includes(failureCategory));
-        const next = failureCategory && !escalationAllowed ? null : candidates[index + 1] ?? null;
+        const next = failureCategory && !escalationAllowed ? null : route.routing_mode === 'manual' ? null
+          : ['timeout', 'provider_unavailable', 'execution_failure'].includes(failureCategory)
+            ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id) ?? null
+            : candidates[index + 1] ?? null;
         if (!failureCategory) {
           if (structured.status === 'partial') {
             await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
@@ -265,7 +291,7 @@ export class ResilientOrchestrator {
           await this.circuitBreaker?.recordSuccess(candidate.provider_id, candidate.profile_id, candidate.model_id);
           await this.profileRegistry.markSuccessful(candidate.profile_id);
           const finalCheckpoint = task.checkpoint_policy?.final_validated === false ? null : await this.checkpoint(project, task, attempt.attempt_number, 'final-validated', validation.results.map((result) => `${result.validation_id}:${result.passed}`));
-          await this.handoff(project, task, candidate, attempt, 'completed', {
+          if (!analysisOnly) await this.handoff(project, task, candidate, attempt, 'completed', {
             completed_work: [structured.summary], remaining_work: structured.remaining_work,
             files_touched: executionResults.filter((result) => result.status === 'completed').map((result) => result.target).filter(Boolean),
             validation_performed: validation.results.map((result) => result.validation_id),

@@ -122,3 +122,16 @@ test('OpenAI ChatGPT subscription profiles use isolated OAuth state and expose e
   const chat = await provider.testChat({ profile_id: 'openai-pro', model: 'model-one', message: 'Reply only with OK', max_output_tokens: 8, timeout_ms: 5000, inference: { reasoning_effort: 'low' } }); assert.equal(chat.response, 'OK');
   assert.equal(calls.every(([, profile]) => profile === 'openai-pro'), true); assert.equal(calls.find(([name]) => name === 'turn')[2], 'low');
 });
+
+test('OpenAI read-only analysis uses a valid closed schema without constraining action tasks', async (t) => {
+  const root = await temporaryDirectory(t, 'openai-structured-'); const calls = [];
+  const response = JSON.stringify({ schema_version: '0.1', status: 'ok', summary: 'Complete analysis.', observations: [], proposed_actions: [], validation_requested: [], remaining_work: [], uncertainty: [], handoff_notes: [] });
+  const appServer = { runTurn: async (options) => { calls.push(options); return { status: 'completed', model: options.model, output: response, tool_used: false }; } };
+  const provider = new CodexSubscriptionProvider({ appServer, dataRoot: root });
+  await provider.executeStructured({ profile_id: 'openai-pro', model: 'model-one', task_analysis: { intent: 'project_analysis', write_mode: 'read_only' }, prompt: 'Analyze.' });
+  await provider.executeStructured({ profile_id: 'openai-pro', model: 'model-one', task_analysis: { intent: 'implementation', write_mode: 'write' }, prompt: 'Implement.' });
+  assert.equal(calls[0].outputSchema.additionalProperties, false);
+  assert.equal(calls[0].outputSchema.properties.proposed_actions.maxItems, 0);
+  assert.equal(calls[0].outputSchema.properties.proposed_actions.items.additionalProperties, false);
+  assert.equal(calls[1].outputSchema, undefined);
+});

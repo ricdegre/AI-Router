@@ -87,3 +87,27 @@ export const STRUCTURED_RESPONSE_JSON_SCHEMA = Object.freeze({
   }
 });
 
+// OpenAI Structured Outputs requires every object node to be closed with
+// additionalProperties: false. A generic action payload is intentionally
+// extensible, so only use this strict schema for analysis tasks where actions
+// are forbidden by policy and the array must remain empty.
+export const READ_ONLY_STRUCTURED_RESPONSE_JSON_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['schema_version', 'status', 'summary', 'observations', 'proposed_actions', 'validation_requested', 'remaining_work', 'uncertainty', 'handoff_notes'],
+  properties: {
+    schema_version: { type: 'string', const: STRUCTURED_RESPONSE_VERSION },
+    status: { type: 'string', enum: STRUCTURED_RESPONSE_STATUSES },
+    summary: { type: 'string' },
+    observations: { type: 'array', items: { type: 'string' } },
+    proposed_actions: {
+      type: 'array',
+      maxItems: 0,
+      items: { type: 'object', additionalProperties: false, properties: {}, required: [] }
+    },
+    validation_requested: { type: 'array', items: { type: 'string' } },
+    remaining_work: { type: 'array', items: { type: 'string' } },
+    uncertainty: { type: 'array', items: { type: 'string' } },
+    handoff_notes: { type: 'array', items: { type: 'string' } }
+  }
+});

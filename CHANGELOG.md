@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0-pre.7
+
+- Added bounded startup, first-token, inactivity, and overall execution timeouts with explicit failure classification.
+- Added read-only staged project inspection that excludes generated, vendor, binary, and secret paths.
+- Fixed Claude structured noninteractive execution and read-only analysis completion without unnecessary action or handoff stages.
+- Fixed OpenAI read-only Structured Outputs with a closed no-actions schema accepted by Codex App Server.
+- Added bounded automatic provider fallback, including incomplete responses and distinct-provider recovery priority, while preserving exact no-fallback manual execution.
+
 ## 0.11.0-pre.6
 
 - Added provider-independent task analysis before hard policy and resource routing.

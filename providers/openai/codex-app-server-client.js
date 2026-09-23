@@ -129,31 +129,44 @@ export class CodexAppServerClient {
     return { status: 'disconnected' };
   }
 
-  async runTurn({ profileId, model, effort = undefined, prompt, outputSchema = undefined, timeoutMs = 180_000, purpose = 'task' }) {
+  async runTurn({ profileId, model, effort = undefined, prompt, outputSchema = undefined, timeoutMs = 180_000, timeoutPolicy = undefined, purpose = 'task' }) {
     const session = this.session(profileId); await session.start();
+    const policy = timeoutPolicy ?? { startup_ms: Math.min(timeoutMs, 30_000), first_token_ms: Math.min(timeoutMs, 90_000), inactivity_ms: Math.min(timeoutMs, 60_000), overall_ms: timeoutMs };
     const cwd = resolveWithin(this.home(profileId), 'isolated-workspaces', purpose); await mkdir(cwd, { recursive: true, mode: 0o700 });
-    const threadResult = await session.request('thread/start', { model, cwd, approvalPolicy: 'never', sandbox: 'read-only', serviceName: 'ai-router' }, Math.min(timeoutMs, 30_000));
+    const threadResult = await session.request('thread/start', { model, cwd, approvalPolicy: 'never', sandbox: 'read-only', serviceName: 'ai-router' }, policy.startup_ms);
     const threadId = threadResult?.thread?.id;
     if (!threadId) throw appServerError('Codex App Server did not return a thread ID.', 'OPENAI_CODEX_MALFORMED_RESPONSE');
-    let finalText = ''; let streamedText = ''; let toolUsed = false; let completedTurn = null;
+    let finalText = ''; let streamedText = ''; let toolUsed = false; let completedTurn = null; let turnId = null;
     let cleanup = () => {};
     const turnComplete = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { cleanup(); reject(appServerError('Codex turn timed out.', 'PROVIDER_TIMEOUT', { retryable: true, failureCategory: 'timeout' })); }, timeoutMs);
+      let inactivityTimer = null; let sawToken = false;
+      const stop = (type, milliseconds) => {
+        cleanup();
+        if (turnId) session.request('turn/interrupt', { threadId, turnId }, 5_000).catch(() => {});
+        reject(appServerError(`Codex turn ${type.replaceAll('_', ' ')} timed out.`, `PROVIDER_${type.toUpperCase()}_TIMEOUT`, { retryable: true, failureCategory: 'timeout', details: { timeout_type: type, timeout_ms: milliseconds } }));
+      };
+      const overallTimer = setTimeout(() => stop('overall', policy.overall_ms), policy.overall_ms);
+      const firstTokenTimer = setTimeout(() => stop('first_token', policy.first_token_ms), policy.first_token_ms);
+      const activity = (token = false) => {
+        if (token && !sawToken) { sawToken = true; clearTimeout(firstTokenTimer); }
+        if (sawToken) { clearTimeout(inactivityTimer); inactivityTimer = setTimeout(() => stop('inactivity', policy.inactivity_ms), policy.inactivity_ms); }
+      };
       const onNotification = (message) => {
         const params = message.params ?? {}; if (params.threadId && params.threadId !== threadId) return;
-        if (message.method === 'item/agentMessage/delta') streamedText += params.delta ?? '';
-        if (message.method === 'item/completed') { const text = agentText(params.item); if (text !== null) finalText = text; if (usedTool(params.item)) toolUsed = true; }
+        if (message.method === 'item/agentMessage/delta') { streamedText += params.delta ?? ''; activity(Boolean(params.delta)); }
+        if (message.method === 'item/completed') { const text = agentText(params.item); if (text !== null) { finalText = text; activity(true); } if (usedTool(params.item)) toolUsed = true; }
         if (message.method === 'turn/completed') {
           completedTurn = params.turn; cleanup();
           if (params.turn?.status === 'completed') resolve();
           else reject(appServerError(params.turn?.error?.message || 'Codex turn failed.', 'OPENAI_CODEX_TURN_FAILED', { failureCategory: 'execution_failure', details: { codex_error_info: params.turn?.error?.codexErrorInfo ?? null, additional_details: String(params.turn?.error?.additionalDetails ?? '').slice(0, 500) || null } }));
         }
       };
-      cleanup = () => { clearTimeout(timer); session.off('notification', onNotification); };
+      cleanup = () => { clearTimeout(overallTimer); clearTimeout(firstTokenTimer); clearTimeout(inactivityTimer); session.off('notification', onNotification); };
       session.on('notification', onNotification);
     });
     try {
-      await session.request('turn/start', { threadId, input: [{ type: 'text', text: prompt }], model, ...(effort ? { effort } : {}), approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' }, ...(outputSchema ? { outputSchema } : {}) }, Math.min(timeoutMs, 30_000));
+      const started = await session.request('turn/start', { threadId, input: [{ type: 'text', text: prompt }], model, ...(effort ? { effort } : {}), approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' }, ...(outputSchema ? { outputSchema } : {}) }, policy.startup_ms);
+      turnId = started?.turn?.id ?? started?.id ?? null;
       await turnComplete;
     } catch (error) { cleanup(); throw error; }
     return { request_id: randomUUID(), status: 'completed', model, output: finalText || streamedText, done: true, tool_used: toolUsed, metrics: completedTurn?.usage ?? null };

@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { access, mkdir } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { promisify } from 'node:util';
@@ -33,7 +33,7 @@ export async function resolveExecutablePath(executable, options = {}) {
 }
 
 export class CliWorker {
-  constructor({ providerId, executable, dataRoot, run = null, env = process.env }) { this.providerId = providerId; this.executable = executable; this.dataRoot = path.resolve(dataRoot); this.runOverride = run; this.env = env; this.resolvedExecutable = null; }
+  constructor({ providerId, executable, dataRoot, run = null, env = process.env, spawnProcess = spawn }) { this.providerId = providerId; this.executable = executable; this.dataRoot = path.resolve(dataRoot); this.runOverride = run; this.env = env; this.spawnProcess = spawnProcess; this.resolvedExecutable = null; }
   workspace(profileId, purpose = 'worker') { return resolveWithin(this.dataRoot, 'provider-workers', this.providerId, profileId, purpose); }
   async diagnostics() {
     if (this.runOverride) return { found: true, configured_executable: this.executable, resolved_executable: this.executable, resolution_source: 'test-override' };
@@ -55,5 +55,50 @@ export class CliWorker {
       if (typeof error.stdout === 'string' || typeof error.stderr === 'string') throw new ProviderError(`${this.executable} command failed.`, 'PROVIDER_CLI_COMMAND_FAILED', { providerId: this.providerId, failureCategory: /auth|login|sign.in/i.test(`${error.stderr} ${error.stdout}`) ? 'authentication' : 'execution_failure', details: { exit_code: error.code ?? null, diagnostic: String(error.stderr || error.stdout).slice(0, 500) } });
       throw safeProviderError(error, this.providerId);
     }
+  }
+
+  async runStreaming(profileId, args, options = {}) {
+    if (this.runOverride) return this.runOverride({ profileId, args, options });
+    const cwd = this.workspace(profileId, options.purpose); await mkdir(cwd, { recursive: true, mode: 0o700 });
+    const env = { ...this.env };
+    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN']) delete env[name];
+    const diagnostics = await this.diagnostics();
+    if (!diagnostics.found) throw new ProviderError(`${this.executable} is not installed.`, 'PROVIDER_CLI_NOT_INSTALLED', { providerId: this.providerId, failureCategory: 'provider_unavailable', details: diagnostics });
+    const policy = options.timeouts ?? { startup_ms: 30_000, first_token_ms: options.timeoutMs ?? 90_000, inactivity_ms: 60_000, overall_ms: options.timeoutMs ?? 180_000 };
+    return new Promise((resolve, reject) => {
+      let stdout = ''; let stderr = ''; let settled = false; let sawOutput = false; let inactivityTimer = null;
+      const child = this.spawnProcess(diagnostics.resolved_executable, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const timers = new Set();
+      const timer = (milliseconds, kind) => {
+        const handle = setTimeout(() => fail(new ProviderError(`${this.executable} ${kind.replaceAll('_', ' ')} timed out.`, `PROVIDER_${kind.toUpperCase()}_TIMEOUT`, { providerId: this.providerId, retryable: true, failureCategory: 'timeout', details: { timeout_type: kind, timeout_ms: milliseconds } })), milliseconds);
+        timers.add(handle); return handle;
+      };
+      const clear = (handle) => { if (handle) { clearTimeout(handle); timers.delete(handle); } };
+      let startupTimer = timer(policy.startup_ms, 'startup');
+      let firstTokenTimer = null;
+      const overallTimer = timer(policy.overall_ms, 'overall');
+      const cleanup = () => { for (const handle of timers) clearTimeout(handle); timers.clear(); if (options.signal) options.signal.removeEventListener('abort', onAbort); };
+      const fail = (error) => { if (settled) return; settled = true; cleanup(); if (!child.killed) child.kill(); reject(error); };
+      const activity = (isStdout) => {
+        if (isStdout && !sawOutput) { sawOutput = true; clear(firstTokenTimer); }
+        if (sawOutput) { clear(inactivityTimer); inactivityTimer = timer(policy.inactivity_ms, 'inactivity'); }
+      };
+      const append = (current, chunk) => `${current}${chunk}`.slice(-2 * 1024 * 1024);
+      const onAbort = () => fail(new ProviderError(`${this.executable} command was cancelled.`, 'PROVIDER_CANCELLED', { providerId: this.providerId, failureCategory: 'user_cancelled' }));
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+      child.once('spawn', () => { clear(startupTimer); startupTimer = null; firstTokenTimer = timer(policy.first_token_ms, 'first_token'); });
+      child.stdout?.setEncoding('utf8'); child.stderr?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk) => { stdout = append(stdout, chunk); activity(true); options.onOutput?.({ stream: 'stdout', chunk }); });
+      child.stderr?.on('data', (chunk) => { stderr = append(stderr, chunk); activity(false); options.onOutput?.({ stream: 'stderr', chunk }); });
+      child.once('error', (error) => {
+        if (error.code === 'ENOENT') this.resolvedExecutable = null;
+        fail(error.code === 'ENOENT' ? new ProviderError(`${this.executable} is not installed.`, 'PROVIDER_CLI_NOT_INSTALLED', { providerId: this.providerId, failureCategory: 'provider_unavailable', details: diagnostics }) : safeProviderError(error, this.providerId));
+      });
+      child.once('exit', (exitCode, signal) => {
+        if (settled) return; settled = true; cleanup();
+        if (exitCode === 0) resolve({ stdout, stderr, exitCode: 0 });
+        else reject(new ProviderError(`${this.executable} command failed.`, 'PROVIDER_CLI_COMMAND_FAILED', { providerId: this.providerId, failureCategory: /auth|login|sign.in/i.test(`${stderr} ${stdout}`) ? 'authentication' : 'execution_failure', details: { exit_code: exitCode, signal: signal ?? null, diagnostic: String(stderr || stdout).slice(0, 500) } }));
+      });
+    });
   }
 }

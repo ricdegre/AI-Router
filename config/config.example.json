@@ -5,6 +5,10 @@
     "health_ms": 5000,
     "connection_test_ms": 15000,
     "inference_ms": 180000,
-    "test_chat_ms": 180000
+    "test_chat_ms": 180000,
+    "startup_ms": 30000,
+    "first_token_ms": 90000,
+    "inactivity_ms": 60000,
+    "overall_ms": 300000
   }
 }

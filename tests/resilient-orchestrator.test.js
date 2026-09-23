@@ -36,10 +36,14 @@ async function fixture(t, providerDefinitions) {
   const { project } = await projectRegistry.register(workspace);
   const profileRegistry = new ProfileRegistry(runtime);
   const providerRegistry = new ProviderRegistry({ profileRegistry });
+  const registeredProviders = new Set();
   for (const definition of providerDefinitions) {
-    providerRegistry.register(new MockProvider(definition.provider, { execute: definition.execute }));
-    await profileRegistry.register({
-      profile_id: definition.profile, provider_id: definition.provider, display_name: definition.profile,
+    if (!registeredProviders.has(definition.provider)) {
+      providerRegistry.register(new MockProvider(definition.provider, { execute: definition.execute, strength: definition.strength, capabilities: definition.capabilities }));
+      registeredProviders.add(definition.provider);
+    }
+    for (const profile of definition.profiles ?? [definition.profile]) await profileRegistry.register({
+      profile_id: profile, provider_id: definition.provider, display_name: profile,
       auth_mode: 'none', location: 'local', cost_category: 'LOCAL', status: 'available'
     });
   }
@@ -123,6 +127,60 @@ test('partial success creates a durable ready-for-handoff state', async (t) => {
   const handoff = (await setup.dependencies.memoryManager.readHandoff(setup.project.projectId)).data;
   assert.equal(handoff.status, 'ready-for-handoff');
   assert.deepEqual(handoff.remaining_work, ['Run second stage']);
+});
+
+test('read-only project analysis skips actions, validates, completes, and creates no handoff', async (t) => {
+  const setup = await fixture(t, [{ provider: 'analysis-provider', profile: 'analysis-profile', strength: 'strong', capabilities: ['chat', 'coding', 'filesystem', 'long_context'], execute: async (request) => {
+    assert.equal(request.task_analysis.intent, 'project_analysis'); assert.equal(request.task_analysis.write_mode, 'read_only'); assert.ok(request.context.includes('project_inspection'));
+    return { structured: response('ok', 'The project is a layered application with a tested server entry point.') };
+  } }]);
+  await writeFile(path.join(setup.workspace, 'README.md'), '# Project architecture\nLayered application.\n');
+  const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'analysis-complete-01', task_type: 'project_analysis', objective: 'Analyze this entire project read-only', preferred_profiles: ['analysis-profile'], action_policy: { allowed: ['read_file'], denied: ['create_file', 'modify_file', 'append_file'] } }, { maxAttempts: 1 });
+  assert.equal(result.status, 'completed'); assert.equal(result.validation.passed, true);
+  const audit = await setup.dependencies.auditLog.list({ task_id: 'analysis-complete-01' });
+  assert.ok(audit.some((item) => item.type === 'read_only_analysis_received')); assert.ok(!audit.some((item) => item.type === 'actions_proposed'));
+  assert.equal((await setup.dependencies.memoryManager.readHandoff(setup.project.projectId)).data.status, 'none');
+  assert.equal((await setup.dependencies.taskStore.get(setup.project.projectId, 'analysis-complete-01')).state, 'COMPLETED');
+});
+
+test('automatic execution falls back once to another provider while manual execution never switches', async (t) => {
+  let automaticFallbackCalls = 0;
+  const automatic = await fixture(t, [
+    { provider: 'provider-a', profile: 'profile-a', strength: 'strong', execute: async () => { throw new ProviderError('hung', 'PROVIDER_INACTIVITY_TIMEOUT', { failureCategory: 'timeout' }); } },
+    { provider: 'provider-b', profile: 'profile-b', strength: 'strong', execute: async () => { automaticFallbackCalls += 1; return { structured: response('ok', 'Fallback completed the read-only analysis.') }; } }
+  ]);
+  const automaticResult = await automatic.orchestrator.run({ project_id: automatic.project.projectId, task_id: 'bounded-fallback-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', preferred_profiles: ['profile-a', 'profile-b'] }, { maxAttempts: 2 });
+  assert.equal(automaticResult.status, 'completed'); assert.equal(automaticFallbackCalls, 1);
+  assert.deepEqual((await automatic.dependencies.attemptStore.list(automatic.project.projectId, 'bounded-fallback-01')).map((item) => item.provider_id), ['provider-a', 'provider-b']);
+
+  let forbiddenFallbackCalls = 0;
+  const manual = await fixture(t, [
+    { provider: 'provider-a', profile: 'profile-a', strength: 'strong', execute: async () => { throw new ProviderError('hung', 'PROVIDER_INACTIVITY_TIMEOUT', { failureCategory: 'timeout' }); } },
+    { provider: 'provider-b', profile: 'profile-b', strength: 'strong', execute: async () => { forbiddenFallbackCalls += 1; return { structured: response('ok', 'Must not run.') }; } }
+  ]);
+  const manualResult = await manual.orchestrator.run({ project_id: manual.project.projectId, task_id: 'manual-no-fallback-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', manual_provider: 'provider-a', manual_profile: 'profile-a' }, { maxAttempts: 2 });
+  assert.equal(manualResult.status, 'blocked'); assert.equal(forbiddenFallbackCalls, 0);
+  assert.deepEqual((await manual.dependencies.attemptStore.list(manual.project.projectId, 'manual-no-fallback-01')).map((item) => item.provider_id), ['provider-a']);
+
+  let partialFallbackCalls = 0;
+  const incomplete = await fixture(t, [
+    { provider: 'provider-a', profile: 'profile-a', strength: 'strong', execute: async () => ({ structured: response('partial', 'The first provider lacked sufficient evidence.', [], ['Continue with another eligible resource.']) }) },
+    { provider: 'provider-b', profile: 'profile-b', strength: 'strong', execute: async () => { partialFallbackCalls += 1; return { structured: response('ok', 'The fallback completed the read-only analysis.') }; } }
+  ]);
+  const incompleteResult = await incomplete.orchestrator.run({ project_id: incomplete.project.projectId, task_id: 'partial-fallback-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', preferred_profiles: ['profile-a', 'profile-b'] }, { maxAttempts: 2 });
+  const incompleteAttempts = await incomplete.dependencies.attemptStore.list(incomplete.project.projectId, 'partial-fallback-01');
+  assert.equal(incompleteResult.status, 'completed'); assert.equal(partialFallbackCalls, 1);
+  assert.deepEqual(incompleteAttempts.map((item) => [item.provider_id, item.status, item.failure_category]), [['provider-a', 'failed', 'execution_failure'], ['provider-b', 'success', null]]);
+  assert.equal(incompleteAttempts[0].summary, 'The first provider lacked sufficient evidence.');
+
+  let distinctProviderCalls = 0;
+  const ordered = await fixture(t, [
+    { provider: 'provider-a', profiles: ['profile-a1', 'profile-a2'], strength: 'strong', execute: async () => ({ structured: response('partial', 'Provider A remained incomplete.') }) },
+    { provider: 'provider-b', profile: 'profile-b', strength: 'strong', execute: async () => { distinctProviderCalls += 1; return { structured: response('ok', 'Provider B completed the analysis.') }; } }
+  ]);
+  const orderedResult = await ordered.orchestrator.run({ project_id: ordered.project.projectId, task_id: 'distinct-provider-fallback-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', preferred_profiles: ['profile-a1', 'profile-a2', 'profile-b'] }, { maxAttempts: 2 });
+  assert.equal(orderedResult.status, 'completed'); assert.equal(distinctProviderCalls, 1);
+  assert.deepEqual((await ordered.dependencies.attemptStore.list(ordered.project.projectId, 'distinct-provider-fallback-01')).map((item) => item.provider_id), ['provider-a', 'provider-b']);
 });
 
 test('rejected stale actions and independent validation failures leave tasks recoverable', async (t) => {

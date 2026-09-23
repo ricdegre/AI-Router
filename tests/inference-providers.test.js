@@ -137,6 +137,16 @@ test('Claude Test Chat pins supported effort, reports actual model, refreshes li
   const inference = calls[0].args; assert.ok(inference.includes('--effort')); assert.ok(inference.includes('low')); assert.ok(inference.includes('--tools')); assert.ok(inference.includes('')); assert.ok(inference.includes('--safe-mode')); assert.equal(calls[0].options.purpose, 'test-chat');
 });
 
+test('Claude project execution is noninteractive, streamed, context-aware, and structured', async () => {
+  let call; const response = JSON.stringify({ schema_version: '0.1', status: 'ok', summary: 'Architecture verified from supplied project evidence.', observations: ['README and entry point were inspected.'], proposed_actions: [], validation_requested: [], remaining_work: [], uncertainty: [], handoff_notes: [] });
+  const worker = { runStreaming: async (profileId, args, options) => { call = { profileId, args, options }; return { stdout: `${JSON.stringify({ type: 'assistant', message: { content: [] } })}\n${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: response, modelUsage: { 'claude-opus-5-5': {} } })}\n` }; } };
+  const provider = new ClaudeCodeProvider({ worker });
+  const result = await provider.executeStructured({ profile: { profile_id: 'claude-personal' }, model: 'opus', inference: { reasoning_effort: 'high' }, task_analysis: { intent: 'project_analysis', write_mode: 'read_only' }, prompt: 'Analyze the project.', context: 'FILE: README.md\nArchitecture evidence.', execution_timeouts: { startup_ms: 10, first_token_ms: 20, inactivity_ms: 20, overall_ms: 40 } });
+  assert.equal(result.structured.status, 'ok'); assert.match(call.args[1], /Architecture evidence/);
+  assert.ok(call.args.includes('stream-json')); assert.ok(call.args.includes('--include-partial-messages')); assert.ok(call.args.includes('--permission-prompts')); assert.ok(call.args.includes('none')); assert.ok(call.args.includes('--tools')); assert.ok(call.args.includes(''));
+  assert.deepEqual(call.options.timeouts, { startup_ms: 10, first_token_ms: 20, inactivity_ms: 20, overall_ms: 40 });
+});
+
 test('missing subscription CLIs remain actionable visual Connect states', async () => {
   const missingWorker = { run: async () => { const error = new Error('not installed'); error.code = 'PROVIDER_CLI_NOT_INSTALLED'; throw error; } };
   const google = await new AntigravityProvider({ worker: missingWorker }).connect({ profile_id: 'google-personal' });

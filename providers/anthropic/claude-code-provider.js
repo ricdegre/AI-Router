@@ -2,13 +2,17 @@ import { ProviderAdapter, ProviderError } from '../core/protocol.js';
 import { createModelDescriptor } from '../core/model-descriptor.js';
 import { parseStructuredResponse } from '../core/structured-response.js';
 import { CliWorker } from '../core/cli-worker.js';
+import { buildStructuredTaskPrompt } from '../core/task-prompt.js';
 
 const CORE_MODEL_ALIASES = Object.freeze(['sonnet', 'opus', 'haiku', 'fable']);
 const ALL_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 const FOUR_SIX_EFFORTS = Object.freeze(['low', 'medium', 'high', 'max']);
 
 function parseEnvelope(text) {
-  try { return JSON.parse(String(text)); } catch { return null; }
+  const value = String(text);
+  try { return JSON.parse(value); } catch {}
+  const rows = value.split(/\r?\n/).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+  return rows.findLast((item) => item.type === 'result') ?? rows.at(-1) ?? null;
 }
 
 function resultText(text) {
@@ -156,9 +160,11 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     }
   }
   async execute(request) {
-    const args = ['-p', request.prompt, '--output-format', 'json', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'plan', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config'];
+    const prompt = buildStructuredTaskPrompt(request);
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'plan', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config'];
     if (request.inference?.reasoning_effort) args.push('--effort', request.inference.reasoning_effort);
-    const result = await this.worker.run(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms });
+    const execute = typeof this.worker.runStreaming === 'function' ? this.worker.runStreaming.bind(this.worker) : this.worker.run.bind(this.worker);
+    const result = await execute(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms, timeouts: request.execution_timeouts, signal: request.signal });
     const envelope = parseEnvelope(result.stdout);
     if (!envelope || envelope.is_error === true || envelope.subtype === 'error') throw new ProviderError('Claude Code did not complete the request.', 'CLAUDE_EXECUTION_FAILED', { providerId: this.descriptor.id, details: { subtype: envelope?.subtype ?? null } });
     const actualModel = Object.keys(envelope.modelUsage ?? {})[0] ?? request.model;

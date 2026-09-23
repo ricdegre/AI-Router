@@ -24,3 +24,18 @@ test('context builder prioritizes continuity data and respects budget', async (t
   assert.ok(context.approximate_tokens > 0);
 });
 
+test('staged project inspection includes architecture files and excludes generated, binary, and secret paths', async (t) => {
+  const base = await temporaryDirectory(t); const workspace = path.join(base, 'workspace'); const runtime = path.join(base, 'runtime');
+  await mkdir(path.join(workspace, 'src'), { recursive: true }); await mkdir(path.join(workspace, 'node_modules', 'ignored'), { recursive: true });
+  await writeFile(path.join(workspace, 'README.md'), '# Architecture\nA routed application.\n');
+  await writeFile(path.join(workspace, 'package.json'), '{"name":"inspection-proof"}');
+  await writeFile(path.join(workspace, 'src', 'index.ts'), 'export const entry = true;');
+  await writeFile(path.join(workspace, '.env.local'), 'SECRET=do-not-read');
+  await writeFile(path.join(workspace, 'node_modules', 'ignored', 'index.js'), 'generated');
+  await writeFile(path.join(workspace, 'image.png'), Buffer.from([0, 1, 2]));
+  const { project } = await new ProjectRegistry(runtime).register(workspace); const memory = new MemoryManager(runtime); await memory.initialize(project);
+  const context = await new ContextBuilder(memory, { defaultBudgetChars: 12_000 }).build(project.projectId, { task_id: 'inspect-01', objective: 'Analyze this entire project' }, { workspacePath: workspace });
+  assert.match(context.rendered, /inspection-proof/); assert.match(context.rendered, /src\/index\.ts/);
+  assert.doesNotMatch(context.rendered, /do-not-read|node_modules|image\.png/);
+  assert.ok(context.project_inspection.files_inspected >= 3); assert.ok(context.project_inspection.context_chars > 0);
+});

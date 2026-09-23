@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { inspectProject } from './project-inspector.js';
 
 function approximateTokens(text) { return Math.ceil(text.length / 4); }
 
@@ -34,10 +35,12 @@ export class ContextBuilder {
       decisions: await this.safeRead(projectId, 'decisions.md'),
       changelog: await this.safeRead(projectId, 'ai-changelog.md')
     };
+    const projectInspection = options.workspacePath ? await inspectProject(options.workspacePath, task, { budgetChars: Math.min(10_000, Math.max(3_000, Math.floor(budgetChars * 0.65))) }) : null;
     const latestCheckpoint = memory.checkpoints.at(-1) ?? null;
     const candidates = [
       ['task', JSON.stringify({ task_id: task.task_id, objective: task.objective, acceptance_criteria: task.acceptance_criteria ?? [], requested_action_type: task.requested_action_type ?? null }, null, 2)],
       ['constraints', JSON.stringify({ protocol_constraints: memory.currentTask?.constraints ?? [], do_not_modify: memory.currentTask?.do_not_modify ?? [], durable_constraints: relevantExcerpt(raw.constraints, terms, 3_000) }, null, 2)],
+      ['project_inspection', projectInspection?.rendered ?? ''],
       ['handoff', JSON.stringify(memory.handoff ?? {}, null, 2)],
       ['current_task', JSON.stringify(memory.currentTask ?? {}, null, 2)],
       ['changed_files', JSON.stringify(latestCheckpoint?.changedFiles ?? [], null, 2)],
@@ -47,7 +50,7 @@ export class ContextBuilder {
     ];
     const minimumAllocation = {
       task: 120, constraints: 180, handoff: 100, current_task: 120,
-      changed_files: 40, relevant_decisions: 160, project_context: 100,
+      project_inspection: 1_000, changed_files: 40, relevant_decisions: 160, project_context: 100,
       recent_changelog: 60
     };
     const sections = [];
@@ -70,7 +73,7 @@ export class ContextBuilder {
     return {
       context_protocol_version: '0.1', project_id: projectId, task_id: task.task_id,
       budget_chars: budgetChars, used_chars: rendered.length, approximate_tokens: approximateTokens(rendered),
-      sections, rendered
+      sections, project_inspection: projectInspection ? { ...projectInspection, rendered: undefined } : null, rendered
     };
   }
 }

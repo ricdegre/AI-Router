@@ -1,8 +1,9 @@
 import { ProviderAdapter, ProviderError } from '../core/protocol.js';
 import { createModelDescriptor } from '../core/model-descriptor.js';
-import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
+import { parseStructuredResponse, READ_ONLY_STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
 import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
 import { CodexAppServerClient } from './codex-app-server-client.js';
+import { buildStructuredTaskPrompt } from '../core/task-prompt.js';
 
 function authenticated(account) { return account?.account?.type === 'chatgpt'; }
 function modelRows(result) { return result?.data ?? result?.models ?? []; }
@@ -28,6 +29,11 @@ function limitDelta(before, after) {
     if (Object.keys(windows).length) deltas[id] = windows;
   }
   return Object.keys(deltas).length ? deltas : null;
+}
+
+function isReadOnlyAnalysis(request) {
+  const analysis = request.task_analysis ?? request.task?.task_analysis ?? {};
+  return analysis.write_mode === 'read_only' && ['project_analysis', 'architecture', 'code_review', 'research', 'documentation'].includes(analysis.intent);
 }
 
 export class CodexSubscriptionProvider extends ProviderAdapter {
@@ -93,12 +99,13 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
 
   async execute(request) {
     const profileId = request.profile_id ?? request.profile?.profile_id;
-    const prompt = `You are a subordinate execution worker for AI Router. You do not own routing, files, Git, memory, validation, checkpoints, or handoff. Analyze only the context supplied below. Do not use tools or attempt to inspect or modify the project.\n\nRESPONSE CONTRACT\nReturn only one JSON object, with no Markdown fence or commentary. It must contain exactly these top-level fields: schema_version (the string "0.1"), status (one of "ok", "partial", "blocked", "failed"), summary (a non-empty string), observations (string array), proposed_actions (object array), validation_requested (string array), remaining_work (string array), uncertainty (string array), and handoff_notes (string array). Preserve any proposed action object supplied by the task exactly.\n\nTASK\n${request.prompt ?? request.task?.objective ?? ''}\n\nROUTER CONTEXT\n${request.context ?? ''}`;
-    return this.appServer.runTurn({ profileId, model: request.model, effort: request.inference?.reasoning_effort, prompt, timeoutMs: request.timeout_ms, purpose: 'router-task' });
+    const prompt = buildStructuredTaskPrompt(request);
+    return this.appServer.runTurn({ profileId, model: request.model, effort: request.inference?.reasoning_effort, prompt, outputSchema: request.format, timeoutMs: request.timeout_ms, timeoutPolicy: request.execution_timeouts, purpose: 'router-task' });
   }
 
   async executeStructured(request) {
-    const raw = await this.execute({ ...request, format: request.format ?? STRUCTURED_RESPONSE_JSON_SCHEMA });
+    const format = request.format ?? (isReadOnlyAnalysis(request) ? READ_ONLY_STRUCTURED_RESPONSE_JSON_SCHEMA : undefined);
+    const raw = await this.execute({ ...request, format });
     const parsed = parseStructuredResponse(raw.output, { allowTextFallback: false });
     return { ...raw, structured: parsed.response, structured_valid: parsed.valid };
   }
