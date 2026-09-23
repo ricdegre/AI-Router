@@ -159,6 +159,8 @@ export class RoutingPolicy {
 
         const cost = evaluateCost(profile.cost_category, task.cost_policy);
         if (!cost.allowed) rejected.push(cost.reason); else reasons.push(cost.reason, `cost-category-${cost.category}`);
+        const channelDescriptor = provider.execution_channels?.find((item) => item.id === inference.execution_channel);
+        if (channelDescriptor?.metered && task.cost_policy?.allow_metered !== true) rejected.push('metered-execution-channel-disallowed');
         if (cost.category === 'LOCAL') reasons.push('local-capacity-preferred');
         if (cost.category === 'SUBSCRIPTION_INCLUDED') reasons.push('already-paid-capacity');
 

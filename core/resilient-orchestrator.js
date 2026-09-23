@@ -179,6 +179,10 @@ export class ResilientOrchestrator {
         let rejectedActions = [];
         let executionResults = [];
         const analysisOnly = readOnlyAnalysis(route.task_analysis ?? route.task?.task_analysis);
+        const taskAnalysis = route.task_analysis ?? route.task?.task_analysis;
+        if (!failureCategory && !analysisOnly && structured?.status === 'ok' && proposedActions.length === 0 && taskAnalysis?.intent === 'edit') {
+          failureCategory = 'no_actions_proposed'; failureCode = 'NO_ACTIONS_PROPOSED';
+        }
         if (!failureCategory && analysisOnly && proposedActions.length) {
           rejectedActions = proposedActions; failureCategory = 'action_rejected'; failureCode = 'READ_ONLY_ANALYSIS_PROPOSED_ACTIONS';
         }
@@ -314,7 +318,7 @@ export class ResilientOrchestrator {
         await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
           status: 'failed', proposed_actions: proposedActions, approved_actions: approvedActions,
           rejected_actions: rejectedActions, execution_results: executionResults, validation,
-          failure_category: failureCategory, summary: structured?.summary ?? failureCode,
+          failure_category: failureCategory, failure_code: failureCode, summary: structured?.summary ?? failureCode,
           escalation_decision: next ? 'escalate' : 'block', next_candidate: next
         });
         await this.circuitBreaker?.recordFailure(candidate.provider_id, candidate.profile_id, candidate.model_id, failureCategory);

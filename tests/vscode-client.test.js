@@ -4,6 +4,13 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { RouterClient } = require('../interfaces/vscode/router-client.js');
+const { workspaceRelativeFile } = require('../interfaces/vscode/workspace-context.js');
+
+test('active editor context is accepted only for files inside the workspace', () => {
+  assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'file', fsPath: 'D:\\Workspace\\PROJECTOS\\SND-YDB\\src\\main.js' }), 'src\\main.js');
+  assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'file', fsPath: 'C:\\Users\\user\\Documents\\wholesale.html' }), null);
+  assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'untitled', fsPath: 'D:\\Workspace\\draft.txt' }), null);
+});
 
 test('VS Code client talks only to AI Router and verifies state-changing requests', async () => {
   const calls = [];

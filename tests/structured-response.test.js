@@ -20,6 +20,11 @@ test('structured response rejects malformed, oversized, and adversarial data', (
   assert.throws(() => parseStructuredResponse('x'.repeat(100), { maxBytes: 10 }), { code: 'PROVIDER_OUTPUT_TOO_LARGE' });
 });
 
+test('structured response rejects provider actions outside the mediator protocol', () => {
+  assert.throws(() => parseStructuredResponse(JSON.stringify({ ...valid, proposed_actions: [{ id: 'edit', instruction: 'change file', file_path: 'index.html' }] })), { code: 'INVALID_ACTION_PROTOCOL' });
+  assert.doesNotThrow(() => parseStructuredResponse(JSON.stringify({ ...valid, proposed_actions: [{ action_id: 'edit-index', type: 'modify_file', target: 'index.html', parameters: { patch: {} } }] })));
+});
+
 test('plain text fallback is explicit and never marked valid', () => {
   const parsed = parseStructuredResponse('A plain observation.', { allowTextFallback: true });
   assert.equal(parsed.valid, false);
@@ -40,4 +45,3 @@ test('model descriptor keeps facts, overrides, and heuristics separate', () => {
   assert.equal(resolvedModelValue(model, 'coding_suitability'), 'confirmed');
   assert.equal(resolvedModelValue(model, 'strength_class'), 'standard');
 });
-

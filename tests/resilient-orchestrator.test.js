@@ -129,6 +129,16 @@ test('partial success creates a durable ready-for-handoff state', async (t) => {
   assert.deepEqual(handoff.remaining_work, ['Run second stage']);
 });
 
+test('write task with an edit intent cannot report completed when the provider proposes no actions', async (t) => {
+  const setup = await fixture(t, [{ provider: 'mock-a', profile: 'profile-a', execute: async () => ({ structured: response('ok', 'No changes are needed.', []) }) }]);
+  const task = { project_id: setup.project.projectId, task_id: 'no-actions-01', objective: 'Implement a requested file change', required_capabilities: ['coding'] };
+  const result = await setup.orchestrator.run(task, { maxAttempts: 1 });
+  assert.equal(result.status, 'blocked');
+  const attempts = await setup.dependencies.attemptStore.list(setup.project.projectId, task.task_id);
+  assert.equal(attempts[0].failure_category, 'no_actions_proposed'); assert.equal(attempts[0].failure_code, 'NO_ACTIONS_PROPOSED');
+  assert.equal((await setup.dependencies.taskStore.get(setup.project.projectId, task.task_id)).state, 'BLOCKED');
+});
+
 test('read-only project analysis skips actions, validates, completes, and creates no handoff', async (t) => {
   const setup = await fixture(t, [{ provider: 'analysis-provider', profile: 'analysis-profile', strength: 'strong', capabilities: ['chat', 'coding', 'filesystem', 'long_context'], execute: async (request) => {
     assert.equal(request.task_analysis.intent, 'project_analysis'); assert.equal(request.task_analysis.write_mode, 'read_only'); assert.ok(request.context.includes('project_inspection'));

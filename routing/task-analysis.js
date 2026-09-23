@@ -38,7 +38,7 @@ function inferScope(input, text) {
 
 function inferWriteMode(input, intent, text) {
   if (input.write_mode === 'read_only' || input.write_mode === 'write_allowed') return input.write_mode;
-  if (input.read_only === true || contains(text, [/read[- ]only|do not (?:change|modify|write)|sin modificar|solo lectura|no modifiques/])) return 'read_only';
+  if (input.read_only === true || contains(text, [/read[- ]only|do not (?:create|change|modify|write) (?:any )?(?:files?|code|anything)|without (?:changing|modifying|writing) (?:any )?(?:files?|code|anything)|no file changes|sin modificar archivos|solo lectura|no modifiques/])) return 'read_only';
   const denied = input.action_policy?.denied ?? [];
   if (['create_file', 'modify_file', 'append_file'].some((action) => denied.includes(action))) return 'read_only';
   return ['project_analysis', 'code_review', 'architecture', 'research'].includes(intent) ? 'read_only' : 'write_allowed';

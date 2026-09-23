@@ -89,6 +89,13 @@ test('metered use is opt-in and no eligible provider is explicit', async () => {
   await assert.rejects(() => policy.select({ required_capabilities: ['coding'] }, registry, [profile('paid', 'metered-provider', 'metered')]), { code: 'NO_ELIGIBLE_PROVIDER' });
 });
 
+test('a FREE model on a metered execution channel is still excluded when metered use is off', async () => {
+  const registry = new ProviderRegistry(); const provider = new MockProvider('gateway');
+  provider.descriptor.execution_channels = [{ id: 'gateway-channel', name: 'Gateway', cost_category: 'FREE', metered: true }]; registry.register(provider);
+  const result = await new RoutingPolicy().explain({ required_capabilities: ['coding'], cost_policy: { allow_metered: false } }, registry, [profile('free-profile', 'gateway', 'FREE', { execution_channel: 'gateway-channel' })]);
+  assert.equal(result.selected, null); assert.ok(result.evaluations[0].rejected.includes('metered-execution-channel-disallowed'));
+});
+
 test('high-risk tasks require strong provider class', async () => {
   const registry = new ProviderRegistry();
   registry.register(new MockProvider('standard', { strength: 'standard' }));

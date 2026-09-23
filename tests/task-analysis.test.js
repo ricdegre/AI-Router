@@ -31,3 +31,9 @@ test('visual tasks preserve independent read-only and write-enabled intent', () 
   const attachment = [{ type: 'image' }]; const readOnly = analyzeTask({ objective: 'Tell me what is wrong. Do not modify anything.', attachments: attachment }); const writable = analyzeTask({ objective: 'Fix this screen to match the screenshot', attachments: attachment });
   assert.equal(readOnly.write_mode, 'read_only'); assert.equal(readOnly.required_capabilities.includes('filesystem_write'), false); assert.equal(writable.write_mode, 'write_allowed'); assert.ok(writable.required_capabilities.includes('filesystem_write')); assert.ok(writable.routing_capabilities.includes('vision'));
 });
+
+test('write scope limits do not turn an explicitly requested edit into read-only', () => {
+  const analysis = analyzeTask({ objective: 'Implement nested Wholesale sidebar navigation', instruction: 'Do not change unrelated routes, data, logic, or styles.' });
+  assert.equal(analysis.intent, 'edit'); assert.equal(analysis.write_mode, 'write_allowed');
+  assert.equal(analyzeTask({ objective: 'Explain the page without changing any files' }).write_mode, 'read_only');
+});

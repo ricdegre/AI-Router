@@ -1,11 +1,10 @@
 'use strict';
 const vscode = require('vscode');
-const path = require('node:path');
 const { RouterClient } = require('./router-client');
+const { workspaceRelativeFile } = require('./workspace-context');
 
 function outputLine(channel, label, value) { channel.appendLine(`${label}: ${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}`); }
 function safeError(error) { return { code: error?.code || 'ERROR', status: error?.status ?? null, message: error?.message || 'Unknown error' }; }
-
 function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
   return function activateExtension(context) {
     const channel = vscodeApi.window.createOutputChannel('AI Router'); context.subscriptions.push(channel);
@@ -46,8 +45,8 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     async function runTask(instruction, overrideSelection = null, readOnly = false, attachments = []) {
       const folder = vscodeApi.workspace.workspaceFolders?.[0]; if (!folder) return vscodeApi.window.showErrorMessage('Open a workspace before running an AI Router task.');
       const objective = instruction || await vscodeApi.window.showInputBox({ prompt: 'Describe the coding change', ignoreFocusOut: true }); if (!objective) return null;
-      const editor = vscodeApi.window.activeTextEditor; const activeFile = editor ? path.relative(folder.uri.fsPath, editor.document.uri.fsPath) : null;
-      let selectedText = ''; if (editor && vscodeApi.workspace.getConfiguration('aiRouter').get('includeSelection', true) && !editor.selection.isEmpty) selectedText = editor.document.getText(editor.selection);
+      const editor = vscodeApi.window.activeTextEditor; const activeFile = editor ? workspaceRelativeFile(folder.uri.fsPath, editor.document.uri) : null;
+      let selectedText = ''; if (activeFile && editor && vscodeApi.workspace.getConfiguration('aiRouter').get('includeSelection', true) && !editor.selection.isEmpty) selectedText = editor.document.getText(editor.selection);
       const taskInstruction = [objective, readOnly ? 'Read-only mode: do not create, modify, move, or delete files.' : '', activeFile ? `Active file: ${activeFile}` : '', selectedText ? `Selected text (user supplied):\n${selectedText}` : ''].filter(Boolean).join('\n\n');
       channel.clear(); channel.show(true); status.text = '$(sync~spin) AI Router: running'; notifyPanel({ type: 'progress', value: 'Routing task…' }); outputLine(channel, 'Workspace', folder.uri.fsPath); outputLine(channel, 'Mode', readOnly ? 'Read-only' : 'Standard'); outputLine(channel, 'Attached images', attachments.length); if (activeFile) outputLine(channel, 'Active file', activeFile); log('command.runTask', { workspace: folder.uri.fsPath, active_file: activeFile, read_only: readOnly, attachment_count: attachments.length, attachment_types: attachments.map(item => item.mime_type) });
       try {
@@ -57,7 +56,13 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
         const uploaded = [];
         for (const attachment of attachments) uploaded.push(await router.uploadAttachment(attachment));
         const created = await router.createTask(project.projectId, objective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id) }); const taskId = created.descriptor.task_id; notifyPanel({ type: 'progress', value: `Running ${taskId}…` });
-        await router.resume(project.projectId, taskId); const detail = await router.task(project.projectId, taskId); const attempt = detail.attempts.at(-1) ?? {};
+        let latestDetail = null; let resumeError = null; let pollInFlight = false;
+        const pollOnce = async () => { if (pollInFlight) return; pollInFlight = true; try { latestDetail = await router.task(project.projectId, taskId); notifyPanel({ type: 'taskProgress', taskId, state: latestDetail.state?.state ?? 'RUNNING' }); } catch (error) { log('task.poll.failed', { task_id: taskId, ...safeError(error) }); } finally { pollInFlight = false; } };
+        await pollOnce(); const pollTimer = setInterval(pollOnce, 2000);
+        try { await router.resume(project.projectId, taskId); } catch (error) { resumeError = error; } finally { clearInterval(pollTimer); }
+        let detail; try { detail = await router.task(project.projectId, taskId); } catch (error) { if (latestDetail) detail = latestDetail; else throw resumeError ?? error; }
+        if (resumeError && !['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED'].includes(detail?.state?.state)) throw resumeError;
+        const attempt = detail.attempts?.at(-1) ?? {};
         const gitFiles = detail.workspace_changes?.changedFiles ?? []; const mediatedFiles = (detail.attempts ?? []).flatMap(item => (item.execution_results ?? []).filter(result => result.status === 'completed' && result.target).map(result => result.target)); const changedFiles = [...new Set([...gitFiles, ...mediatedFiles])];
         outputLine(channel, 'Final state', detail.state.state); outputLine(channel, 'Validation', attempt.validation ?? 'Not reported'); outputLine(channel, 'Changed files', changedFiles); outputLine(channel, 'Result', attempt.result ?? attempt.structured_response ?? attempt.summary ?? 'See Dashboard.');
         notifyPanel({ type: 'task', taskId, state: detail.state.state, selected: route.selected, validation: attempt.validation ?? null, changedFiles, result: attempt.summary ?? attempt.structured_response ?? null }); status.text = detail.state.state === 'COMPLETED' ? '$(check) AI Router: completed' : `$(warning) AI Router: ${detail.state.state}`; log('command.runTask.completed', { task_id: taskId, state: detail.state.state, changed_file_count: changedFiles.length }); return detail;
