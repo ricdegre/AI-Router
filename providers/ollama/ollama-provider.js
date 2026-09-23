@@ -3,6 +3,7 @@ import { ProviderAdapter, ProviderError, safeProviderError } from '../core/proto
 import { createModelDescriptor } from '../core/model-descriptor.js';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
 import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
+import { readFile } from 'node:fs/promises';
 
 export class OllamaProvider extends ProviderAdapter {
   constructor(options = {}) {
@@ -159,7 +160,11 @@ export class OllamaProvider extends ProviderAdapter {
         failureCategory: 'insufficient_capability'
       });
     }
-    const messages = request.messages ?? [{ role: 'user', content: request.prompt ?? request.objective ?? '' }];
+    let messages = request.messages ?? [{ role: 'user', content: request.prompt ?? request.objective ?? '' }];
+    if (request.attachments?.length) {
+      const images = await Promise.all(request.attachments.map(async (attachment) => (await readFile(attachment.path)).toString('base64')));
+      messages = [{ role: 'user', content: request.prompt ?? request.objective ?? '', images }];
+    }
     if (!Array.isArray(messages) || !messages.length) {
       throw new ProviderError('Ollama execution requires at least one message.', 'OLLAMA_MESSAGES_REQUIRED', { providerId: this.descriptor.id });
     }

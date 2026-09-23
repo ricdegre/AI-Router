@@ -100,7 +100,7 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
   async execute(request) {
     const profileId = request.profile_id ?? request.profile?.profile_id;
     const prompt = buildStructuredTaskPrompt(request);
-    return this.appServer.runTurn({ profileId, model: request.model, effort: request.inference?.reasoning_effort, prompt, outputSchema: request.format, timeoutMs: request.timeout_ms, timeoutPolicy: request.execution_timeouts, purpose: 'router-task' });
+    return this.appServer.runTurn({ profileId, model: request.model, effort: request.inference?.reasoning_effort, prompt, attachments: request.attachments ?? [], outputSchema: request.format, timeoutMs: request.timeout_ms, timeoutPolicy: request.execution_timeouts, purpose: 'router-task' });
   }
 
   async executeStructured(request) {

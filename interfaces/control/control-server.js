@@ -13,6 +13,7 @@ const STATIC_FILES = new Map([
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']]
 ]);
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_ATTACHMENT_BODY_BYTES = 8 * 1024 * 1024;
 
 function json(response, status, value, nonce) {
   const body = `${JSON.stringify(value)}\n`;
@@ -33,13 +34,13 @@ function safeError(error) {
   return { status: 500, body: { error: 'CONTROL_INTERNAL_ERROR', message: 'The local control service could not complete the request.' } };
 }
 
-async function bodyJson(request) {
+async function bodyJson(request, maxBytes = MAX_BODY_BYTES) {
   const contentType = request.headers['content-type'] ?? '';
   if (!contentType.toLowerCase().startsWith('application/json')) throw new AiRouterError('JSON content type is required.', 'INVALID_CONTROL_CONTENT_TYPE');
   const chunks = []; let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new AiRouterError('Request body is too large.', 'CONTROL_BODY_TOO_LARGE');
+    if (size > maxBytes) throw new AiRouterError('Request body is too large.', 'CONTROL_BODY_TOO_LARGE');
     chunks.push(chunk);
   }
   try { return size ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}; }
@@ -75,7 +76,7 @@ export function createControlServer({ api, host = '127.0.0.1', port = 43127, fin
       if (request.method === 'GET' && url.pathname.startsWith('/api/')) return json(response, 200, await api.handleGet(url.pathname, url.searchParams), nonce);
       if (request.method === 'POST' && url.pathname.startsWith('/api/')) {
         if (origin !== expectedOrigin || request.headers['x-ai-router-control'] !== nonce) throw new AiRouterError('Control request verification failed.', 'CONTROL_VERIFICATION_FAILED');
-        const body = await bodyJson(request);
+        const body = await bodyJson(request, url.pathname === '/api/attachments' ? MAX_ATTACHMENT_BODY_BYTES : MAX_BODY_BYTES);
         if (url.pathname === '/api/shutdown') {
           json(response, 202, { status: 'stopping' });
           if (!stopping) { stopping = true; setImmediate(async () => { await onShutdown?.(); await stop(); }); }

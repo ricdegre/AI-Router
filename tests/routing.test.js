@@ -137,6 +137,25 @@ test('manual selection reports exact disabled, unsupported-effort, and capabilit
   assert.match(capability.error.reason, /^missing-capabilities:/);
 });
 
+test('image routing selects only a REAL vision model and reports precise automatic and manual failures', async () => {
+  const registry = new ProviderRegistry(); registry.register(new MockProvider('visual', { capabilities: ['chat', 'coding'] }));
+  const visualModel = createModelDescriptor({ providerId: 'visual', modelId: 'visual-model', discovered: { display_name: 'Visual', vision: true, local: false } });
+  const textModel = createModelDescriptor({ providerId: 'visual', modelId: 'text-model', discovered: { display_name: 'Text', vision: false, local: false } });
+  const visual = profile('visual-real', 'visual', 'subscription', { status: 'ready', routing_classification: 'REAL', models: [visualModel], selected_model_id: 'visual-model' });
+  const text = profile('text-real', 'visual', 'subscription', { status: 'ready', routing_classification: 'REAL', models: [textModel], selected_model_id: 'text-model' });
+  const task = { objective: 'Describe what is visible', attachments: [{ type: 'image' }], read_only: true };
+  const route = await new RoutingPolicy().explain(task, registry, [text, visual]); assert.equal(route.selected.profile_id, 'visual-real'); assert.ok(route.selected.reasons.includes('selected-model-supports-vision'));
+  const unavailable = await new RoutingPolicy().explain(task, registry, [text]); assert.equal(unavailable.error.code, 'NO_VISION_CAPABLE_RESOURCE');
+  const manual = await new RoutingPolicy().explain({ ...task, routing_mode: 'manual', manual_profile: 'text-real', manual_model: 'text-model' }, registry, [text, visual]); assert.equal(manual.error.code, 'MANUAL_RESOURCE_REJECTED'); assert.match(manual.error.reason, /^missing-capabilities:vision/);
+});
+
+test('manual routing resolves a provider execution channel when legacy profile state omitted it', async () => {
+  const registry = new ProviderRegistry(); const provider = new MockProvider('channel-provider'); provider.descriptor.execution_channels = [{ id: 'native-channel', name: 'Native', cost_category: 'LOCAL', metered: false }]; registry.register(provider);
+  const legacy = profile('legacy-channel-profile', 'channel-provider', 'local', { execution_channel: null });
+  const route = await new RoutingPolicy().explain({ routing_mode: 'manual', manual_profile: legacy.profile_id, manual_execution_channel: 'native-channel' }, registry, [legacy]);
+  assert.equal(route.selected.execution_channel, 'native-channel');
+});
+
 test('escalation is bounded and user cancellation never escalates', () => {
   const candidates = [profile('local', 'provider-a'), profile('standard', 'provider-b'), profile('strong', 'provider-c')];
   const plan = new EscalationPlan(candidates, { maxAttempts: 2 });

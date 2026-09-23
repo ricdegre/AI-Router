@@ -3,6 +3,7 @@ import { ProviderAdapter, ProviderError, safeProviderError } from '../core/proto
 import { createModelDescriptor } from '../core/model-descriptor.js';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
 import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
+import { readFile } from 'node:fs/promises';
 
 const SECRET_NAME = 'openrouter-api-key';
 
@@ -92,7 +93,13 @@ export class OpenRouterProvider extends ProviderAdapter {
     return { status: 'connected', response: result.choices?.[0]?.message?.content ?? '', model: result.model ?? model, latency_ms: Math.round(performance.now() - started), usage_delta: result.usage ?? null };
   }
   async execute(request) {
-    const result = await this.request('chat/completions', { profile_id: request.profile_id ?? request.profile?.profile_id, method: 'POST', timeout_ms: request.timeout_ms, operation: 'inference', body: { model: request.model, messages: request.messages ?? [{ role: 'user', content: request.prompt ?? request.objective ?? '' }], response_format: request.format ? { type: 'json_schema', json_schema: { name: 'ai_router_response', strict: true, schema: request.format } } : undefined } });
+    let messages = request.messages ?? [{ role: 'user', content: request.prompt ?? request.objective ?? '' }];
+    if (request.attachments?.length) {
+      const content = [{ type: 'text', text: request.prompt ?? request.objective ?? '' }];
+      for (const attachment of request.attachments) content.push({ type: 'image_url', image_url: { url: `data:${attachment.mime_type};base64,${(await readFile(attachment.path)).toString('base64')}` } });
+      messages = [{ role: 'user', content }];
+    }
+    const result = await this.request('chat/completions', { profile_id: request.profile_id ?? request.profile?.profile_id, method: 'POST', timeout_ms: request.timeout_ms, operation: 'inference', body: { model: request.model, messages, response_format: request.format ? { type: 'json_schema', json_schema: { name: 'ai_router_response', strict: true, schema: request.format } } : undefined } });
     return { request_id: request.request_id ?? randomUUID(), status: 'completed', model: result.model ?? request.model, output: result.choices?.[0]?.message?.content ?? '', done: true, metrics: result.usage ?? null };
   }
   async executeStructured(request) { const raw = await this.execute({ ...request, format: request.format ?? STRUCTURED_RESPONSE_JSON_SCHEMA }); const parsed = parseStructuredResponse(raw.output, { allowTextFallback: false }); return { ...raw, structured: parsed.response, structured_valid: parsed.valid }; }

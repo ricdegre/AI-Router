@@ -9,7 +9,7 @@ import { MockProvider } from './mock-provider.js';
 import { AntigravityProvider, ANTIGRAVITY_AUTH_STATES, parseAntigravityModels, parseAntigravityUsage } from '../providers/google/antigravity-provider.js';
 import { executableCandidates, resolveExecutablePath } from '../providers/core/cli-worker.js';
 import { ProviderError } from '../providers/core/protocol.js';
-import { ClaudeCodeProvider, claudeEffortsForModel, defaultClaudeEffort, parseClaudeModelMenu, parseClaudeUsage } from '../providers/anthropic/claude-code-provider.js';
+import { ClaudeCodeProvider, claudeEffortsForModel, claudeVisionForModel, defaultClaudeEffort, parseClaudeModelMenu, parseClaudeUsage } from '../providers/anthropic/claude-code-provider.js';
 import { createRuntimeServices } from '../core/runtime-services.js';
 import { temporaryDirectory } from './helpers.js';
 import { DecisionStateBuilder } from '../decision-engines/core/state-builder.js';
@@ -100,6 +100,7 @@ test('Claude Code discovers subscription models and provider-specific effort wit
   assert.deepEqual(models[0].discovered_facts.supported_reasoning_efforts, ['low', 'medium', 'high', 'xhigh', 'max']); assert.equal(models[0].discovered_facts.default_reasoning_effort, 'high');
   assert.deepEqual(models[1].discovered_facts.supported_reasoning_efforts, ['low', 'medium', 'high', 'xhigh', 'max']); assert.equal(models[1].discovered_facts.default_reasoning_effort, 'medium');
   assert.deepEqual(models[2].discovered_facts.supported_reasoning_efforts, []);
+  assert.ok(models.every((model) => model.discovered_facts.vision === true));
   const limits = await provider.limits({ profile_id: 'claude-personal' }); assert.equal(limits.windows[0].type, '5h'); assert.equal(limits.windows[0].remaining_percentage, 88); assert.equal(limits.windows[1].type, 'weekly'); assert.equal(limits.windows[1].remaining_percentage, 66);
   assert.equal(provider.descriptor.execution_channels[0].metered, false);
 });
@@ -108,6 +109,7 @@ test('Claude effort capability follows official per-model mapping and remains se
   assert.deepEqual(claudeEffortsForModel('Sonnet 5'), ['low', 'medium', 'high', 'xhigh', 'max']);
   assert.deepEqual(claudeEffortsForModel('Opus 4.6'), ['low', 'medium', 'high', 'max']);
   assert.deepEqual(claudeEffortsForModel('Haiku 4.5'), []); assert.equal(defaultClaudeEffort('Opus 5.5'), 'medium');
+  assert.equal(claudeVisionForModel('Sonnet 5'), true); assert.equal(claudeVisionForModel('Unknown future model'), false);
   assert.deepEqual(parseClaudeModelMenu(JSON.stringify({ result: 'Available: sonnet, opus, haiku, or fable' })), ['sonnet', 'opus', 'haiku', 'fable']);
   const usage = parseClaudeUsage(JSON.stringify({ result: 'Current session: 0% used · resets tomorrow\nCurrent week (all models): 25% used · resets Friday' }));
   assert.equal(usage.remaining_percentage, 75); assert.equal(usage.windows[0].remaining_percentage, 100);

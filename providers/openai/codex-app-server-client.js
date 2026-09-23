@@ -129,7 +129,7 @@ export class CodexAppServerClient {
     return { status: 'disconnected' };
   }
 
-  async runTurn({ profileId, model, effort = undefined, prompt, outputSchema = undefined, timeoutMs = 180_000, timeoutPolicy = undefined, purpose = 'task' }) {
+  async runTurn({ profileId, model, effort = undefined, prompt, attachments = [], outputSchema = undefined, timeoutMs = 180_000, timeoutPolicy = undefined, purpose = 'task' }) {
     const session = this.session(profileId); await session.start();
     const policy = timeoutPolicy ?? { startup_ms: Math.min(timeoutMs, 30_000), first_token_ms: Math.min(timeoutMs, 90_000), inactivity_ms: Math.min(timeoutMs, 60_000), overall_ms: timeoutMs };
     const cwd = resolveWithin(this.home(profileId), 'isolated-workspaces', purpose); await mkdir(cwd, { recursive: true, mode: 0o700 });
@@ -165,7 +165,8 @@ export class CodexAppServerClient {
       session.on('notification', onNotification);
     });
     try {
-      const started = await session.request('turn/start', { threadId, input: [{ type: 'text', text: prompt }], model, ...(effort ? { effort } : {}), approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' }, ...(outputSchema ? { outputSchema } : {}) }, policy.startup_ms);
+      const input = [{ type: 'text', text: prompt }, ...attachments.map((attachment) => ({ type: 'localImage', path: attachment.path, detail: 'auto' }))];
+      const started = await session.request('turn/start', { threadId, input, model, ...(effort ? { effort } : {}), approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' }, ...(outputSchema ? { outputSchema } : {}) }, policy.startup_ms);
       turnId = started?.turn?.id ?? started?.id ?? null;
       await turnComplete;
     } catch (error) { cleanup(); throw error; }

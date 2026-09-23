@@ -4,6 +4,7 @@ import { ACTION_TYPES } from '../actions/action-mediator.js';
 import { AiRouterError } from './errors.js';
 import { DEFAULT_PROVIDER_TIMEOUTS } from './provider-timeout-policy.js';
 import { REASONING_EFFORTS } from '../providers/core/inference-profile.js';
+import { IMAGE_MIME_TYPES, MAX_IMAGE_BYTES, MAX_TASK_IMAGES, MAX_TASK_IMAGE_BYTES } from './attachment-store.js';
 
 export const TASK_EXECUTION_DESCRIPTOR_VERSION = '0.1';
 const RISKS = new Set(['low', 'medium', 'high', 'critical']);
@@ -62,6 +63,26 @@ function validationRequirements(input = []) {
     if (['exact_content', 'contains_text'].includes(requirement.type) && typeof requirement.expected !== 'string') throw new AiRouterError('Text validation requires expected content.', 'INVALID_TASK_DESCRIPTOR');
     return structuredClone(requirement);
   });
+}
+
+function attachments(input = []) {
+  if (!Array.isArray(input)) throw new AiRouterError('attachments must be an array.', 'INVALID_TASK_DESCRIPTOR');
+  if (input.length > MAX_TASK_IMAGES) throw new AiRouterError(`A task may include at most ${MAX_TASK_IMAGES} attachments.`, 'ATTACHMENT_COUNT_EXCEEDED');
+  let totalBytes = 0;
+  const normalized = input.map((attachment) => {
+    object(attachment, 'attachment');
+    const attachmentId = safeId(attachment.attachment_id, 'attachment_id');
+    if (attachment.type !== 'image' || !IMAGE_MIME_TYPES.includes(attachment.mime_type)) throw new AiRouterError('Task attachment type is unsupported.', 'ATTACHMENT_UNSUPPORTED_TYPE');
+    if (typeof attachment.filename !== 'string' || !attachment.filename || path.basename(attachment.filename) !== attachment.filename || attachment.filename.includes('\0')) throw new AiRouterError('Attachment filename is invalid.', 'INVALID_TASK_DESCRIPTOR');
+    const width = boundedInteger(attachment.width, null, 1, 50_000, 'attachment width');
+    const height = boundedInteger(attachment.height, null, 1, 50_000, 'attachment height');
+    const sizeBytes = boundedInteger(attachment.size_bytes, null, 1, MAX_IMAGE_BYTES, 'attachment size'); totalBytes += sizeBytes;
+    if (attachment.purpose !== 'visual_reference') throw new AiRouterError('Attachment purpose is unsupported.', 'INVALID_TASK_DESCRIPTOR');
+    if (attachment.source?.kind !== 'attachment_store' || attachment.source?.attachment_id !== attachmentId) throw new AiRouterError('Attachment source is invalid.', 'INVALID_TASK_DESCRIPTOR');
+    return { attachment_id: attachmentId, type: 'image', mime_type: attachment.mime_type, filename: attachment.filename, width, height, size_bytes: sizeBytes, purpose: 'visual_reference', source: { kind: 'attachment_store', attachment_id: attachmentId }, created_at: timestamp(attachment.created_at, 'attachment created_at', new Date().toISOString()), raw_retained: attachment.raw_retained !== false };
+  });
+  if (totalBytes > MAX_TASK_IMAGE_BYTES) throw new AiRouterError(`Combined attachments may not exceed ${MAX_TASK_IMAGE_BYTES} bytes.`, 'ATTACHMENT_TOTAL_TOO_LARGE');
+  return normalized;
 }
 
 function actionPolicy(input = {}) {
@@ -124,7 +145,7 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
     created_at: timestamp(input.created_at, 'created_at', now), updated_at: timestamp(input.updated_at, 'updated_at', now),
     objective: typeof input.objective === 'string' && input.objective.trim() ? input.objective.trim() : (() => { throw new AiRouterError('objective is required.', 'INVALID_TASK_DESCRIPTOR'); })(),
     task_type: typeof (input.task_type ?? 'general') === 'string' ? input.task_type ?? 'general' : (() => { throw new AiRouterError('task_type is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(), risk: RISKS.has(input.risk ?? 'low') ? input.risk ?? 'low' : (() => { throw new AiRouterError('risk is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(),
-    required_capabilities: strings(input.required_capabilities, 'required_capabilities', []),
+    required_capabilities: strings(input.required_capabilities, 'required_capabilities', []), attachments: attachments(input.attachments),
     preferred_cost_policy: { prefer_local: true, prefer_subscription: true, allow_metered: false, allow_unknown_cost: false, ...cost },
     provider_constraints: {
       allowed_provider_ids: strings(provider.allowed_provider_ids, 'allowed_provider_ids', []), denied_provider_ids: strings(provider.denied_provider_ids, 'denied_provider_ids', []),
@@ -155,7 +176,7 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
 export function descriptorFromTask(task, project) {
   return validateTaskExecutionDescriptor({
     schema_version: TASK_EXECUTION_DESCRIPTOR_VERSION, task_id: task.task_id, project_id: task.project_id,
-    objective: task.objective, task_type: task.task_type, risk: task.risk, required_capabilities: task.required_capabilities,
+    objective: task.objective, task_type: task.task_type, risk: task.risk, required_capabilities: task.required_capabilities, attachments: task.attachments ?? [],
     preferred_cost_policy: task.cost_policy ?? { allow_metered: task.allow_metered ?? false },
     provider_constraints: task.provider_constraints ?? { allow_metered: task.allow_metered ?? false }, model_constraints: task.model_constraints ?? {},
     manual_overrides: { provider_id: task.manual_provider ?? null, profile_id: task.manual_profile ?? null, model_id: task.manual_model ?? null, execution_channel: task.manual_execution_channel ?? null, reasoning_effort: task.manual_reasoning_effort ?? null },
@@ -172,7 +193,7 @@ export function descriptorToTask(descriptor) {
   const value = validateTaskExecutionDescriptor(descriptor);
   return {
     project_id: value.project_id, task_id: value.task_id, objective: value.objective, task_type: value.task_type,
-    risk: value.risk, required_capabilities: value.required_capabilities, cost_policy: value.preferred_cost_policy,
+    risk: value.risk, required_capabilities: value.required_capabilities, attachments: value.attachments, cost_policy: value.preferred_cost_policy,
     allow_metered: value.preferred_cost_policy.allow_metered, manual_provider: value.manual_overrides.provider_id,
     manual_profile: value.manual_overrides.profile_id, manual_model: value.manual_overrides.model_id, manual_execution_channel: value.manual_overrides.execution_channel, manual_reasoning_effort: value.manual_overrides.reasoning_effort,
     validation_requirements: value.validation_requirements, action_policy: value.action_policy,

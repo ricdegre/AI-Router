@@ -26,6 +26,12 @@ test('descriptor safe defaults are bounded and reconstruct an executable task', 
   assert.equal(descriptorToTask(fromTask).manual_reasoning_effort, 'high');
 });
 
+test('descriptor preserves bounded attachment metadata without embedding bytes or private paths', async (t) => {
+  const root = await temporaryDirectory(t); const attachment = { attachment_id: 'att-12345678', type: 'image', mime_type: 'image/png', filename: 'screen.png', width: 640, height: 360, size_bytes: 1200, purpose: 'visual_reference', source: { kind: 'attachment_store', attachment_id: 'att-12345678' }, created_at: '2026-09-23T12:00:00Z', raw_retained: true };
+  const descriptor = descriptorFromTask({ ...valid(root), attachments: [attachment] }, { workspacePath: root });
+  assert.deepEqual(descriptor.attachments, [attachment]); assert.deepEqual(descriptorToTask(descriptor).attachments, [attachment]); assert.doesNotMatch(JSON.stringify(descriptor), /data_base64|private_path/);
+});
+
 test('descriptor rejects unsupported, unsafe, unlimited, paid, and malformed inputs', async (t) => {
   const root = await temporaryDirectory(t);
   assert.throws(() => validateTaskExecutionDescriptor({ ...valid(root), schema_version: '9.0' }), { code: 'UNSUPPORTED_TASK_DESCRIPTOR_VERSION' });

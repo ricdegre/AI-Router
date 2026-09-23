@@ -127,7 +127,9 @@ export class RoutingPolicy {
         evaluations.push({ provider_id: profile.provider_id, profile_id: profile.profile_id, model_id: null, routing_classification: routingClassification, eligible: false, rejected: ['provider-not-registered'], reasons: [], warnings: [] });
         continue;
       }
-      for (const model of candidateModels) for (const inference of inferenceVariants(profile, model)) {
+      for (const model of candidateModels) {
+        const routingProfile = { ...profile, execution_channel: profile.execution_channel ?? model?.discovered_facts?.execution_channel ?? provider.execution_channels?.[0]?.id ?? null };
+        for (const inference of inferenceVariants(routingProfile, model)) {
         const reasons = [];
         const rejected = [];
         const warnings = [];
@@ -166,6 +168,10 @@ export class RoutingPolicy {
         const capabilities = effectiveCapabilities(provider, profile, model);
         const missing = task.required_capabilities.filter((item) => !capabilities.has(item));
         if (missing.length) rejected.push(`missing-capabilities:${missing.join(',')}`); else reasons.push('all-required-capabilities-available');
+        if (task.task_analysis.vision_required) {
+          reasons.push('image-input-required');
+          if (capabilities.has('vision')) reasons.push('selected-model-supports-vision');
+        }
 
         const strength = resolvedModelValue(model, 'strength_class') ?? provider.strength_class;
         const requiredStrength = modelConstraints.minimum_strength ?? task.minimum_strength;
@@ -201,6 +207,7 @@ export class RoutingPolicy {
           reasons, rejected, warnings, health: health.status, capabilities: [...capabilities],
           strength_class: strength, context_size: contextSize, cost_category: cost.category
         });
+        }
       }
     }
     const manualSpecified = Boolean(task.manual_provider || task.manual_profile || task.manual_model || task.manual_execution_channel || task.manual_reasoning_effort);
@@ -214,7 +221,9 @@ export class RoutingPolicy {
       warnings: eligible[0]?.warnings ?? [],
       error: eligible.length ? null : task.routing_mode === 'manual'
         ? { code: 'MANUAL_RESOURCE_REJECTED', message: `The selected resource was rejected: ${manualReason}.`, reason: manualReason }
-        : { code: 'NO_ELIGIBLE_PROVIDER', message: 'No enabled and healthy provider/profile/model satisfies the analyzed task.' }
+        : task.task_analysis.vision_required
+          ? { code: 'NO_VISION_CAPABLE_RESOURCE', message: 'No enabled REAL resource can process the attached image without metered or disallowed fallback.', reason: 'missing-capability:vision' }
+          : { code: 'NO_ELIGIBLE_PROVIDER', message: 'No enabled and healthy provider/profile/model satisfies the analyzed task.' }
     };
   }
 

@@ -98,7 +98,7 @@ The source for the VS Code client is in `interfaces/vscode`. Launch it in an Ext
 
 ## Development status
 
-AI Router 0.11.0-pre.7 is a first-use readiness pre-release and is not yet a production release. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## License
 

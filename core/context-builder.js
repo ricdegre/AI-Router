@@ -39,6 +39,7 @@ export class ContextBuilder {
     const latestCheckpoint = memory.checkpoints.at(-1) ?? null;
     const candidates = [
       ['task', JSON.stringify({ task_id: task.task_id, objective: task.objective, acceptance_criteria: task.acceptance_criteria ?? [], requested_action_type: task.requested_action_type ?? null }, null, 2)],
+      ['attachments', task.attachments?.length ? JSON.stringify(task.attachments.map(({ source: _source, ...attachment }) => attachment), null, 2) : ''],
       ['constraints', JSON.stringify({ protocol_constraints: memory.currentTask?.constraints ?? [], do_not_modify: memory.currentTask?.do_not_modify ?? [], durable_constraints: relevantExcerpt(raw.constraints, terms, 3_000) }, null, 2)],
       ['project_inspection', projectInspection?.rendered ?? ''],
       ['handoff', JSON.stringify(memory.handoff ?? {}, null, 2)],
@@ -49,7 +50,7 @@ export class ContextBuilder {
       ['recent_changelog', raw.changelog.slice(-3_000)]
     ];
     const minimumAllocation = {
-      task: 120, constraints: 180, handoff: 100, current_task: 120,
+      task: 120, attachments: 100, constraints: 180, handoff: 100, current_task: 120,
       project_inspection: 1_000, changed_files: 40, relevant_decisions: 160, project_context: 100,
       recent_changelog: 60
     };

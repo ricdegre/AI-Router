@@ -47,6 +47,10 @@ export function defaultClaudeEffort(displayName) {
   return claudeEffortsForModel(name).length ? 'high' : null;
 }
 
+export function claudeVisionForModel(displayName) {
+  return /\b(?:Fable\s+5(?:\.1)?|Opus\s+5(?:\.\d+)?|Sonnet\s+5|Haiku\s+4\.5)\b/i.test(String(displayName ?? ''));
+}
+
 export function parseClaudeUsage(text) {
   const result = resultText(text);
   const windows = [];
@@ -80,7 +84,7 @@ function modelDescriptor(providerId, model) {
   return createModelDescriptor({ providerId, modelId: model.id, discovered: {
     display_name: model.display_name, family: 'Claude', local: false,
     context_size: /\[1m\]$/i.test(model.id) ? 1_000_000 : null,
-    tool_support: false, structured_output_support: true, vision: null, embedding: false,
+    tool_support: false, structured_output_support: true, vision: claudeVisionForModel(model.display_name), embedding: false,
     coding_suitability: 'high', reasoning_support: efforts.length > 0, loaded: null, parameter_size: null,
     execution_channel: 'claude-code-subscription', supported_reasoning_efforts: efforts,
     default_reasoning_effort: defaultClaudeEffort(model.display_name), supported_reasoning_modes: [],
@@ -160,7 +164,8 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     }
   }
   async execute(request) {
-    const prompt = buildStructuredTaskPrompt(request);
+    const imagePaths = (request.attachments ?? []).map((attachment, index) => `Image ${index + 1}: ${attachment.path}`).join('\n');
+    const prompt = `${buildStructuredTaskPrompt(request)}${imagePaths ? `\n\nNATIVE IMAGE INPUT PATHS\n${imagePaths}\nOpen and analyze these images using Claude Code's native image-path support.` : ''}`;
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'plan', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config'];
     if (request.inference?.reasoning_effort) args.push('--effort', request.inference.reasoning_effort);
     const execute = typeof this.worker.runStreaming === 'function' ? this.worker.runStreaming.bind(this.worker) : this.worker.run.bind(this.worker);

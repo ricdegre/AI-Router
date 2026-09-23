@@ -50,16 +50,26 @@ test('VS Code client sends selected provider, channel, profile, model, and effor
   assert.ok(calls.every((call) => call.url.startsWith('http://127.0.0.1:43127/api/')));
 });
 
+test('VS Code client uploads images only to AI Router and marks visual tasks', async () => {
+  const calls = []; const fetch = async (url, options = {}) => { calls.push({ url, options }); return new Response(JSON.stringify(url.endsWith('/api/attachments') ? { attachment_id: 'att-one' } : { selected: { profile_id: 'vision' }, descriptor: { task_id: 'task-one' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce' } }); };
+  const client = new RouterClient('http://127.0.0.1:43127', fetch); const attachment = { filename: 'screen.png', mime_type: 'image/png', data_base64: 'cG5n' };
+  await client.explain('Describe it', {}, [attachment]); await client.uploadAttachment(attachment); await client.createTask('project', 'Describe it', 'Read only', {}, { readOnly: true, attachmentIds: ['att-one'] });
+  assert.match(calls[0].url, /capability=vision/); assert.match(calls[0].url, /attachment_count=1/); assert.equal(calls[1].url, 'http://127.0.0.1:43127/api/attachments');
+  const body = JSON.parse(calls.at(-1).options.body); assert.deepEqual(body.required_capabilities, ['coding', 'vision']); assert.deepEqual(body.attachment_ids, ['att-one']); assert.ok(calls.every(call => call.url.startsWith('http://127.0.0.1:43127/api/')));
+});
+
 test('packaged VS Code extension contributes a local-only activity panel and heartbeat', async () => {
   const fs = await import('node:fs/promises');
   const manifest = JSON.parse(await fs.readFile(new URL('../interfaces/vscode/package.json', import.meta.url), 'utf8'));
   const extension = await fs.readFile(new URL('../interfaces/vscode/extension.js', import.meta.url), 'utf8');
   assert.equal(manifest.contributes.views.aiRouter[0].id, 'aiRouter.control'); assert.match(manifest.scripts.package, /\.vsix/);
-  assert.equal(manifest.version, '0.5.3'); assert.equal(manifest.engines.vscode, '^1.85.0'); assert.equal(manifest.contributes.configuration.properties['aiRouter.url'].default, 'http://127.0.0.1:43127');
+  assert.equal(manifest.version, '0.6.0'); assert.equal(manifest.engines.vscode, '^1.85.0'); assert.equal(manifest.contributes.configuration.properties['aiRouter.url'].default, 'http://127.0.0.1:43127');
   assert.match(extension, /\/api\/readiness\/vscode-heartbeat/); assert.match(extension, /extension_id/); assert.match(extension, /endpoint: baseUrl\(\)/); assert.match(extension, /registerWebviewViewProvider/);
   assert.equal(manifest.activationEvents, undefined); assert.ok(manifest.contributes.commands.some(item => item.command === 'aiRouter.refresh'));
   assert.ok(manifest.files.includes('webview.js')); assert.ok(manifest.files.includes('webview.css'));
   assert.match(extension, /Content-Security-Policy/); assert.match(extension, /asWebviewUri/); assert.doesNotMatch(extension, /<script>const vscode=acquireVsCodeApi/);
+  assert.match(extension, /Attach image/); assert.match(extension, /img-src/); assert.doesNotMatch(extension, /log\([^\n]*data_base64/);
+  const webview = await fs.readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8'); assert.match(webview, /addEventListener\('paste'/); assert.match(webview, /addEventListener\('drop'/); assert.match(webview, /attachments = attachments\.filter/); assert.match(webview, /Not compatible with attached image/);
   assert.doesNotMatch(extension, /openai\.com|anthropic\.com|openrouter\.ai|generativelanguage\.googleapis/);
 });
 

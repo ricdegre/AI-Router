@@ -63,7 +63,7 @@ function deriveCapabilities(input, intent, scope, writeMode, text) {
   if (intent === 'architecture') capabilities.add('architecture_reasoning');
   if (scope === 'project' || scope === 'multi-project' || intent === 'architecture') capabilities.add('long_context');
   if (intent === 'research' || contains(text, [/\bweb\b|internet|online|current official/])) capabilities.add('web');
-  if (contains(text, [/image|screenshot|vision|imagen|captura/])) capabilities.add('vision');
+  if ((input.attachments ?? []).some((attachment) => attachment?.type === 'image') || contains(text, [/image|screenshot|vision|imagen|captura/])) capabilities.add('vision');
   return [...capabilities];
 }
 
@@ -84,6 +84,7 @@ export function analyzeTask(input = {}) {
   }))];
   const requiredStrength = input.minimum_strength ?? STRENGTH_BY_COMPLEXITY[complexity];
   const contextRequirement = ['project', 'multi-project'].includes(scope) ? 'high' : scope === 'selection' ? 'low' : 'medium';
+  const attachmentSummary = { count: input.attachments?.length ?? 0, image_count: (input.attachments ?? []).filter((attachment) => attachment?.type === 'image').length };
   return {
     task_analysis_version: TASK_ANALYSIS_VERSION,
     intent, scope, write_mode: writeMode, complexity,
@@ -91,7 +92,7 @@ export function analyzeTask(input = {}) {
     routing_capabilities: routingCapabilities,
     required_strength: requiredStrength,
     risk: input.risk ?? 'low',
-    context_requirement: contextRequirement,
+    context_requirement: contextRequirement, attachments: attachmentSummary, vision_required: requiredCapabilities.includes('vision'),
     parallelizable: scope === 'multi-project' || (scope === 'project' && ['project_analysis', 'code_review', 'test', 'documentation'].includes(intent))
   };
 }

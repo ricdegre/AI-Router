@@ -11,7 +11,7 @@ function fakeSpawn(records) {
   return (_executable, args, options) => {
     const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.killed = false;
     child.kill = () => { child.killed = true; };
-    records.push({ args, env: options.env });
+    const record = { args, env: options.env, requests: [] }; records.push(record);
     let buffer = '';
     const send = (message) => child.stdout.write(`${JSON.stringify(message)}\n`);
     child.stdin.setEncoding('utf8');
@@ -20,7 +20,7 @@ function fakeSpawn(records) {
       for (;;) {
         const newline = buffer.indexOf('\n'); if (newline < 0) break;
         const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-        const request = JSON.parse(line); if (request.id === undefined) continue;
+        const request = JSON.parse(line); record.requests.push(request); if (request.id === undefined) continue;
         if (request.method === 'initialize') send({ id: request.id, result: { userAgent: 'fake' } });
         else if (request.method === 'account/login/start') send({ id: request.id, result: { type: 'chatgpt', loginId: 'login-1', authUrl: 'https://chatgpt.com/official-login' } });
         else if (request.method === 'account/read') send({ id: request.id, result: { account: { type: 'chatgpt', planType: 'pro' }, requiresOpenaiAuth: false } });
@@ -49,4 +49,11 @@ test('Codex App Server uses isolated ChatGPT OAuth homes and a tool-free test wo
   const home = client.home('personal-pro'); await client.logout({ profileId: 'personal-pro', removeState: true });
   await assert.rejects(() => access(home), { code: 'ENOENT' });
   assert.equal(path.resolve(home).startsWith(path.resolve(root)), true);
+});
+
+test('Codex App Server sends attached images as native localImage turn input', async (t) => {
+  const root = await temporaryDirectory(t, 'codex-app-server-image-'); const records = [];
+  const client = new CodexAppServerClient({ dataRoot: root, spawn: fakeSpawn(records) });
+  await client.runTurn({ profileId: 'personal-pro', model: 'gpt-test', prompt: 'Describe it', attachments: [{ path: 'D:\\private\\screen.png', mime_type: 'image/png' }], timeoutMs: 2000 });
+  const turn = records[0].requests.find(item => item.method === 'turn/start'); assert.deepEqual(turn.params.input, [{ type: 'text', text: 'Describe it' }, { type: 'localImage', path: 'D:\\private\\screen.png', detail: 'auto' }]);
 });

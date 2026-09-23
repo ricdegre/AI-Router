@@ -2,7 +2,7 @@
   "name": "ai-router-vscode",
   "displayName": "AI Router",
   "description": "Send coding work to the local AI Router control service.",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "publisher": "ai-router-local",
   "private": true,
   "type": "commonjs",
@@ -31,7 +31,7 @@
       }
     }
   },
-  "scripts": { "package": "vsce package --allow-missing-repository --out ../../dist/ai-router-vscode-0.5.3.vsix" },
+  "scripts": { "package": "vsce package --allow-missing-repository --out ../../dist/ai-router-vscode-0.6.0.vsix" },
   "files": ["extension.js", "router-client.js", "webview.js", "webview.css", "README.md", "LICENSE", "media/router.svg"],
   "devDependencies": { "@vscode/vsce": "^3.6.2" }
 }

@@ -65,6 +65,14 @@ test('task creation persists a descriptor without executing it', async (t) => {
   assert.deepEqual(await api.handleGet(`/api/projects/${project.projectId}/tasks/dashboard-task/attempts`, new URLSearchParams()), []);
 });
 
+test('control API stages image bytes privately and audits only bounded metadata', async (t) => {
+  const { api, project, services } = await fixture(t); const bytes = Buffer.alloc(24); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes); bytes.write('IHDR', 12, 'ascii'); bytes.writeUInt32BE(8, 16); bytes.writeUInt32BE(9, 20); const base64 = bytes.toString('base64');
+  const staged = await api.handlePost('/api/attachments', { filename: 'private-screen.png', mime_type: 'image/png', data_base64: base64 });
+  const created = await api.handlePost('/api/tasks', { project_id: project.projectId, task_id: 'visual-task', objective: 'Describe visible UI', required_capabilities: ['vision'], attachment_ids: [staged.attachment_id] });
+  assert.equal(created.descriptor.attachments[0].width, 8); assert.equal(created.descriptor.attachments[0].height, 9); assert.equal('data_base64' in created.descriptor.attachments[0], false);
+  const events = await services.auditLog.list({ task_id: 'visual-task' }); const serialized = JSON.stringify(events); assert.doesNotMatch(serialized, new RegExp(base64)); assert.doesNotMatch(serialized, /private-screen\.png/); assert.equal(events[0].attachment_count, 1);
+});
+
 test('provider state and safe settings persist without secrets', async (t) => {
   const { api, dataRoot } = await fixture(t);
   await api.handlePost('/api/providers/local-test/disable', {});
@@ -97,6 +105,8 @@ test('routing explanation includes accepted and rejected evidence', async (t) =>
   const impossible = await api.handleGet('/api/routing/explain', new URLSearchParams('risk=low&capability=vision'));
   assert.equal(impossible.selected, null);
   assert.ok(impossible.rejected_candidates[0].rejected.some((reason) => reason.startsWith('missing-capabilities')));
+  const visual = await api.handleGet('/api/routing/explain', new URLSearchParams('objective=Describe+it&attachment_count=1&read_only=true'));
+  assert.equal(visual.task_analysis.vision_required, true); assert.equal(visual.task_analysis.attachments.image_count, 1); assert.equal(visual.error.code, 'NO_VISION_CAPABLE_RESOURCE');
 });
 
 test('control API rejects unsafe identifiers and invalid writes', async (t) => {

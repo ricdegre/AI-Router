@@ -1,6 +1,6 @@
 export function buildStructuredTaskPrompt(request = {}) {
   const analysis = request.task_analysis ?? request.task?.task_analysis ?? {};
-  const readOnlyAnalysis = analysis.write_mode === 'read_only' && ['project_analysis', 'architecture', 'code_review', 'research', 'documentation'].includes(analysis.intent);
+  const readOnlyAnalysis = analysis.write_mode === 'read_only';
   return `You are a subordinate execution worker for AI Router. AI Router owns routing, file mutation, Git, memory, validation, checkpoints, and handoff. Use only the task and router-supplied project evidence below. Do not call tools or inspect paths outside this supplied context.
 
 RESPONSE CONTRACT
@@ -12,6 +12,10 @@ ${JSON.stringify(analysis)}
 
 TASK
 ${request.prompt ?? request.task?.objective ?? ''}
+
+ATTACHMENTS
+${JSON.stringify((request.attachments ?? []).map(({ path: _path, source: _source, ...attachment }) => attachment))}
+The attachment metadata above corresponds to image content delivered separately through the provider's native image-input mechanism. Analyze the actual images, not only their filenames or metadata.
 
 ROUTER CONTEXT
 ${request.context ?? ''}`;

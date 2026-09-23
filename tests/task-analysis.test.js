@@ -21,3 +21,13 @@ test('task analysis distinguishes a small writable selection from project work',
   assert.equal(analysis.complexity, 'trivial');
   assert.deepEqual(analysis.routing_capabilities, ['coding']);
 });
+
+test('an image attachment requires vision independently of task wording', () => {
+  const analysis = analyzeTask({ objective: 'Describe the important visible elements', read_only: true, attachments: [{ type: 'image', attachment_id: 'att-one' }] });
+  assert.equal(analysis.vision_required, true); assert.equal(analysis.attachments.image_count, 1); assert.ok(analysis.routing_capabilities.includes('vision')); assert.equal(analysis.write_mode, 'read_only');
+});
+
+test('visual tasks preserve independent read-only and write-enabled intent', () => {
+  const attachment = [{ type: 'image' }]; const readOnly = analyzeTask({ objective: 'Tell me what is wrong. Do not modify anything.', attachments: attachment }); const writable = analyzeTask({ objective: 'Fix this screen to match the screenshot', attachments: attachment });
+  assert.equal(readOnly.write_mode, 'read_only'); assert.equal(readOnly.required_capabilities.includes('filesystem_write'), false); assert.equal(writable.write_mode, 'write_allowed'); assert.ok(writable.required_capabilities.includes('filesystem_write')); assert.ok(writable.routing_capabilities.includes('vision'));
+});

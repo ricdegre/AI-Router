@@ -7,7 +7,7 @@ import { actionExecutionIdentity, receiptHashes } from '../actions/idempotency.j
 
 function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}:${candidate.reasoning_effort ?? '-'}`; }
 function resourceKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}`; }
-function readOnlyAnalysis(analysis) { return analysis?.write_mode === 'read_only' && ['project_analysis', 'architecture', 'code_review', 'research', 'documentation'].includes(analysis.intent); }
+function readOnlyAnalysis(analysis) { return analysis?.write_mode === 'read_only'; }
 
 function failureFrom(error) {
   if (error.code === 'MALFORMED_STRUCTURED_RESPONSE' || error.code === 'INVALID_STRUCTURED_RESPONSE' || error.code === 'UNSUPPORTED_STRUCTURED_RESPONSE') return 'malformed_output';
@@ -80,7 +80,7 @@ export class ResilientOrchestrator {
         const descriptor = descriptorFromTask({ ...task, max_attempts: options.maxAttempts ?? task.max_attempts }, project);
         await this.descriptorStore.create(descriptor);
         await this.executionPlanStore?.create(descriptor);
-        await this.recoveryJournal?.record(task.project_id, task.task_id, 'task_intent', { descriptor_revision: descriptor.descriptor_revision, objective: descriptor.objective });
+        await this.recoveryJournal?.record(task.project_id, task.task_id, 'task_intent', { descriptor_revision: descriptor.descriptor_revision, objective: descriptor.objective, attachment_count: descriptor.attachments.length, attachment_types: descriptor.attachments.map((item) => item.mime_type) });
       }
       if (options.resume) {
         const interrupted = (await this.attemptStore.list(task.project_id, task.task_id)).filter((attempt) => attempt.status === 'running');
@@ -153,13 +153,14 @@ export class ResilientOrchestrator {
         try {
           const taskAnalysis = route.task_analysis ?? route.task?.task_analysis ?? null;
           const context = await this.contextBuilder.build(project.projectId, { ...task, task_analysis: taskAnalysis }, { workspacePath: project.workspacePath, providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
+          const attachments = await this.attachmentStore?.resolve(task.project_id, task.task_id, task.attachments ?? []) ?? [];
           const provider = this.providerRegistry.get(candidate.provider_id);
           const profile = profiles.find((item) => item.profile_id === candidate.profile_id);
           const modelDescriptor = profile?.models?.find((item) => item.model_id === candidate.model_id) ?? null;
           const timeoutMs = resolveProviderTimeout('inference', { global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
           const executionTimeouts = resolveExecutionTimeouts({ global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
-          const request = { task, task_analysis: taskAnalysis, project, profile, model: candidate.model_id ?? task.model, inference: candidate.inference, context: context.rendered, context_metadata: context.project_inspection, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: candidate.inference?.timeout_ms ?? timeoutMs, execution_timeouts: executionTimeouts };
-          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id, context_chars: context.used_chars, context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0 });
+          const request = { task, task_analysis: taskAnalysis, project, profile, model: candidate.model_id ?? task.model, inference: candidate.inference, context: context.rendered, context_metadata: context.project_inspection, attachments, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: candidate.inference?.timeout_ms ?? timeoutMs, execution_timeouts: executionTimeouts };
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id, context_chars: context.used_chars, context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0, attachment_count: attachments.length, attachment_types: attachments.map((item) => item.mime_type), vision_required: taskAnalysis?.vision_required === true });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
           if (providerResult.limits) await this.profileRegistry.updateLimits(candidate.profile_id, providerResult.limits);
@@ -229,7 +230,7 @@ export class ResilientOrchestrator {
           if (rejectedActions.length) { failureCategory = 'action_rejected'; failureCode = executionResults.find((result) => result.status === 'rejected')?.error?.code; }
         } else if (!failureCategory) {
           await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: [], approved_actions: [], rejected_actions: [], execution_results: [], summary: structured.summary });
-          await this.auditLog?.record('read_only_analysis_received', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, provider_id: candidate.provider_id });
+          await this.auditLog?.record('read_only_analysis_received', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, provider_id: candidate.provider_id, model_id: candidate.model_id, attachment_count: task.attachments?.length ?? 0, vision_required: (route.task_analysis ?? route.task?.task_analysis)?.vision_required === true });
         }
 
         let validation = null;

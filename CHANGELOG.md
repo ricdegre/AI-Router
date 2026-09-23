@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0-pre.0
+
+- Added private, bounded PNG/JPEG/WebP task attachments with staging, task isolation, retention cleanup, and metadata-only descriptors and audit records.
+- Added vision-aware task analysis and routing with precise automatic and manual incompatibility errors and no paid fallback.
+- Added native image delivery for Codex App Server, Claude Code, OpenRouter, and Ollama while keeping unsupported channels honest.
+- Added VS Code attach, paste, drag/drop, preview, remove, and vision-model compatibility controls.
+
 ## 0.11.0-pre.7
 
 - Added bounded startup, first-token, inactivity, and overall execution timeouts with explicit failure classification.

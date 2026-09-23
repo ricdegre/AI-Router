@@ -49,6 +49,7 @@ export class ControlApi {
   }
 
   async initialize() {
+    await this.services.attachmentStore?.cleanup();
     const settings = await this.settingsStore.load();
     for (const [id, enabled] of Object.entries(settings.provider_states)) {
       if (this.services.providerRegistry.list().some((provider) => provider.id === id)) this.services.providerRegistry.setEnabled(id, enabled);
@@ -181,8 +182,10 @@ export class ControlApi {
   async routing(query) {
     const settings = await this.settingsStore.load();
     const capabilities = query.getAll('capability').filter(Boolean);
+    const attachmentCount = Math.min(4, Math.max(0, Number.parseInt(query.get('attachment_count') || '0', 10) || 0));
     return this.services.routingPolicy.explain({
       objective: (query.get('objective') || '').slice(0, 2_000), task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities, routing_mode: query.get('mode') || 'automatic', read_only: query.get('read_only') === 'true',
+      attachments: Array.from({ length: attachmentCount }, (_, index) => ({ type: 'image', attachment_id: `explain-${index + 1}` })),
       manual_provider: query.get('provider') || null, manual_profile: query.get('profile') || null, manual_model: query.get('model') || null, manual_execution_channel: query.get('channel') || null, manual_reasoning_effort: query.get('effort') || null,
       allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered,
       cost_policy: { prefer_local: settings.prefer_local, prefer_subscription: settings.prefer_subscription, allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered }
@@ -241,6 +244,11 @@ export class ControlApi {
 
   async handlePost(pathname, body) {
     if (pathname === '/api/readiness/vscode-heartbeat') return this.services.readinessStore.heartbeat(body);
+    if (pathname === '/api/attachments') {
+      const attachment = await this.services.attachmentStore.stage(body);
+      await this.services.auditLog.record('attachment_staged', { attachment_id: attachment.attachment_id, type: attachment.type, mime_type: attachment.mime_type, width: attachment.width, height: attachment.height, size_bytes: attachment.size_bytes, purpose: attachment.purpose });
+      return attachment;
+    }
     const vscodeAction = pathname.match(/^\/api\/integrations\/vscode\/(install|repair|reinstall|open|test)$/);
     if (vscodeAction) {
       const result = await this.services.vscodeIntegration.perform(vscodeAction[1]);
@@ -356,16 +364,19 @@ export class ControlApi {
       const project = await this.services.projectRegistry.get(requiredId(body?.project_id, 'Project ID'));
       const taskId = body?.task_id ? requiredId(body.task_id, 'Task ID') : `task-${Date.now()}-${randomUUID().slice(0, 6)}`;
       const settings = await this.settingsStore.load();
-      const descriptor = descriptorFromTask({
-        project_id: project.projectId, task_id: taskId, objective: cleanText(body?.objective, 'Objective', 2_000), prompt: typeof body?.instruction === 'string' ? body.instruction.slice(0, 64_000) : '',
-        task_type: body?.task_type ?? 'general', risk: body?.risk ?? 'low', required_capabilities: Array.isArray(body?.required_capabilities) ? body.required_capabilities : [],
-        max_attempts: body?.max_attempts ?? settings.max_attempts, allow_metered: body?.allow_metered === true && settings.allow_metered,
-        manual_provider: body?.provider_id ?? null, manual_profile: body?.profile_id ?? null, manual_model: body?.model_id ?? null, manual_execution_channel: body?.execution_channel ?? null, manual_reasoning_effort: body?.reasoning_effort ?? null,
-        action_policy: body?.action_policy ?? {}, validation_requirements: body?.validation_requirements ?? [],
-        provider_constraints: body?.provider_constraints ?? {}, model_constraints: body?.model_constraints ?? {}
-      }, project);
-      await this.services.descriptorStore.create(descriptor); const state = await this.services.taskStore.create(descriptor); await this.services.executionPlanStore.create(descriptor);
-      await this.services.auditLog.record('task_created', { project_id: project.projectId, task_id: taskId }); return { descriptor, state };
+      const claimedAttachments = await this.services.attachmentStore.claim(Array.isArray(body?.attachment_ids) ? body.attachment_ids : [], project.projectId, taskId);
+      try {
+        const descriptor = descriptorFromTask({
+          project_id: project.projectId, task_id: taskId, objective: cleanText(body?.objective, 'Objective', 2_000), prompt: typeof body?.instruction === 'string' ? body.instruction.slice(0, 64_000) : '',
+          task_type: body?.task_type ?? 'general', risk: body?.risk ?? 'low', required_capabilities: Array.isArray(body?.required_capabilities) ? body.required_capabilities : [], attachments: claimedAttachments,
+          max_attempts: body?.max_attempts ?? settings.max_attempts, allow_metered: body?.allow_metered === true && settings.allow_metered,
+          manual_provider: body?.provider_id ?? null, manual_profile: body?.profile_id ?? null, manual_model: body?.model_id ?? null, manual_execution_channel: body?.execution_channel ?? null, manual_reasoning_effort: body?.reasoning_effort ?? null,
+          action_policy: body?.action_policy ?? {}, validation_requirements: body?.validation_requirements ?? [],
+          provider_constraints: body?.provider_constraints ?? {}, model_constraints: body?.model_constraints ?? {}
+        }, project);
+        await this.services.descriptorStore.create(descriptor); const state = await this.services.taskStore.create(descriptor); await this.services.executionPlanStore.create(descriptor);
+        await this.services.auditLog.record('task_created', { project_id: project.projectId, task_id: taskId, attachment_count: descriptor.attachments.length, attachments: descriptor.attachments.map((item) => ({ attachment_id: item.attachment_id, type: item.type, mime_type: item.mime_type, width: item.width, height: item.height, size_bytes: item.size_bytes })) }); return { descriptor, state };
+      } catch (error) { if (claimedAttachments.length) await this.services.attachmentStore.removeTask(project.projectId, taskId); throw error; }
     }
     const taskAction = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/(cancel|resume)$/);
     if (taskAction) {
