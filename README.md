@@ -31,11 +31,11 @@ This repository currently provides:
 - encrypted per-profile cloud credentials, real OpenRouter and opt-in Gemini API adapters, and explicit free/metered cost policy;
 - isolated personal ChatGPT subscription profiles using the official Codex App Server browser flow, exact provider-reported limits, model discovery, Test Chat, and routed execution without OpenAI API billing fallback;
 - generic inference profiles that keep provider, execution channel, account, model, reasoning effort, timeout, output ceiling, and cost policy separate;
-- prepared official CLI subscription channels for Google Antigravity and Claude Code, with dynamic discovery activated only after the user installs and signs in to those CLIs;
+- official CLI subscription channels for Google Antigravity and Claude Code, with dynamic model discovery, provider-specific inference controls, and reported usage limits after the user installs and signs in to those CLIs;
 - a thin VS Code extension that connects only to the local AI Router control API and can select a router provider/profile/model;
 - an artificial continuity demo and isolated tests.
 
-OpenRouter execution and the metered Gemini auth-key path are implemented. Gemini stays off until explicit metered opt-in. OpenAI profiles use the official Codex App Server “Sign in with ChatGPT” flow in a separate runtime home per profile; the router never copies global login state or silently uses paid API billing. Claude, automatic rollback, and real TypeSafe/Jev connectivity are not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
+OpenRouter execution and the metered Gemini auth-key path are implemented. Gemini stays off until explicit metered opt-in. OpenAI profiles use the official Codex App Server “Sign in with ChatGPT” flow in a separate runtime home per profile; the router never copies global login state or silently uses paid API billing. Claude Code uses the authenticated Claude subscription CLI with explicit model and effort selection, tool-free test inference, and official `/usage` observations; it does not enable Anthropic API billing. Automatic rollback and real TypeSafe/Jev connectivity are not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
 
 ## Conceptual architecture
 
@@ -98,7 +98,7 @@ The source for the VS Code client is in `interfaces/vscode`. Launch it in an Ext
 
 ## Development status
 
-AI Router 0.11.0-pre.0 is a first-use readiness pre-release and is not yet a production release. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.11.0-pre.5 is a first-use readiness pre-release and is not yet a production release. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## License
 

@@ -12,7 +12,9 @@ function boundedInteger(value, field, minimum, maximum) {
 
 export function normalizeInferenceProfile(input = {}, model = null) {
   const supported = model?.discovered_facts?.supported_reasoning_efforts ?? [];
-  const effort = input.reasoning_effort ?? model?.discovered_facts?.default_reasoning_effort ?? null;
+  const effort = Object.prototype.hasOwnProperty.call(input, 'reasoning_effort')
+    ? input.reasoning_effort
+    : model?.discovered_facts?.default_reasoning_effort ?? null;
   if (effort != null && !REASONING_EFFORTS.includes(effort)) throw new AiRouterError('Reasoning effort is invalid.', 'INVALID_REASONING_EFFORT');
   if (effort != null && supported.length && !supported.includes(effort)) throw new AiRouterError(`Reasoning effort '${effort}' is not supported by this model.`, 'UNSUPPORTED_REASONING_EFFORT', { supported });
   const mode = input.reasoning_mode ?? model?.discovered_facts?.default_reasoning_mode ?? null;

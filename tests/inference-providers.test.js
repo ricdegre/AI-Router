@@ -9,9 +9,10 @@ import { MockProvider } from './mock-provider.js';
 import { AntigravityProvider, ANTIGRAVITY_AUTH_STATES, parseAntigravityModels, parseAntigravityUsage } from '../providers/google/antigravity-provider.js';
 import { executableCandidates, resolveExecutablePath } from '../providers/core/cli-worker.js';
 import { ProviderError } from '../providers/core/protocol.js';
-import { ClaudeCodeProvider } from '../providers/anthropic/claude-code-provider.js';
+import { ClaudeCodeProvider, claudeEffortsForModel, defaultClaudeEffort, parseClaudeModelMenu, parseClaudeUsage } from '../providers/anthropic/claude-code-provider.js';
 import { createRuntimeServices } from '../core/runtime-services.js';
 import { temporaryDirectory } from './helpers.js';
+import { DecisionStateBuilder } from '../decision-engines/core/state-builder.js';
 
 function reasoningModel(providerId = 'openai') {
   return createModelDescriptor({ providerId, modelId: 'reasoner', discovered: { display_name: 'Reasoner', local: false, reasoning_support: true, execution_channel: 'subscription-worker', supported_reasoning_efforts: ['low', 'medium', 'high'], default_reasoning_effort: 'medium' } });
@@ -20,6 +21,8 @@ function reasoningModel(providerId = 'openai') {
 test('generic inference profiles accept supported effort and reject unsupported effort', () => {
   const model = reasoningModel();
   assert.equal(normalizeInferenceProfile({ reasoning_effort: 'high' }, model).reasoning_effort, 'high');
+  assert.equal(normalizeInferenceProfile({ reasoning_effort: null }, model).reasoning_effort, null);
+  assert.equal(normalizeInferenceProfile({}, model).reasoning_effort, 'medium');
   assert.throws(() => normalizeInferenceProfile({ reasoning_effort: 'xhigh' }, model), { code: 'UNSUPPORTED_REASONING_EFFORT' });
   const currentCodexModel = reasoningModel(); currentCodexModel.discovered_facts.supported_reasoning_efforts.push('ultra');
   assert.equal(normalizeInferenceProfile({ reasoning_effort: 'ultra' }, currentCodexModel).reasoning_effort, 'ultra');
@@ -78,11 +81,59 @@ test('Antigravity isolated Test Chat pins model and effort without API fallback'
   assert.equal(result.response, 'OK'); assert.ok(captured.args.includes('--sandbox')); assert.ok(captured.args.includes('--disable-slash-commands')); assert.ok(captured.args.includes('plan')); assert.ok(captured.args.includes('gemini-3.8-flash-low')); assert.ok(captured.args.includes('low')); assert.equal(captured.options.purpose, 'test-chat'); assert.equal(provider.descriptor.execution_channels[0].metered, false);
 });
 
-test('Claude Code architecture validates subscription auth and exposes aliases without fabricating account availability', async () => {
-  const worker = { run: async () => ({ stdout: JSON.stringify({ loggedIn: true, subscriptionType: 'max' }) }) };
-  const provider = new ClaudeCodeProvider({ worker }); const connected = await provider.connect({ profile_id: 'claude-personal' }); assert.equal(connected.status, 'connected'); assert.equal(connected.plan_type, 'max');
-  const models = await provider.discoverModels({ profile_id: 'claude-personal' }); assert.deepEqual(models.map((model) => model.model_id), ['sonnet', 'opus', 'haiku', 'fable']); assert.ok(models.every((model) => model.availability === 'unknown'));
+test('Claude Code discovers subscription models and provider-specific effort without enabling paid usage credits', async () => {
+  const envelope = (result, command = 'model') => JSON.stringify({ subtype: 'success', local_command: command, num_turns: 0, result, usage: { input_tokens: 0, output_tokens: 0 } });
+  const worker = { run: async (_profileId, args) => {
+    if (args[0] === '--version') return { stdout: '2.1.280 (Claude Code)' };
+    if (args[0] === 'auth') return { stdout: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' }) };
+    const command = args[1];
+    if (command === '/model') return { stdout: envelope('Current model: `Opus 5.5 (default)`\nUsage: /model <name>. Available: sonnet, opus, haiku, fable, best, default') };
+    if (command === '/model sonnet') return { stdout: envelope('Set model to `Sonnet 5` for this session only') };
+    if (command === '/model opus') return { stdout: envelope('Set model to `Opus 5.5` for this session only') };
+    if (command === '/model haiku') return { stdout: envelope('Set model to `Haiku 4.5` for this session only') };
+    if (command === '/model fable') return { stdout: envelope('Fable 5.1 uses usage credits and needs a one-time consent') };
+    if (command === '/usage') return { stdout: envelope('You are currently using your subscription to power your Claude Code usage\n\nCurrent session: 12% used · resets Sep 23, 8:20am (America/Los_Angeles)\nCurrent week (all models): 34% used · resets Sep 25, 5am (America/Los_Angeles)', 'usage') };
+    return { stdout: envelope('') };
+  } };
+  const provider = new ClaudeCodeProvider({ worker }); const connected = await provider.connect({ profile_id: 'claude-personal' }); assert.equal(connected.status, 'connected'); assert.equal(connected.plan_type, 'pro');
+  const models = await provider.discoverModels({ profile_id: 'claude-personal' }); assert.deepEqual(models.map((model) => model.model_id), ['sonnet', 'opus', 'haiku']);
+  assert.deepEqual(models[0].discovered_facts.supported_reasoning_efforts, ['low', 'medium', 'high', 'xhigh', 'max']); assert.equal(models[0].discovered_facts.default_reasoning_effort, 'high');
+  assert.deepEqual(models[1].discovered_facts.supported_reasoning_efforts, ['low', 'medium', 'high', 'xhigh', 'max']); assert.equal(models[1].discovered_facts.default_reasoning_effort, 'medium');
+  assert.deepEqual(models[2].discovered_facts.supported_reasoning_efforts, []);
+  const limits = await provider.limits({ profile_id: 'claude-personal' }); assert.equal(limits.windows[0].type, '5h'); assert.equal(limits.windows[0].remaining_percentage, 88); assert.equal(limits.windows[1].type, 'weekly'); assert.equal(limits.windows[1].remaining_percentage, 66);
   assert.equal(provider.descriptor.execution_channels[0].metered, false);
+});
+
+test('Claude effort capability follows official per-model mapping and remains separate from Antigravity variants', () => {
+  assert.deepEqual(claudeEffortsForModel('Sonnet 5'), ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(claudeEffortsForModel('Opus 4.6'), ['low', 'medium', 'high', 'max']);
+  assert.deepEqual(claudeEffortsForModel('Haiku 4.5'), []); assert.equal(defaultClaudeEffort('Opus 5.5'), 'medium');
+  assert.deepEqual(parseClaudeModelMenu(JSON.stringify({ result: 'Available: sonnet, opus, haiku, or fable' })), ['sonnet', 'opus', 'haiku', 'fable']);
+  const usage = parseClaudeUsage(JSON.stringify({ result: 'Current session: 0% used · resets tomorrow\nCurrent week (all models): 25% used · resets Friday' }));
+  assert.equal(usage.remaining_percentage, 75); assert.equal(usage.windows[0].remaining_percentage, 100);
+  assert.deepEqual(parseAntigravityModels('claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)')[0], { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)', effort: null });
+});
+
+test('Claude model plus effort are distinct routes and visible to future Jev recommendations', async () => {
+  const provider = new MockProvider('anthropic'); provider.descriptor.capabilities.push('coding');
+  const registry = new ProviderRegistry(); registry.register(provider);
+  const model = createModelDescriptor({ providerId: 'anthropic', modelId: 'sonnet', discovered: { display_name: 'Sonnet 5', local: false, reasoning_support: true, execution_channel: 'claude-code-subscription', supported_reasoning_efforts: ['low', 'medium', 'high', 'xhigh', 'max'], default_reasoning_effort: 'high' } });
+  const profile = { profile_id: 'claude-pro', provider_id: 'anthropic', enabled: true, status: 'ready', cost_category: 'SUBSCRIPTION_INCLUDED', execution_channel: 'claude-code-subscription', capabilities_override: { add: [], remove: [] }, models: [model] };
+  const route = await new RoutingPolicy().explain({ required_capabilities: ['coding'] }, registry, [profile]);
+  assert.deepEqual(route.evaluations.map((item) => item.reasoning_effort), ['low', 'medium', 'high', 'xhigh', 'max']);
+  const state = new DecisionStateBuilder().build(route.task, route).state;
+  assert.deepEqual(state.candidates.map((item) => [item.model_id, item.reasoning_effort]), [['sonnet', 'low'], ['sonnet', 'medium'], ['sonnet', 'high'], ['sonnet', 'xhigh'], ['sonnet', 'max']]);
+});
+
+test('Claude Test Chat pins supported effort, reports actual model, refreshes limits, and disables tools', async () => {
+  const calls = []; const worker = { run: async (_profileId, args, options) => {
+    calls.push({ args, options });
+    if (args.includes('/usage')) return { stdout: JSON.stringify({ subtype: 'success', result: 'Current session: 1% used · resets soon\nCurrent week (all models): 2% used · resets Friday' }) };
+    return { stdout: JSON.stringify({ subtype: 'success', result: 'OK', modelUsage: { 'claude-opus-5-5': { inputTokens: 10, outputTokens: 1 } }, usage: { input_tokens: 10, output_tokens: 1 } }) };
+  } };
+  const provider = new ClaudeCodeProvider({ worker }); const result = await provider.testChat({ profile_id: 'claude-personal', model: 'opus', inference: { reasoning_effort: 'low' }, message: 'Reply only with OK', max_output_tokens: 8, timeout_ms: 15_000 });
+  assert.equal(result.response, 'OK'); assert.equal(result.model, 'claude-opus-5-5'); assert.equal(result.reasoning_effort, 'low'); assert.equal(result.limits.windows[0].remaining_percentage, 99);
+  const inference = calls[0].args; assert.ok(inference.includes('--effort')); assert.ok(inference.includes('low')); assert.ok(inference.includes('--tools')); assert.ok(inference.includes('')); assert.ok(inference.includes('--safe-mode')); assert.equal(calls[0].options.purpose, 'test-chat');
 });
 
 test('missing subscription CLIs remain actionable visual Connect states', async () => {

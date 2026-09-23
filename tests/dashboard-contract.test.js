@@ -55,6 +55,11 @@ test('profiles UI supports multi-account management and isolated connection test
   assert.match(app, /Continue with ChatGPT/);
   assert.match(app, /\/auth-status/);
   assert.doesNotMatch(app, /Codex access token/);
+  assert.match(app, /Provider default \/ Auto/);
+  assert.match(app, /test-chat-effort/);
+  assert.match(app, /Actual model/);
+  assert.match(app, /Updated limits/);
+  assert.match(app, /profileLimitText/);
 });
 
 test('Add Profile discovers provider models, filters embeddings, and requires explicit multi-model choice', async () => {

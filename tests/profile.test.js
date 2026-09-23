@@ -51,3 +51,11 @@ test('profile registry removes one identity without affecting siblings', async (
   assert.deepEqual((await registry.list('ollama')).map((item) => item.profile_id), ['ollama-local']);
   await assert.rejects(() => registry.get('ollama-secondary'), { code: 'PROFILE_NOT_FOUND' });
 });
+
+test('profile registry persists real subscription windows for routing without inventing quota', async (t) => {
+  const registry = new ProfileRegistry(path.join(await temporaryDirectory(t), 'runtime'));
+  await registry.register(localProfile({ profile_id: 'claude-pro', provider_id: 'anthropic', display_name: 'Claude Pro', auth_mode: 'claude-subscription-cli', location: 'cloud', cost_category: 'SUBSCRIPTION_INCLUDED' }));
+  await registry.updateLimits('claude-pro', { available: true, source: 'claude-code-cli', remaining_percentage: 64, reset_at: 'Sep 23, 8:20am', windows: [{ type: '5h', name: 'Current session', used_percentage: 36, remaining_percentage: 64, reset_at: 'Sep 23, 8:20am' }] });
+  const saved = await registry.get('claude-pro');
+  assert.equal(saved.limits.availability, 'available'); assert.equal(saved.limits.source, 'claude-code-cli'); assert.equal(saved.limits.windows[0].remaining, 64); assert.equal(saved.limits.windows[0].used_percentage, 36);
+});

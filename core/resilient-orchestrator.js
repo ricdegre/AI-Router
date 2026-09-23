@@ -149,6 +149,7 @@ export class ResilientOrchestrator {
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
+          if (providerResult.limits) await this.profileRegistry.updateLimits(candidate.profile_id, providerResult.limits);
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_response', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, response_received: true });
           await options.faultInjector?.('after-provider-response', { attempt, candidate });
           structured = providerResult.structured ? validateStructuredResponse(providerResult.structured) : parseStructuredResponse(providerResult.output, { allowTextFallback: false }).response;

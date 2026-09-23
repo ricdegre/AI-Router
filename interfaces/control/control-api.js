@@ -135,7 +135,7 @@ export class ControlApi {
       const connectionState = profile.enabled && providerHealth.status === 'healthy' && profile.selected_model_id ? 'ready' : profile.status;
       const model = profile.models?.find((item) => item.model_id === profile.selected_model_id) ?? null;
       const provider = providers.get(profile.provider_id);
-      return { ...profile, execution_channel: profile.execution_channel ?? model?.discovered_facts?.execution_channel ?? provider?.execution_channels?.[0]?.id ?? null, default_reasoning_effort: profile.default_reasoning_effort ?? model?.discovered_facts?.default_reasoning_effort ?? null, connection_state: connectionState, health: providerHealth };
+      return { ...profile, execution_channel: profile.execution_channel ?? model?.discovered_facts?.execution_channel ?? provider?.execution_channels?.[0]?.id ?? null, default_reasoning_effort: profile.default_reasoning_effort !== undefined ? profile.default_reasoning_effort : model?.discovered_facts?.default_reasoning_effort ?? null, connection_state: connectionState, health: providerHealth };
     });
   }
 
@@ -286,7 +286,9 @@ export class ControlApi {
         selected_model_id: selectedModelId,
         execution_channel: typeof body?.execution_channel === 'string' && body.execution_channel ? body.execution_channel : existing?.execution_channel ?? null,
         default_reasoning_mode: typeof body?.default_reasoning_mode === 'string' && body.default_reasoning_mode ? body.default_reasoning_mode : existing?.default_reasoning_mode ?? null,
-        default_reasoning_effort: typeof body?.default_reasoning_effort === 'string' && body.default_reasoning_effort ? body.default_reasoning_effort : existing?.default_reasoning_effort ?? null,
+        default_reasoning_effort: Object.prototype.hasOwnProperty.call(body ?? {}, 'default_reasoning_effort')
+          ? (typeof body.default_reasoning_effort === 'string' && body.default_reasoning_effort ? body.default_reasoning_effort : null)
+          : existing?.default_reasoning_effort ?? null,
         default_max_output_limit: Number.isInteger(body?.default_max_output_limit) ? body.default_max_output_limit : existing?.default_max_output_limit ?? null,
         models
       };
@@ -336,8 +338,8 @@ export class ControlApi {
         }
         await this.services.auditLog.record('profile_state_changed', { profile_id: profileId, provider_id: profile.provider_id, enabled: action === 'enable' }); return result;
       }
-      if (action === 'test-connection') { const result = await this.services.profileTestService.connection(profileId); await this.services.profileRegistry.recordTest(profileId, { status: result.reachable ? 'connected' : 'failed', successful: result.reachable }); await this.services.auditLog.record('profile_connection_tested', { profile_id: profileId, provider_id: profile.provider_id, reachable: result.reachable, health_status: result.health.status, model_count: result.models.length }); return result; }
-      if (action === 'test-chat') { const result = await this.services.profileTestService.chat(profileId, body); await this.services.profileRegistry.recordTest(profileId, { status: result.status, latencyMs: result.latency_ms, successful: result.status === 'connected' || result.status === 'success' }); await this.services.auditLog.record('profile_chat_tested', { profile_id: profileId, provider_id: profile.provider_id, model_id: result.model, status: result.status, latency_ms: result.latency_ms, usage_available: result.usage_delta != null }); return result; }
+      if (action === 'test-connection') { const result = await this.services.profileTestService.connection(profileId); if (result.limits) await this.services.profileRegistry.updateLimits(profileId, result.limits); await this.services.profileRegistry.recordTest(profileId, { status: result.reachable ? 'connected' : 'failed', successful: result.reachable }); await this.services.auditLog.record('profile_connection_tested', { profile_id: profileId, provider_id: profile.provider_id, reachable: result.reachable, health_status: result.health.status, model_count: result.models.length }); return result; }
+      if (action === 'test-chat') { const result = await this.services.profileTestService.chat(profileId, body); if (result.limits) await this.services.profileRegistry.updateLimits(profileId, result.limits); await this.services.profileRegistry.recordTest(profileId, { status: result.status, latencyMs: result.latency_ms, successful: result.status === 'connected' || result.status === 'success' }); await this.services.auditLog.record('profile_chat_tested', { profile_id: profileId, provider_id: profile.provider_id, model_id: result.model, reasoning_effort: result.reasoning_effort, status: result.status, latency_ms: result.latency_ms, usage_available: result.usage_delta != null }); return result; }
       if (typeof adapter?.disconnect === 'function') await adapter.disconnect({ profile_id: profileId }).catch(() => {});
       const removed = await this.services.profileRegistry.remove(profileId); await this.services.auditLog.record('profile_deleted', { profile_id: profileId, provider_id: removed.provider_id }); return { deleted: true, profile_id: profileId };
     }

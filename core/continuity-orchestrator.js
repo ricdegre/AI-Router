@@ -60,11 +60,13 @@ export class ContinuityOrchestrator {
         memory: beforeMemory,
         continuation: beforeMemory.handoff,
         model: selected.model_id ?? task.model,
+        inference: selected.inference,
         messages: task.messages,
         prompt: task.prompt,
         timeout_ms: resolveProviderTimeout('inference', { provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.timeout_ms }),
         options: task.provider_options
       });
+      if (result.limits) await this.profileRegistry.updateLimits(selected.profile_id, result.limits);
     } catch (error) {
       const stoppedAt = new Date().toISOString();
       await this.memoryManager.createHandoff(project.projectId, {

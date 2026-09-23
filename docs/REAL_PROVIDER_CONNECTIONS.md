@@ -20,6 +20,10 @@ Google also documents OAuth/ADC for applications with a Cloud project and consen
 
 OpenAI officially documents App Server `account/login/start` with `type: "chatgpt"` for its managed browser flow. AI Router uses that flow for personal subscription profiles, gives each profile a separate `CODEX_HOME`, validates the returned ChatGPT account, discovers only the models reported to it, and displays the exact multi-bucket rate-limit payload. It does not assume a five-hour bucket or invent missing values.
 
+## Claude Code subscription
+
+Claude profiles use the installed Claude Code CLI and its existing `claude.ai` subscription sign-in. AI Router does not request or enable `ANTHROPIC_API_KEY`. Model discovery uses tool-free, non-persistent `/model` commands; inference passes the selected model and supported `--effort` value explicitly. Test Connection and post-inference refresh use the official `/usage` command's JSON envelope and preserve only the usage windows actually reported, including their literal reset text. Models that require separate usage-credit consent are not exposed as ordinary subscription routing resources.
+
 AI Router does not copy the desktop/CLI login, ask for a password, expose tokens in process arguments, or fall back to an OpenAI API key. The isolated Codex worker runs against a blank read-only workspace and returns untrusted proposals; AI Router retains routing, action mediation, validation, checkpoints, memory, and handoff authority. Disconnect invokes App Server logout and removes that profile's isolated local runtime state.
 
 ## Google Antigravity subscription

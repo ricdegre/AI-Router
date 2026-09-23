@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0-pre.5
+
+- Added official Claude Code model and per-model effort discovery through zero-turn subscription CLI commands.
+- Added Claude subscription session/weekly usage parsing, persisted routing capacity, and post-execution quota refresh.
+- Updated Profiles and Test Chat to select and report model plus effort while retaining provider Auto and excluding usage-credit-only models.
+
 ## 0.11.0-pre.4
 
 - Fixed Google Antigravity connection detection by resolving the official Windows install path and validating the existing secure keyring session with bounded retries.

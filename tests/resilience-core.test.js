@@ -52,6 +52,8 @@ test('limits and cost policy are conservative without inventing usage facts', ()
   assert.equal(limitsAllowRouting({ availability: 'unknown' }).allowed, true);
   assert.equal(limitsAllowRouting({ availability: 'available', remaining_percentage: 0 }).allowed, false);
   assert.equal(normalizeLimitReport({}).remaining_percentage, null);
+  const claude = normalizeLimitReport({ available: true, source: 'claude-code-cli', windows: [{ type: '5h', used_percentage: 25, remaining_percentage: 75, reset_at: 'later' }] });
+  assert.equal(claude.availability, 'available'); assert.equal(claude.windows[0].remaining, 75); assert.equal(limitsAllowRouting(claude).reason, 'capacity-available');
   assert.equal(evaluateCost('UNKNOWN').allowed, false);
   assert.equal(evaluateCost('METERED_HIGH', { allow_metered: true, max_metered_cost: 'METERED_LOW' }).allowed, false);
   assert.equal(evaluateCost('LOCAL').allowed, true);

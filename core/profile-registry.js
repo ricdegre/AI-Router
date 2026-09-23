@@ -4,6 +4,7 @@ import { readJson, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
 import { validateProviderTimeouts } from './provider-timeout-policy.js';
 import { normalizeInferenceProfile } from '../providers/core/inference-profile.js';
+import { normalizeLimitReport } from '../providers/core/limits.js';
 import { classifyProfileRouting, ROUTING_ELIGIBILITY } from './profile-routing-classification.js';
 
 export const PROFILE_SCHEMA_VERSION = '0.1';
@@ -134,6 +135,20 @@ export class ProfileRegistry {
       if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
       for (const [key, value] of Object.entries(patch)) if (allowed.has(key)) profile[key] = value;
       if (!STATUSES.includes(profile.status)) throw new AiRouterError('Profile status is invalid.', 'INVALID_PROFILE');
+      profile.updated_at = new Date().toISOString(); outcome = profile; return state;
+    });
+    return outcome;
+  }
+
+  async updateLimits(profileId, report) {
+    const limits = normalizeLimitReport(report);
+    let outcome;
+    await updateJsonAtomic(this.filePath, { version: PROFILE_SCHEMA_VERSION, profiles: [] }, (state) => {
+      const profile = (state.profiles ?? []).find((item) => item.profile_id === profileId);
+      if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
+      profile.limits = limits;
+      profile.limits_available = limits.availability === 'available';
+      profile.usage_available = limits.availability === 'available';
       profile.updated_at = new Date().toISOString(); outcome = profile; return state;
     });
     return outcome;
