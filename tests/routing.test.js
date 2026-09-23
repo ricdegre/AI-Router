@@ -4,6 +4,7 @@ import { ProviderRegistry } from '../providers/core/registry.js';
 import { RoutingPolicy } from '../routing/policy.js';
 import { EscalationPlan } from '../routing/escalation.js';
 import { MockProvider } from './mock-provider.js';
+import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 
 function profile(profileId, providerId, cost = 'local', overrides = {}) {
   return { profile_id: profileId, provider_id: providerId, enabled: true, status: 'available', cost_category: cost, capabilities_override: { add: [], remove: [] }, ...overrides };
@@ -39,6 +40,42 @@ test('manual override is respected when compatible', async () => {
   const result = await new RoutingPolicy().select({ required_capabilities: ['coding'], manual_provider: 'provider-b' }, registry, [profile('a-p', 'provider-a'), profile('b-p', 'provider-b')]);
   assert.equal(result.selected.provider_id, 'provider-b');
   assert.ok(result.selected.reasons.includes('manual-override-match'));
+});
+
+test('automatic production routing accepts REAL profiles only', async () => {
+  const registry = new ProviderRegistry(); registry.register(new MockProvider('provider-a'));
+  const profiles = [
+    profile('production', 'provider-a', 'local', { routing_classification: 'REAL' }),
+    profile('demo-resource', 'provider-a'),
+    profile('test-resource', 'provider-a'),
+    profile('mock-resource', 'provider-a'),
+    profile('placeholder-resource', 'provider-a')
+  ];
+  const result = await new RoutingPolicy().explain({ required_capabilities: ['coding'] }, registry, profiles);
+  assert.equal(result.selected.profile_id, 'production');
+  assert.deepEqual(result.rejected_candidates.map(item => item.routing_classification).sort(), ['DEMO', 'MOCK', 'PLACEHOLDER', 'TEST']);
+  assert.ok(result.rejected_candidates.every(item => item.rejected.includes(`non-production-profile:${item.routing_classification}`)));
+});
+
+test('non-production profiles require an exact manual profile override and carry a warning', async () => {
+  const registry = new ProviderRegistry(); registry.register(new MockProvider('provider-a'));
+  const demo = profile('demo-resource', 'provider-a');
+  const providerOnly = await new RoutingPolicy().explain({ required_capabilities: ['coding'], manual_provider: 'provider-a' }, registry, [demo]);
+  assert.equal(providerOnly.selected, null); assert.ok(providerOnly.evaluations[0].rejected.includes('non-production-profile:DEMO'));
+  const manual = await new RoutingPolicy().explain({ required_capabilities: ['coding'], manual_profile: 'demo-resource' }, registry, [demo]);
+  assert.equal(manual.selected.profile_id, 'demo-resource'); assert.equal(manual.selected.routing_classification, 'DEMO');
+  assert.ok(manual.selected.reasons.includes('explicit-non-production-profile-override')); assert.match(manual.warnings[0], /excluded from automatic production routing/);
+});
+
+test('routing classification supports explicit and legacy profile metadata', () => {
+  assert.equal(classifyProfileRouting({ profile_id: 'normal-account', display_name: 'Personal' }), 'REAL');
+  assert.equal(classifyProfileRouting({ profile_id: 'demo-agent', display_name: 'Agent' }), 'DEMO');
+  assert.equal(classifyProfileRouting({ profile_id: 'account', display_name: 'Fixture Test' }), 'TEST');
+  assert.equal(classifyProfileRouting({ profile_id: 'account', display_name: 'Doctor Mock' }), 'MOCK');
+  assert.equal(classifyProfileRouting({ profile_id: 'sample-profile', display_name: 'Example' }), 'PLACEHOLDER');
+  assert.equal(classifyProfileRouting({ profile_id: 'demo-agent', display_name: 'Agent', routing_classification: 'REAL' }), 'REAL');
+  assert.equal(classifyProfileRouting({ profile_id: 'legacy', display_name: 'Legacy', profile_type: 'synthetic' }), 'MOCK');
+  assert.equal(classifyProfileRouting({ profile_id: 'demo-legacy', display_name: 'Synthetic Demo', profile_type: 'synthetic' }), 'DEMO');
 });
 
 test('metered use is opt-in and no eligible provider is explicit', async () => {

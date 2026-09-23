@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0-pre.3
+
+- Added REAL, DEMO, TEST, MOCK, and PLACEHOLDER routing eligibility classifications.
+- Restricted automatic production routing to REAL profiles, independently of Developer/Test Mode visibility.
+- Allowed non-production profiles only through an exact manual profile override with an explicit warning.
+
 ## 0.11.0-pre.2
 
 - Fixed the VS Code control panel by moving its client logic into a CSP-approved packaged script.

@@ -4,6 +4,7 @@ import { readJson, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
 import { validateProviderTimeouts } from './provider-timeout-policy.js';
 import { normalizeInferenceProfile } from '../providers/core/inference-profile.js';
+import { classifyProfileRouting, ROUTING_ELIGIBILITY } from './profile-routing-classification.js';
 
 export const PROFILE_SCHEMA_VERSION = '0.1';
 const COST_CATEGORIES = ['local', 'subscription', 'metered', 'LOCAL', 'FREE', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN'];
@@ -32,6 +33,7 @@ export function validateProfile(input) {
   if (!LOCATIONS.includes(input.location)) throw new AiRouterError('Profile location is invalid.', 'INVALID_PROFILE');
   if (!COST_CATEGORIES.includes(input.cost_category)) throw new AiRouterError('Profile cost category is invalid.', 'INVALID_PROFILE');
   if (!STATUSES.includes(input.status ?? 'unknown')) throw new AiRouterError('Profile status is invalid.', 'INVALID_PROFILE');
+  if (input.routing_classification !== undefined && !ROUTING_ELIGIBILITY.includes(String(input.routing_classification).toUpperCase())) throw new AiRouterError('Profile routing classification is invalid.', 'INVALID_PROFILE');
   const overrides = input.capabilities_override ?? {};
   for (const field of ['add', 'remove']) {
     if (overrides[field] !== undefined && (!Array.isArray(overrides[field]) || overrides[field].some((item) => typeof item !== 'string'))) {
@@ -56,6 +58,7 @@ export function validateProfile(input) {
     capabilities_override: { add: [], remove: [] },
     runtime_isolation: {},
     ...input,
+    routing_classification: classifyProfileRouting(input),
     ...(timeoutPolicy ? { timeout_policy: timeoutPolicy } : {}),
     execution_channel: inference.execution_channel,
     default_reasoning_mode: inference.reasoning_mode,
@@ -79,7 +82,7 @@ export class ProfileRegistry {
   }
 
   async list(providerId = undefined) {
-    const profiles = (await this.load()).profiles;
+    const profiles = (await this.load()).profiles.map((profile) => ({ ...profile, routing_classification: classifyProfileRouting(profile) }));
     return providerId ? profiles.filter((profile) => profile.provider_id === providerId) : profiles;
   }
 

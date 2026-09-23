@@ -1,11 +1,13 @@
 import { AiRouterError } from './errors.js';
 import { resolveProviderTimeout, validateProviderTimeouts } from './provider-timeout-policy.js';
 import { normalizeInferenceProfile } from '../providers/core/inference-profile.js';
+import { classifyProfileRouting } from './profile-routing-classification.js';
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{1,79}$/;
 
 export function isSyntheticProfile(profile, provider = null) {
-  return provider?.type === 'mock' || profile.profile_type === 'synthetic' || /(?:^|[-_.])(synthetic|demo|doctor|mock)(?:$|[-_.])/i.test(`${profile.profile_id} ${profile.display_name}`);
+  void provider;
+  return classifyProfileRouting(profile) !== 'REAL';
 }
 
 export class ProfileTestService {

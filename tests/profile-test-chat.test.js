@@ -25,6 +25,9 @@ test('normal mode hides synthetic identities and developer mode reveals them', a
   await f.settingsStore.update({ developer_test_mode: true });
   const developer = await f.api.handleGet('/api/profiles', new URLSearchParams('include_test=true'));
   assert.equal(developer.length, 3);
+  const route = await f.api.handleGet('/api/routing/explain', new URLSearchParams('risk=low&capability=coding'));
+  const synthetic = route.evaluations.find((item) => item.profile_id === 'synthetic-agent-a');
+  assert.equal(synthetic.routing_classification, 'MOCK'); assert.equal(synthetic.eligible, false); assert.ok(synthetic.rejected.includes('non-production-profile:MOCK'));
 });
 
 test('profile API adds, edits, and removes multiple same-provider profiles independently', async (t) => {

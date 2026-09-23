@@ -7,6 +7,7 @@ import { inspectGit, createCheckpointMetadata } from '../../checkpoints/git-chec
 import { AiRouterError } from '../../core/errors.js';
 import { ControlSettingsStore } from '../../core/control-settings-store.js';
 import { isSyntheticProfile } from '../../core/profile-test-service.js';
+import { isProductionRoutingProfile } from '../../core/profile-routing-classification.js';
 import { decorateModelForProfiles } from '../../core/model-catalog.js';
 import { validateProviderPluginManifest } from '../../providers/core/plugin-manifest.js';
 import { inferenceVariants } from '../../providers/core/inference-profile.js';
@@ -60,7 +61,7 @@ export class ControlApi {
       this.services.projectRegistry.list(), this.services.taskStore.list(), this.providers(), this.services.profileRegistry.list(), this.settingsStore.load(), this.services.routingPolicy.status()
     ]);
     const healthy = providers.filter((item) => item.health.status === 'healthy').length;
-    const requiredProviderIds = new Set(profiles.filter((profile) => profile.enabled && profile.profile_type !== 'synthetic').map((profile) => profile.provider_id));
+    const requiredProviderIds = new Set(profiles.filter((profile) => profile.enabled && isProductionRoutingProfile(profile)).map((profile) => profile.provider_id));
     const configuredProviderUnavailable = providers.some((item) => requiredProviderIds.has(item.id) && item.health.status === 'unavailable');
     return {
       status: configuredProviderUnavailable || healthy === 0 ? 'degraded' : 'ready',
@@ -281,6 +282,7 @@ export class ControlApi {
         display_name: cleanText(body?.display_name, 'Display name', 120), auth_mode: authMode,
         location, cost_category: typeof body?.cost_category === 'string' ? body.cost_category : 'UNKNOWN',
         enabled, status: configured ? (enabled ? 'ready' : 'disabled') : existing?.status === 'connected' ? 'model-required' : 'unconfigured', profile_type: body?.profile_type === 'synthetic' ? 'synthetic' : existing?.profile_type ?? 'real',
+        routing_classification: typeof body?.routing_classification === 'string' ? body.routing_classification.toUpperCase() : existing?.routing_classification,
         selected_model_id: selectedModelId,
         execution_channel: typeof body?.execution_channel === 'string' && body.execution_channel ? body.execution_channel : existing?.execution_channel ?? null,
         default_reasoning_mode: typeof body?.default_reasoning_mode === 'string' && body.default_reasoning_mode ? body.default_reasoning_mode : existing?.default_reasoning_mode ?? null,

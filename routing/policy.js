@@ -3,6 +3,7 @@ import { resolvedModelValue } from '../providers/core/model-descriptor.js';
 import { limitsAllowRouting } from '../providers/core/limits.js';
 import { evaluateCost } from './cost-policy.js';
 import { inferenceVariants } from '../providers/core/inference-profile.js';
+import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 const STRENGTH = { basic: 0, standard: 1, strong: 2 };
@@ -68,20 +69,25 @@ export class RoutingPolicy {
 
     for (const profile of profiles) {
       const provider = providers.find((item) => item.id === profile.provider_id);
+      const routingClassification = classifyProfileRouting(profile);
+      const explicitNonRealOverride = routingClassification !== 'REAL' && task.manual_profile === profile.profile_id;
       const candidateModels = Array.isArray(profile.models) && profile.models.length ? profile.models : [null];
       if (!provider) {
-        evaluations.push({ provider_id: profile.provider_id, profile_id: profile.profile_id, model_id: null, eligible: false, rejected: ['provider-not-registered'], reasons: [] });
+        evaluations.push({ provider_id: profile.provider_id, profile_id: profile.profile_id, model_id: null, routing_classification: routingClassification, eligible: false, rejected: ['provider-not-registered'], reasons: [], warnings: [] });
         continue;
       }
       for (const model of candidateModels) for (const inference of inferenceVariants(profile, model)) {
         const reasons = [];
         const rejected = [];
+        const warnings = [];
         const modelId = model?.model_id ?? null;
         const health = healthById.get(provider.id) ?? { status: 'unknown' };
         if (!provider.enabled) rejected.push('provider-disabled');
         if (!profile.enabled || profile.status === 'disabled') rejected.push('profile-disabled');
         if (['unconfigured', 'connecting', 'connected', 'model-required'].includes(profile.status)) rejected.push(`profile-${profile.status}`);
         if (profile.status === 'unavailable') rejected.push('profile-unavailable');
+        if (routingClassification !== 'REAL' && !explicitNonRealOverride) rejected.push(`non-production-profile:${routingClassification}`);
+        if (explicitNonRealOverride) { reasons.push('explicit-non-production-profile-override'); warnings.push(`Manual override is using a ${routingClassification} profile; it is excluded from automatic production routing.`); }
         if (health.status !== 'healthy') rejected.push(`provider-${health.status}`);
         if (task.manual_provider && task.manual_provider !== provider.id) rejected.push('not-manual-provider');
         if (task.manual_profile && task.manual_profile !== profile.profile_id) rejected.push('not-manual-profile');
@@ -134,17 +140,19 @@ export class RoutingPolicy {
         if (task.manual_provider === provider.id || task.manual_profile === profile.profile_id || task.manual_model === modelId) reasons.push('manual-override-match');
         evaluations.push({
           provider_id: provider.id, profile_id: profile.profile_id, model_id: modelId,
+          routing_classification: routingClassification,
           execution_channel: inference.execution_channel, reasoning_mode: inference.reasoning_mode, reasoning_effort: inference.reasoning_effort, inference,
           eligible: rejected.length === 0, score: cost.score + preferenceScore(task, provider, profile, model) + (profile.default_reasoning_effort && inference.reasoning_effort !== profile.default_reasoning_effort ? 1 : 0),
-          reasons, rejected, health: health.status, capabilities: [...capabilities],
+          reasons, rejected, warnings, health: health.status, capabilities: [...capabilities],
           strength_class: strength, context_size: contextSize, cost_category: cost.category
         });
       }
     }
     const eligible = evaluations.filter((entry) => entry.eligible).sort((a, b) => a.score - b.score || a.profile_id.localeCompare(b.profile_id) || String(a.model_id).localeCompare(String(b.model_id)) || String(a.reasoning_effort).localeCompare(String(b.reasoning_effort)));
     return {
-      policy_version: '0.2', task, selected: eligible[0] ?? null, accepted_candidates: eligible,
+      policy_version: '0.3', task, selected: eligible[0] ?? null, accepted_candidates: eligible,
       rejected_candidates: evaluations.filter((entry) => !entry.eligible), evaluations,
+      warnings: eligible[0]?.warnings ?? [],
       error: eligible.length ? null : { code: 'NO_ELIGIBLE_PROVIDER', message: 'No enabled and healthy provider/profile/model satisfies the task.' }
     };
   }

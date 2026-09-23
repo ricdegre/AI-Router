@@ -18,6 +18,15 @@ test('profile registry persists multiple profiles for one provider', async (t) =
   assert.equal((await registry.list('ollama')).length, 2);
 });
 
+test('profile registry exposes routing eligibility for existing and new profiles', async (t) => {
+  const registry = new ProfileRegistry(path.join(await temporaryDirectory(t), 'runtime'));
+  const real = await registry.register(localProfile());
+  const demo = await registry.register(localProfile({ profile_id: 'demo-ollama-run', display_name: 'Demo Ollama' }));
+  assert.equal(real.profile.routing_classification, 'REAL'); assert.equal(demo.profile.routing_classification, 'DEMO');
+  assert.equal((await registry.get('demo-ollama-run')).routing_classification, 'DEMO');
+  await assert.rejects(() => registry.register(localProfile({ routing_classification: 'INTERNAL' })), { code: 'INVALID_PROFILE' });
+});
+
 test('profile metadata rejects secrets and provider reassignment', async (t) => {
   const registry = new ProfileRegistry(path.join(await temporaryDirectory(t), 'runtime'));
   await assert.rejects(() => registry.register(localProfile({ api_key: 'forbidden' })), { code: 'SENSITIVE_PROFILE_FIELD' });
