@@ -141,6 +141,14 @@ export class OllamaProvider extends ProviderAdapter {
     }
   }
 
+  async connect({ profile_id } = {}) {
+    const health = await this.health({ operation: 'connection_test' });
+    if (health.status !== 'healthy') throw new ProviderError('Ollama is not reachable.', 'OLLAMA_UNAVAILABLE', { providerId: this.descriptor.id, retryable: true, failureCategory: 'provider_unavailable' });
+    return { profile_id, status: 'connected', model_count: health.model_count };
+  }
+
+  async disconnect({ profile_id } = {}) { return { profile_id, status: 'disconnected' }; }
+
   async execute(request) {
     if (!request?.model || typeof request.model !== 'string') {
       throw new ProviderError('Ollama execution requires an explicit model.', 'OLLAMA_MODEL_REQUIRED', {

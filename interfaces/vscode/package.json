@@ -1,0 +1,27 @@
+{
+  "name": "ai-router-vscode",
+  "displayName": "AI Router",
+  "description": "Send coding work to the local AI Router control service.",
+  "version": "0.1.0",
+  "publisher": "ai-router-local",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onCommand:aiRouter.runTask", "onCommand:aiRouter.explainRoute", "onCommand:aiRouter.openDashboard"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "aiRouter.runTask", "title": "AI Router: Run Task" },
+      { "command": "aiRouter.explainRoute", "title": "AI Router: Explain Route" },
+      { "command": "aiRouter.openDashboard", "title": "AI Router: Open Dashboard" }
+    ],
+    "configuration": {
+      "title": "AI Router",
+      "properties": {
+        "aiRouter.url": { "type": "string", "default": "http://127.0.0.1:43127", "description": "Local AI Router dashboard URL." },
+        "aiRouter.includeSelection": { "type": "boolean", "default": true, "description": "Offer the active text selection as task context." }
+      }
+    }
+  }
+}

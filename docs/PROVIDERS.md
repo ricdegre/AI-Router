@@ -8,4 +8,4 @@ Adapters must distinguish subscription-backed access, local inference, and meter
 
 Provider output is untrusted input. Adapters must normalize errors, redact secrets, apply timeouts, and avoid writing outside the active project and runtime boundaries.
 
-Provider Protocol 0.1 and the Ollama local HTTP adapter now exist. No cloud provider or real account-authentication adapter exists.
+Provider Protocol 0.1, Ollama, OpenRouter, and Gemini API adapters now exist. OpenRouter uses an independently stored API key per profile. Gemini uses the official API-key path and requires explicit metered opt-in. OpenAI/Codex subscription profiles are represented separately but remain blocked because AI Router will not copy a global Codex login or substitute metered OpenAI API access for a consumer subscription.

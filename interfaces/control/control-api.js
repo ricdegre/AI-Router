@@ -92,9 +92,10 @@ export class ControlApi {
     return value;
   }
 
-  async models({ detailed = false, force = false, providerId = null } = {}) {
+  async models({ detailed = false, force = false, providerId = null, profileId = null } = {}) {
     if (providerId && !SAFE_ID.test(providerId)) throw new AiRouterError('Provider ID is invalid.', 'INVALID_CONTROL_INPUT');
-    const cacheKey = `${providerId ?? '*'}:${detailed ? 'detailed' : 'basic'}`;
+    if (profileId) requiredId(profileId, 'Profile ID');
+    const cacheKey = `${providerId ?? '*'}:${profileId ?? '-'}:${detailed ? 'detailed' : 'basic'}`;
     const cached = this.modelCache.get(cacheKey);
     if (!force && cached && Date.now() - cached.at < 30_000) return cached.value;
     const models = [];
@@ -112,7 +113,7 @@ export class ControlApi {
         if (providerId) models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: 'MODEL_DISCOVERY_NOT_SUPPORTED' });
         continue;
       }
-      try { models.push(...(await adapter.discoverModels({ detailed })).map((model) => decorateModelForProfiles({ ...model, availability: 'available' }))); }
+      try { models.push(...(await adapter.discoverModels({ detailed, profile_id: profileId })).map((model) => decorateModelForProfiles({ ...model, availability: 'available' }))); }
       catch (error) { models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: error.code ?? 'MODEL_DISCOVERY_FAILED' }); }
     }
     this.modelCache.set(cacheKey, { at: Date.now(), value: models });
@@ -135,12 +136,13 @@ export class ControlApi {
 
   async task(projectId, taskId) {
     requiredId(projectId, 'Project ID'); requiredId(taskId, 'Task ID');
-    const [descriptor, state, attempts, plan, journal, resume] = await Promise.all([
+    const [descriptor, state, attempts, plan, journal, resume, project] = await Promise.all([
       this.services.descriptorStore.load(projectId, taskId), this.services.taskStore.get(projectId, taskId),
       this.services.attemptStore.list(projectId, taskId), optional(() => this.services.executionPlanStore.load(projectId, taskId)),
-      this.services.recoveryJournal.list(projectId, taskId), this.services.resumeManager.explain(taskId, { projectId })
+      this.services.recoveryJournal.list(projectId, taskId), this.services.resumeManager.explain(taskId, { projectId }), this.services.projectRegistry.get(projectId)
     ]);
-    return { descriptor, state, attempts, execution_plan: plan, recovery_journal: journal, resume };
+    const git = inspectGit(project.workspacePath);
+    return { descriptor, state, attempts, execution_plan: plan, recovery_journal: journal, resume, workspace_changes: git.isRepository ? createCheckpointMetadata(git, { label: 'Current workspace state' }) : { isRepository: false, changedFiles: [] } };
   }
 
   async routing(query) {
@@ -176,7 +178,7 @@ export class ControlApi {
     if (pathname === '/api/projects') return this.projects();
     if (pathname === '/api/providers') return this.providers(query.get('refresh') === 'true');
     if (pathname === '/api/profiles') return this.profiles(query);
-    if (pathname === '/api/models') return this.models({ detailed: query.get('detailed') === 'true', force: query.get('refresh') === 'true', providerId: query.get('provider') || null });
+    if (pathname === '/api/models') return this.models({ detailed: query.get('detailed') === 'true', force: query.get('refresh') === 'true', providerId: query.get('provider') || null, profileId: query.get('profile') || null });
     if (pathname === '/api/tasks') return this.tasks(query);
     if (pathname === '/api/routing/explain') return this.routing(query);
     if (pathname === '/api/decision-engines/status') return this.services.routingPolicy.status();
@@ -244,11 +246,33 @@ export class ControlApi {
     if (profileAction) {
       const profileId = requiredId(decodeURIComponent(profileAction[1]), 'Profile ID'); const action = profileAction[2];
       const profile = await this.services.profileRegistry.get(profileId);
-      if (action === 'connect' || action === 'reconnect') return { profile_id: profileId, provider_id: profile.provider_id, started: false, status: 'not-configured', message: 'Automatic authentication is not enabled. Configure credentials in a backend secret store when a real connector is added.' };
-      if (action === 'disconnect') { const result = await this.services.profileRegistry.setConnectionStatus(profileId, 'unavailable'); await this.services.auditLog.record('profile_disconnected', { profile_id: profileId, provider_id: profile.provider_id }); return result; }
-      if (action === 'enable' || action === 'disable') { const result = await this.services.profileRegistry.setEnabled(profileId, action === 'enable'); await this.services.auditLog.record('profile_state_changed', { profile_id: profileId, provider_id: profile.provider_id, enabled: action === 'enable' }); return result; }
+      let adapter = null; try { adapter = this.services.providerRegistry.get(profile.provider_id); } catch (error) { if (action !== 'delete') throw error; }
+      if (action === 'connect' || action === 'reconnect') {
+        if (typeof adapter.connect !== 'function') throw new AiRouterError('This provider does not support profile authentication.', 'PROVIDER_CONNECT_NOT_SUPPORTED');
+        await this.services.profileRegistry.updateConnection(profileId, { status: 'connecting', enabled: false });
+        try {
+          const connected = await adapter.connect({ profile_id: profileId, credential: body?.credential, metered_opt_in: body?.metered_opt_in === true });
+          const updated = await this.services.profileRegistry.updateConnection(profileId, { status: profile.selected_model_id ? 'ready' : 'model-required', enabled: Boolean(profile.selected_model_id), auth_mode: adapter.authenticationModes()[0] ?? profile.auth_mode });
+          this.modelCache.clear(); this.providerCache.at = 0;
+          await this.services.auditLog.record('profile_connected', { profile_id: profileId, provider_id: profile.provider_id, model_count: connected.model_count ?? null });
+          return { profile: updated, ...connected, message: profile.selected_model_id ? 'Connection validated.' : 'Connection validated. Edit the profile and choose a discovered model.' };
+        } catch (error) { await this.services.profileRegistry.updateConnection(profileId, { status: action === 'reconnect' ? profile.status : 'unconfigured', enabled: action === 'reconnect' ? profile.enabled : false, auth_mode: profile.auth_mode }); throw error; }
+      }
+      if (action === 'disconnect') { if (typeof adapter.disconnect === 'function') await adapter.disconnect({ profile_id: profileId }); const result = await this.services.profileRegistry.updateConnection(profileId, { status: 'unconfigured', enabled: false }); this.modelCache.clear(); this.providerCache.at = 0; await this.services.auditLog.record('profile_disconnected', { profile_id: profileId, provider_id: profile.provider_id }); return result; }
+      if (action === 'enable' || action === 'disable') {
+        let result;
+        if (action === 'disable') result = await this.services.profileRegistry.setEnabled(profileId, false);
+        else {
+          if (!profile.selected_model_id) throw new AiRouterError('Choose a model before enabling this profile.', 'MODEL_REQUIRED');
+          const health = await adapter.health({ profile_id: profileId, operation: 'connection_test' });
+          if (health.status !== 'healthy') throw new AiRouterError('Connect this profile successfully before enabling it.', 'PROFILE_NOT_CONNECTED');
+          result = await this.services.profileRegistry.updateConnection(profileId, { enabled: true, status: 'ready' });
+        }
+        await this.services.auditLog.record('profile_state_changed', { profile_id: profileId, provider_id: profile.provider_id, enabled: action === 'enable' }); return result;
+      }
       if (action === 'test-connection') { const result = await this.services.profileTestService.connection(profileId); await this.services.auditLog.record('profile_connection_tested', { profile_id: profileId, provider_id: profile.provider_id, reachable: result.reachable, health_status: result.health.status, model_count: result.models.length }); return result; }
       if (action === 'test-chat') { const result = await this.services.profileTestService.chat(profileId, body); await this.services.auditLog.record('profile_chat_tested', { profile_id: profileId, provider_id: profile.provider_id, model_id: result.model, status: result.status, latency_ms: result.latency_ms, usage_available: result.usage_delta != null }); return result; }
+      if (typeof adapter?.disconnect === 'function') await adapter.disconnect({ profile_id: profileId }).catch(() => {});
       const removed = await this.services.profileRegistry.remove(profileId); await this.services.auditLog.record('profile_deleted', { profile_id: profileId, provider_id: removed.provider_id }); return { deleted: true, profile_id: profileId };
     }
     const memoryMatch = pathname.match(/^\/api\/projects\/([^/]+)\/memory\/initialize$/);
@@ -268,9 +292,11 @@ export class ControlApi {
         project_id: project.projectId, task_id: taskId, objective: cleanText(body?.objective, 'Objective', 2_000), prompt: typeof body?.instruction === 'string' ? body.instruction.slice(0, 64_000) : '',
         task_type: body?.task_type ?? 'general', risk: body?.risk ?? 'low', required_capabilities: Array.isArray(body?.required_capabilities) ? body.required_capabilities : [],
         max_attempts: body?.max_attempts ?? settings.max_attempts, allow_metered: body?.allow_metered === true && settings.allow_metered,
-        manual_provider: body?.provider_id ?? null, manual_profile: body?.profile_id ?? null, manual_model: body?.model_id ?? null
+        manual_provider: body?.provider_id ?? null, manual_profile: body?.profile_id ?? null, manual_model: body?.model_id ?? null,
+        action_policy: body?.action_policy ?? {}, validation_requirements: body?.validation_requirements ?? [],
+        provider_constraints: body?.provider_constraints ?? {}, model_constraints: body?.model_constraints ?? {}
       }, project);
-      await this.services.descriptorStore.create(descriptor); const state = await this.services.taskStore.create(descriptor);
+      await this.services.descriptorStore.create(descriptor); const state = await this.services.taskStore.create(descriptor); await this.services.executionPlanStore.create(descriptor);
       await this.services.auditLog.record('task_created', { project_id: project.projectId, task_id: taskId }); return { descriptor, state };
     }
     const taskAction = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/(cancel|resume)$/);

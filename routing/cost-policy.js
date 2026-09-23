@@ -1,7 +1,7 @@
 import { AiRouterError } from '../core/errors.js';
 
-export const COST_CATEGORIES = Object.freeze(['LOCAL', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN']);
-const COST_RANK = { LOCAL: 0, SUBSCRIPTION_INCLUDED: 10, METERED_LOW: 20, METERED_MEDIUM: 30, METERED_HIGH: 40, UNKNOWN: 50 };
+export const COST_CATEGORIES = Object.freeze(['LOCAL', 'FREE', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN']);
+const COST_RANK = { LOCAL: 0, FREE: 5, SUBSCRIPTION_INCLUDED: 10, METERED_LOW: 20, METERED_MEDIUM: 30, METERED_HIGH: 40, UNKNOWN: 50 };
 const LEGACY = { local: 'LOCAL', subscription: 'SUBSCRIPTION_INCLUDED', metered: 'METERED_MEDIUM' };
 
 export function normalizeCostCategory(value) {
@@ -24,4 +24,3 @@ export function evaluateCost(categoryInput, policy = {}) {
   if (policy.prefer_subscription && category === 'SUBSCRIPTION_INCLUDED') score -= 5;
   return { allowed: true, category, reason: category === 'UNKNOWN' ? 'unknown-cost-explicitly-allowed' : 'cost-policy-allowed', score };
 }
-

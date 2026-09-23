@@ -15,10 +15,11 @@ export class ProfileTestService {
     let provider;
     try { provider = this.providerRegistry.get(profile.provider_id); } catch { return { profile_id: profileId, provider_id: profile.provider_id, auth: { mode: profile.auth_mode, status: 'not-configured' }, reachable: false, health: { status: 'unavailable', reason: 'provider-not-registered' }, models: [], model_list_available: false }; }
     const timeoutMs = resolveProviderTimeout('connection_test', { global: this.timeoutPolicy, provider: provider.timeoutPolicy ?? provider.descriptor, profile });
-    const health = await provider.health({ timeout_ms: timeoutMs, operation: 'connection_test' }).catch(() => ({ status: 'unavailable', reason: 'health-check-failed' }));
+    const health = await provider.health({ profile_id: profileId, timeout_ms: timeoutMs, operation: 'connection_test' }).catch(() => ({ status: 'unavailable', reason: 'health-check-failed' }));
     let models = []; let modelListAvailable = false;
-    if (typeof provider.discoverModels === 'function' && health.status === 'healthy') { try { models = (await provider.discoverModels({ detailed: false, timeout_ms: timeoutMs })).map((item) => item.model_id).filter(Boolean); modelListAvailable = true; } catch {} }
-    return { profile_id: profileId, provider_id: profile.provider_id, auth: { mode: profile.auth_mode, status: profile.auth_mode === 'none' ? 'not-required' : 'not-configured' }, reachable: health.status === 'healthy', health, models, model_list_available: modelListAvailable };
+    if (typeof provider.discoverModels === 'function' && health.status === 'healthy') { try { models = (await provider.discoverModels({ profile_id: profileId, detailed: false, timeout_ms: timeoutMs })).map((item) => item.model_id).filter(Boolean); modelListAvailable = true; } catch {} }
+    const [usage, limits] = await Promise.all([provider.usage({ profile_id: profileId }).catch(() => ({ available: false })), provider.limits({ profile_id: profileId }).catch(() => ({ available: false }))]);
+    return { profile_id: profileId, provider_id: profile.provider_id, auth: { mode: profile.auth_mode, status: profile.auth_mode === 'none' ? 'not-required' : health.status === 'healthy' ? 'valid' : 'not-configured' }, reachable: health.status === 'healthy', health, models, model_list_available: modelListAvailable, usage, limits, plan_type: profile.plan_type ?? null };
   }
 
   async chat(profileId, input = {}) {

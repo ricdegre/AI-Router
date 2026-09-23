@@ -2,6 +2,17 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.7.0-pre.0 — Real provider connections and VS Code client
+
+- Added encrypted per-profile credential storage using Windows DPAPI; credentials never enter profile metadata, project memory, audit events, or browser storage.
+- Added real OpenRouter connection validation, authenticated model discovery, free/paid metadata and filtering, explicit-model Test Chat, structured task execution, and normalized auth/rate-limit/unavailable errors.
+- Added the official Gemini API-key path with mandatory metered opt-in, model discovery, Test Connection, Test Chat, and structured execution. No subscription access is claimed.
+- Added an explicit OpenAI/Codex subscription connector boundary. It does not copy the global Codex login, request passwords, or silently fall back to metered API billing while a public isolated third-party subscription OAuth flow is unavailable.
+- Added the first VS Code extension and provider-independent loopback client for workspace/file/selection context, route explanation, task execution, progress, result, errors, Dashboard access, and changed-file reporting.
+- Fixed dashboard-created tasks so they persist execution plans and explicitly carry validated safe action/validation policies.
+- Added `FREE` as a first-class cost category while leaving paid provider use disabled globally by default.
+- Demonstrated a real end-to-end synthetic Git change through the VS Code client and AI Router, including fallback from an unavailable Ollama model resource to `qwen3.5:9b`, independent validation, six checkpoints, and a completed handoff.
+
 ## 0.6.0-pre.2 — Provider-aware profile models
 
 - Added provider-scoped model discovery to Add/Edit Profile with loading, honest failure states, and no fabricated cloud availability.

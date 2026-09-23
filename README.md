@@ -28,9 +28,11 @@ This repository currently provides:
 - operator commands and a privacy-conscious diagnostic report;
 - a local-only operational control panel with explainable routing, continuity inspection, durable task controls, and system diagnostics;
 - multi-account profile management with provider-aware model selection, isolated connection checks, and bounded Test Chat inference that has no project or tool access;
+- encrypted per-profile cloud credentials, real OpenRouter and opt-in Gemini API adapters, and explicit free/metered cost policy;
+- a thin VS Code extension that connects only to the local AI Router control API;
 - an artificial continuity demo and isolated tests.
 
-Real cloud-provider execution, OpenAI/Gemini/Claude account authentication, automatic rollback, and real TypeSafe/Jev connectivity are **not implemented**. Cloud providers and real Jev connection are shown only as explicit placeholders. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
+OpenRouter execution and the metered Gemini API path are implemented. Gemini stays off until explicit metered opt-in. An isolated official third-party ChatGPT/Codex subscription login is not available to this dashboard, so OpenAI subscription profiles remain visibly blocked rather than copying the global Codex login or silently using paid API billing. Claude, automatic rollback, and real TypeSafe/Jev connectivity are not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
 
 ## Conceptual architecture
 
@@ -55,6 +57,8 @@ flowchart LR
     POLICY --> PREG[Provider Registry]
     POLICY --> PROFILES[Private Profile Registry]
     PREG --> OLLAMA[Ollama adapter]
+    PREG --> OPENROUTER[OpenRouter API]
+    PREG --> GEMINI[Gemini API opt-in]
     PREG --> FUTURE[Future provider adapters]
     MEM --> DATA[(Private runtime data)]
     PROFILES --> DATA
@@ -86,9 +90,11 @@ On Windows, double-click **AI Router.vbs** in the repository root. It starts the
 
 From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
+The source for the VS Code client is in `interfaces/vscode`. Launch it in an Extension Development Host and use `AI Router: Run Task`, `AI Router: Explain Route`, or `AI Router: Open Dashboard`. Provider authentication remains exclusively in the Dashboard.
+
 ## Development status
 
-AI Router 0.6.0-pre.2 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.7.0-pre.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## License
 

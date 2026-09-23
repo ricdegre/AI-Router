@@ -8,7 +8,7 @@ Profile metadata contains:
 - `auth_mode` as a non-secret mode label
 - `enabled` and `status`
 - `location`: local or cloud
-- `cost_category`: local, subscription, or metered
+- `cost_category`: local, free, subscription, metered, or unknown
 - `selected_model_id` and its non-secret discovered model descriptor
 - optional capability additions/removals
 - usage and limit availability flags
@@ -17,15 +17,15 @@ Profile metadata contains:
 
 Profile state is stored under the private runtime root at `accounts/profiles.json`. Passwords, tokens, API keys, credential blobs, and `auth.json` contents are rejected and do not belong in profile metadata.
 
-Future provider integrations may reference a provider-managed credential store or isolated runtime directory, but they must not copy secrets into shared project memory. An isolated process/profile design must be verified against official provider behavior before it can manipulate `CODEX_HOME` or any equivalent state.
+API-key profiles reference the private credential vault under the runtime root. On Windows, values are encrypted for the current OS user with DPAPI. The dashboard sends a credential only to the loopback service during Connect/Reconnect; it is not returned to the browser, stored in profile metadata, or written to logs. Disconnect and Delete remove the encrypted credential.
 
-The current implementation does not authenticate, log in, log out, copy credentials, or modify existing provider state.
+AI Router does not manipulate `CODEX_HOME`, copy existing Codex credentials, or request provider usernames/passwords.
 
 ## Dashboard management and tests
 
-The dashboard can add multiple named profiles for the same provider and edit, enable/disable, disconnect, or delete their non-secret metadata. Connect and Reconnect are explicit placeholders: they do not launch OAuth, request credentials, or change an external account.
+The dashboard can add multiple named profiles for the same provider and edit, enable/disable, connect/reconnect, disconnect, or delete them independently. OpenRouter and Gemini Connect validate API keys before storing them. Gemini requires a separate metered-use checkbox. Ollama validates local reachability without credentials. OpenAI subscription Connect remains an explicit blocked state.
 
-Add/Edit Profile queries only the selected provider's discovery adapter. Ollama lists installed local models and hides embedding-only models unless Advanced is enabled. OpenRouter can expose free/paid filtering when a real adapter reports models; OpenAI and Gemini show no model choices until a real connected adapter can discover availability. Multiple profiles may select different models from the same provider, and those combinations become distinct routing resources.
+Add/Edit Profile queries only the selected provider/profile discovery adapter. Ollama lists installed local models and hides embedding-only models unless Advanced is enabled. OpenRouter defaults to Free only and can display both free and paid models; Gemini discovers only models returned to the connected identity. Multiple profiles may select different models from the same provider, and those combinations become distinct routing resources.
 
 Local profiles require a discovered model before saving. A cloud profile may be saved before authentication or discovery; it is persisted disabled with status `unconfigured`, no selected model, and an empty model list, so it cannot participate in routing. The intended lifecycle is `unconfigured` → `connecting` → `connected` → `model-required` → `ready`. Authentication connectors will advance those states when implemented.
 

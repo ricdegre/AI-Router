@@ -53,7 +53,9 @@ export class ProviderRegistry {
         continue;
       }
       try {
-        results.push({ provider_id: adapter.descriptor.id, enabled: true, health: await adapter.health() });
+        const profiles = await this.profiles(adapter.descriptor.id);
+        const profile = profiles.find((item) => item.enabled && ['connected', 'model-required', 'ready', 'available'].includes(item.status));
+        results.push({ provider_id: adapter.descriptor.id, enabled: true, health: await adapter.health(profile ? { profile_id: profile.profile_id } : {}) });
       } catch {
         results.push({ provider_id: adapter.descriptor.id, enabled: true, health: { status: 'unavailable', reason: 'health-check-failed' } });
       }

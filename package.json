@@ -1,6 +1,6 @@
 {
   "name": "ai-work-router",
-  "version": "0.6.0-pre.2",
+  "version": "0.7.0-pre.0",
   "description": "Provider-ready continuity platform for AI-assisted project work.",
   "type": "module",
   "private": true,
@@ -16,6 +16,7 @@
     "test:continuity": "node --test tests/orchestrator.integration.test.js",
     "demo": "node scripts/continuity-demo.js",
     "demo:local-agent": "node scripts/local-agent-handoff-demo.js",
+    "demo:vscode-fallback": "node scripts/vscode-fallback-demo.js",
     "smoke:ollama": "node scripts/ollama-smoke.js",
     "benchmark:routing": "node scripts/decision-routing-benchmark.js",
     "status": "node interfaces/cli/ai-router.js status",

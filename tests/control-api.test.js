@@ -58,6 +58,7 @@ test('task creation persists a descriptor without executing it', async (t) => {
   const created = await api.handlePost('/api/tasks', { project_id: project.projectId, task_id: 'dashboard-task', objective: 'Inspect local control behavior', risk: 'low' });
   assert.equal(created.state.state, 'CREATED');
   assert.equal((await services.attemptStore.list(project.projectId, 'dashboard-task')).length, 0);
+  assert.equal((await services.executionPlanStore.load(project.projectId, 'dashboard-task')).current_step, 'PREPARE');
   const detail = await api.handleGet(`/api/projects/${project.projectId}/tasks/dashboard-task`, new URLSearchParams());
   assert.equal(detail.descriptor.objective, 'Inspect local control behavior');
   assert.equal(detail.resume.recommendation, 'RESUMABLE');

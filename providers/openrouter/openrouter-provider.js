@@ -1,0 +1,87 @@
+import { randomUUID } from 'node:crypto';
+import { ProviderAdapter, ProviderError, safeProviderError } from '../core/protocol.js';
+import { createModelDescriptor } from '../core/model-descriptor.js';
+import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
+import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
+
+const SECRET_NAME = 'openrouter-api-key';
+
+function price(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
+
+export class OpenRouterProvider extends ProviderAdapter {
+  constructor(options = {}) {
+    super({ id: 'openrouter', name: 'OpenRouter', type: 'gateway', strength_class: 'strong', capabilities: ['chat', 'coding', 'vision', 'long_context', 'metered_api', 'streaming', 'tool_use'], authentication_modes: ['api-key'] });
+    this.baseUrl = new URL(options.baseUrl ?? 'https://openrouter.ai/api/v1/');
+    this.fetch = options.fetch ?? globalThis.fetch; this.secretStore = options.secretStore;
+    this.timeoutPolicy = validateProviderTimeouts(options.timeoutPolicy ?? {});
+  }
+
+  async key(profileId) {
+    if (!profileId) throw new ProviderError('Connect a profile before discovering OpenRouter models.', 'PROFILE_CREDENTIAL_MISSING', { providerId: 'openrouter', failureCategory: 'authentication' });
+    return this.secretStore.get(profileId, SECRET_NAME);
+  }
+
+  async request(pathname, { profile_id, key, method = 'GET', body, timeout_ms, operation = 'connection_test' } = {}) {
+    const credential = key ?? await this.key(profile_id);
+    const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), timeout_ms ?? resolveProviderTimeout(operation, { provider: this.timeoutPolicy }));
+    try {
+      const response = await this.fetch(new URL(pathname, this.baseUrl), { method, signal: controller.signal, headers: { authorization: `Bearer ${credential}`, ...(body ? { 'content-type': 'application/json' } : {}), 'x-title': 'AI Router' }, body: body ? JSON.stringify(body) : undefined });
+      if (!response.ok) {
+        const message = (await response.json().catch(() => null))?.error?.message;
+        const code = response.status === 401 ? 'OPENROUTER_AUTH_FAILED' : response.status === 402 ? 'OPENROUTER_CREDITS_REQUIRED' : response.status === 429 ? 'OPENROUTER_RATE_LIMITED' : response.status >= 500 ? 'OPENROUTER_UNAVAILABLE' : 'OPENROUTER_REQUEST_FAILED';
+        throw new ProviderError(message || `OpenRouter returned HTTP ${response.status}.`, code, { providerId: this.descriptor.id, retryable: response.status === 429 || response.status >= 500, failureCategory: response.status === 429 ? 'rate_limited' : response.status >= 500 ? 'provider_unavailable' : 'execution_failure' });
+      }
+      return response.json();
+    } catch (error) { throw safeProviderError(error, this.descriptor.id); }
+    finally { clearTimeout(timeout); }
+  }
+
+  modelDescriptor(model) {
+    const promptPrice = price(model.pricing?.prompt), completionPrice = price(model.pricing?.completion);
+    const free = /:free$/i.test(model.id) || (promptPrice === 0 && completionPrice === 0);
+    const modalities = [...(model.architecture?.input_modalities ?? []), ...(model.architecture?.output_modalities ?? [])];
+    const descriptor = createModelDescriptor({ providerId: 'openrouter', modelId: model.id, discovered: {
+      display_name: model.name ?? model.id, family: model.architecture?.instruct_type ?? null, local: false,
+      context_size: model.context_length ?? null, tool_support: model.supported_parameters?.includes('tools') ?? null,
+      structured_output_support: model.supported_parameters?.includes('response_format') ?? null,
+      vision: modalities.includes('image'), embedding: false, coding_suitability: null,
+      reasoning_support: model.supported_parameters?.includes('reasoning') ?? null, loaded: null, parameter_size: null
+    }, heuristics: { coding_suitability: /code|coder|devstral|codestral/i.test(`${model.id} ${model.name ?? ''}`) ? 'likely' : 'unknown' } });
+    return { ...descriptor, is_free: free, pricing: { prompt: promptPrice, completion: completionPrice }, cost_category: free ? 'FREE' : 'METERED', provider_default_supported: false };
+  }
+
+  async connect({ profile_id, credential }) {
+    const result = await this.request('models', { key: credential, profile_id, operation: 'connection_test' });
+    await this.secretStore.set(profile_id, SECRET_NAME, credential);
+    return { status: 'connected', model_count: result.data?.length ?? 0 };
+  }
+  async disconnect({ profile_id }) { await this.secretStore.remove(profile_id, SECRET_NAME); return { status: 'disconnected' }; }
+  async discoverModels(options = {}) { const result = await this.request('models', options); return (result.data ?? []).map((model) => this.modelDescriptor(model)); }
+  async health(options = {}) {
+    if (!options.profile_id) return { status: 'unknown', reachable: null, reason: 'profile-required' };
+    try { const models = await this.discoverModels({ profile_id: options.profile_id, detailed: false, timeout_ms: options.timeout_ms }); return { status: 'healthy', reachable: true, model_count: models.length }; }
+    catch (error) { return { status: 'unavailable', reachable: false, error_code: error.code }; }
+  }
+  async keyInfo(profileId) { return (await this.request('key', { profile_id: profileId, operation: 'connection_test' })).data ?? {}; }
+  async usage({ profile_id } = {}) {
+    const data = await this.keyInfo(profile_id); const fields = ['usage', 'usage_daily', 'usage_weekly', 'usage_monthly', 'byok_usage', 'byok_usage_daily', 'byok_usage_weekly', 'byok_usage_monthly'];
+    const values = Object.fromEntries(fields.filter((field) => Number.isFinite(data[field])).map((field) => [field, data[field]]));
+    return { available: Object.keys(values).length > 0, ...values };
+  }
+  async limits({ profile_id } = {}) {
+    const data = await this.keyInfo(profile_id); const values = {};
+    for (const field of ['limit', 'limit_remaining', 'limit_reset', 'expires_at', 'is_free_tier']) if (data[field] !== undefined && data[field] !== null) values[field] = data[field];
+    if (data.free_model_daily_requests) values.free_model_daily_requests = data.free_model_daily_requests;
+    return { available: Object.keys(values).length > 0, ...values };
+  }
+
+  async testChat({ profile_id, model, message, max_output_tokens, timeout_ms }) {
+    const started = performance.now(); const result = await this.request('chat/completions', { profile_id, method: 'POST', timeout_ms, operation: 'test_chat', body: { model, messages: [{ role: 'user', content: message }], max_tokens: max_output_tokens, tools: undefined } });
+    return { status: 'connected', response: result.choices?.[0]?.message?.content ?? '', model: result.model ?? model, latency_ms: Math.round(performance.now() - started), usage_delta: result.usage ?? null };
+  }
+  async execute(request) {
+    const result = await this.request('chat/completions', { profile_id: request.profile_id ?? request.profile?.profile_id, method: 'POST', timeout_ms: request.timeout_ms, operation: 'inference', body: { model: request.model, messages: request.messages ?? [{ role: 'user', content: request.prompt ?? request.objective ?? '' }], response_format: request.format ? { type: 'json_schema', json_schema: { name: 'ai_router_response', strict: true, schema: request.format } } : undefined } });
+    return { request_id: request.request_id ?? randomUUID(), status: 'completed', model: result.model ?? request.model, output: result.choices?.[0]?.message?.content ?? '', done: true, metrics: result.usage ?? null };
+  }
+  async executeStructured(request) { const raw = await this.execute({ ...request, format: request.format ?? STRUCTURED_RESPONSE_JSON_SCHEMA }); const parsed = parseStructuredResponse(raw.output, { allowTextFallback: false }); return { ...raw, structured: parsed.response, structured_valid: parsed.valid }; }
+}

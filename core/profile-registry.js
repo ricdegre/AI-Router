@@ -5,7 +5,7 @@ import { AiRouterError } from './errors.js';
 import { validateProviderTimeouts } from './provider-timeout-policy.js';
 
 export const PROFILE_SCHEMA_VERSION = '0.1';
-const COST_CATEGORIES = ['local', 'subscription', 'metered', 'LOCAL', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN'];
+const COST_CATEGORIES = ['local', 'subscription', 'metered', 'LOCAL', 'FREE', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN'];
 const LOCATIONS = ['local', 'cloud'];
 const STATUSES = ['unknown', 'unconfigured', 'connecting', 'connected', 'model-required', 'ready', 'available', 'unavailable', 'disabled'];
 const SENSITIVE_PROFILE_KEY = /(password|secret|token|api.?key|credential)/i;
@@ -108,10 +108,23 @@ export class ProfileRegistry {
       const profile = state.profiles.find((item) => item.profile_id === profileId);
       if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
       profile.enabled = Boolean(enabled);
-      profile.status = enabled ? 'unknown' : 'disabled';
+      profile.status = enabled ? (profile.selected_model_id ? 'ready' : profile.auth_mode === 'none' ? 'available' : 'unconfigured') : 'disabled';
       profile.updated_at = new Date().toISOString();
       outcome = profile;
       return state;
+    });
+    return outcome;
+  }
+
+  async updateConnection(profileId, patch = {}) {
+    const allowed = new Set(['status', 'enabled', 'auth_mode', 'usage_available', 'limits_available', 'plan_type']);
+    let outcome;
+    await updateJsonAtomic(this.filePath, { version: PROFILE_SCHEMA_VERSION, profiles: [] }, (state) => {
+      const profile = (state.profiles ?? []).find((item) => item.profile_id === profileId);
+      if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
+      for (const [key, value] of Object.entries(patch)) if (allowed.has(key)) profile[key] = value;
+      if (!STATUSES.includes(profile.status)) throw new AiRouterError('Profile status is invalid.', 'INVALID_PROFILE');
+      profile.updated_at = new Date().toISOString(); outcome = profile; return state;
     });
     return outcome;
   }
