@@ -73,11 +73,15 @@ export class SecretStore {
     let state;
     try { state = JSON.parse(await readFile(this.file(profileId), 'utf8')); } catch (error) {
       if (error.code === 'ENOENT') throw new AiRouterError('Profile credential is not configured.', 'PROFILE_CREDENTIAL_MISSING');
+      if (error instanceof SyntaxError) throw new AiRouterError('Stored profile credentials are corrupt.', 'SECRET_STORE_CORRUPT');
       throw error;
     }
+    if (state.profile_id !== profileId) throw new AiRouterError('Stored credential does not match this profile.', 'SECRET_PROFILE_MISMATCH');
     const record = state.secrets?.[name];
     if (!record?.value) throw new AiRouterError('Profile credential is not configured.', 'PROFILE_CREDENTIAL_MISSING');
-    return this.protector.unprotect(record.value);
+    if (record.protection !== 'windows-dpapi-current-user') throw new AiRouterError('Stored credential protection is unsupported.', 'SECRET_PROTECTION_UNSUPPORTED');
+    try { return await this.protector.unprotect(record.value); }
+    catch { throw new AiRouterError('Stored profile credential could not be decrypted for the current Windows user.', 'SECRET_DECRYPT_FAILED'); }
   }
 
   async has(profileId, name) {

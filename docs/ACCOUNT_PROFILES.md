@@ -23,7 +23,7 @@ AI Router does not manipulate `CODEX_HOME`, copy existing Codex credentials, or 
 
 ## Dashboard management and tests
 
-The dashboard can add multiple named profiles for the same provider and edit, enable/disable, connect/reconnect, disconnect, or delete them independently. OpenRouter and Gemini Connect validate API keys before storing them. Gemini requires a separate metered-use checkbox. Ollama validates local reachability without credentials. OpenAI subscription Connect remains an explicit blocked state.
+The dashboard can add multiple named profiles for the same provider and edit, enable/disable, connect/reconnect, disconnect, or delete them independently. OpenRouter validates through `GET /key` before storing a key; Gemini validates an auth key and requires a separate metered-use checkbox. Ollama validates local reachability without credentials. OpenAI Connect accepts only official Codex access tokens for Business/Enterprise workspaces and runs each profile through an isolated App Server home; personal subscription login remains blocked.
 
 Add/Edit Profile queries only the selected provider/profile discovery adapter. Ollama lists installed local models and hides embedding-only models unless Advanced is enabled. OpenRouter defaults to Free only and can display both free and paid models; Gemini discovers only models returned to the connected identity. Multiple profiles may select different models from the same provider, and those combinations become distinct routing resources.
 

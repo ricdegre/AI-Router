@@ -32,7 +32,7 @@ This repository currently provides:
 - a thin VS Code extension that connects only to the local AI Router control API;
 - an artificial continuity demo and isolated tests.
 
-OpenRouter execution and the metered Gemini API path are implemented. Gemini stays off until explicit metered opt-in. An isolated official third-party ChatGPT/Codex subscription login is not available to this dashboard, so OpenAI subscription profiles remain visibly blocked rather than copying the global Codex login or silently using paid API billing. Claude, automatic rollback, and real TypeSafe/Jev connectivity are not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
+OpenRouter execution and the metered Gemini auth-key path are implemented. Gemini stays off until explicit metered opt-in. OpenAI profiles support official Codex access tokens for isolated ChatGPT Business/Enterprise App Server automation; personal subscription login and App Server task execution remain blocked, and the router never copies global login state or silently uses paid API billing. Claude, automatic rollback, and real TypeSafe/Jev connectivity are not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
 
 ## Conceptual architecture
 
@@ -94,7 +94,7 @@ The source for the VS Code client is in `interfaces/vscode`. Launch it in an Ext
 
 ## Development status
 
-AI Router 0.7.0-pre.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.8.0-pre.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## License
 

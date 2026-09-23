@@ -2,6 +2,14 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.8.0-pre.0 — Provider diagnostics and isolated Codex accounts
+
+- Fixed OpenRouter connection validation to use `GET /key` before model discovery and credential persistence.
+- Added safe HTTP, DNS, network-policy, TLS, timeout, and malformed-response diagnostics.
+- Hardened per-profile DPAPI lookup against profile mismatch and decrypt failures.
+- Added isolated ChatGPT Business/Enterprise Codex access-token architecture through App Server, exact model/rate-limit reads, and no API-key fallback.
+- Updated Gemini auth-key handling and VS Code task status/change visibility.
+
 ## 0.7.0-pre.0 — Real provider connections and VS Code client
 
 - Added encrypted per-profile credential storage using Windows DPAPI; credentials never enter profile metadata, project memory, audit events, or browser storage.

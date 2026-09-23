@@ -7,6 +7,7 @@ function outputLine(channel, label, value) { channel.appendLine(`${label}: ${typ
 
 function activate(context) {
   const channel = vscode.window.createOutputChannel('AI Router'); context.subscriptions.push(channel);
+  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50); status.command = 'aiRouter.openDashboard'; status.text = '$(hubot) AI Router'; status.tooltip = 'Open the local AI Router dashboard'; status.show(); context.subscriptions.push(status);
   const client = () => new RouterClient(vscode.workspace.getConfiguration('aiRouter').get('url', 'http://127.0.0.1:43127'));
   context.subscriptions.push(vscode.commands.registerCommand('aiRouter.openDashboard', async () => vscode.env.openExternal(vscode.Uri.parse(vscode.workspace.getConfiguration('aiRouter').get('url', 'http://127.0.0.1:43127')))));
   context.subscriptions.push(vscode.commands.registerCommand('aiRouter.explainRoute', async () => {
@@ -20,7 +21,7 @@ function activate(context) {
     const editor = vscode.window.activeTextEditor; const activeFile = editor ? path.relative(folder.uri.fsPath, editor.document.uri.fsPath) : null;
     let selection = ''; if (editor && vscode.workspace.getConfiguration('aiRouter').get('includeSelection', true) && !editor.selection.isEmpty) selection = editor.document.getText(editor.selection);
     const taskInstruction = [instruction, activeFile ? `Active file: ${activeFile}` : '', selection ? `Selected text (user supplied):\n${selection}` : ''].filter(Boolean).join('\n\n');
-    channel.clear(); channel.show(true); outputLine(channel, 'Status', 'Connecting to local AI Router'); outputLine(channel, 'Workspace', folder.uri.fsPath); if (activeFile) outputLine(channel, 'Active file', activeFile);
+    channel.clear(); channel.show(true); status.text = '$(sync~spin) AI Router: running'; outputLine(channel, 'Status', 'Connecting to local AI Router'); outputLine(channel, 'Workspace', folder.uri.fsPath); if (activeFile) outputLine(channel, 'Active file', activeFile); outputLine(channel, 'Selection included', Boolean(selection));
     try {
       const router = client(); const project = await router.ensureProject(folder.uri.fsPath, folder.name);
       await router.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
@@ -29,9 +30,11 @@ function activate(context) {
       const created = await router.createTask(project.projectId, instruction, taskInstruction); const taskId = created.descriptor.task_id; outputLine(channel, 'Task', taskId); outputLine(channel, 'Progress', created.state.state);
       await router.resume(project.projectId, taskId); const detail = await router.task(project.projectId, taskId);
       outputLine(channel, 'Final state', detail.state.state); outputLine(channel, 'Result', detail.attempts.at(-1)?.result ?? detail.attempts.at(-1)?.structured_response ?? 'See Dashboard for complete durable record.');
-      outputLine(channel, 'Changed files', detail.workspace_changes?.changedFiles ?? []);
-      if (detail.state.state === 'COMPLETED') vscode.window.showInformationMessage(`AI Router completed ${taskId}.`); else vscode.window.showWarningMessage(`AI Router stopped in ${detail.state.state}. See the output and Dashboard.`);
-    } catch (error) { outputLine(channel, 'Error', `${error.code || 'ERROR'} — ${error.message}`); vscode.window.showErrorMessage(`AI Router: ${error.code || 'ERROR'} — ${error.message}`); }
+      const changedFiles = detail.workspace_changes?.changedFiles ?? []; outputLine(channel, 'Changed files', changedFiles);
+      if (detail.state.state === 'COMPLETED') { const choice = await vscode.window.showInformationMessage(`AI Router completed ${taskId}.`, ...(changedFiles.length ? ['Open Source Control'] : [])); if (choice === 'Open Source Control') await vscode.commands.executeCommand('workbench.view.scm'); }
+      else vscode.window.showWarningMessage(`AI Router stopped in ${detail.state.state}. See the output and Dashboard.`);
+      status.text = detail.state.state === 'COMPLETED' ? '$(check) AI Router: completed' : `$(warning) AI Router: ${detail.state.state}`;
+    } catch (error) { status.text = '$(error) AI Router: error'; outputLine(channel, 'Error', `${error.code || 'ERROR'} — ${error.message}`); vscode.window.showErrorMessage(`AI Router: ${error.code || 'ERROR'} — ${error.message}`); }
   }));
 }
 function deactivate() {}

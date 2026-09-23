@@ -7,6 +7,13 @@ import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/pro
 const SECRET_NAME = 'openrouter-api-key';
 
 function price(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
+function normalizeCredential(value) {
+  if (typeof value !== 'string') throw new ProviderError('OpenRouter API key is required.', 'OPENROUTER_CREDENTIAL_REQUIRED', { providerId: 'openrouter', failureCategory: 'authentication' });
+  let credential = value.trim();
+  if (/^Bearer\s+/i.test(credential)) credential = credential.replace(/^Bearer\s+/i, '').trim();
+  if (!credential || /^Bearer\s+/i.test(credential) || /\s/.test(credential)) throw new ProviderError('OpenRouter API key format is invalid.', 'OPENROUTER_CREDENTIAL_INVALID', { providerId: 'openrouter', failureCategory: 'authentication' });
+  return credential;
+}
 
 export class OpenRouterProvider extends ProviderAdapter {
   constructor(options = {}) {
@@ -22,16 +29,17 @@ export class OpenRouterProvider extends ProviderAdapter {
   }
 
   async request(pathname, { profile_id, key, method = 'GET', body, timeout_ms, operation = 'connection_test' } = {}) {
-    const credential = key ?? await this.key(profile_id);
     const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), timeout_ms ?? resolveProviderTimeout(operation, { provider: this.timeoutPolicy }));
     try {
-      const response = await this.fetch(new URL(pathname, this.baseUrl), { method, signal: controller.signal, headers: { authorization: `Bearer ${credential}`, ...(body ? { 'content-type': 'application/json' } : {}), 'x-title': 'AI Router' }, body: body ? JSON.stringify(body) : undefined });
+      const credential = normalizeCredential(key ?? await this.key(profile_id));
+      const response = await this.fetch(new URL(pathname, this.baseUrl), { method, signal: controller.signal, headers: { Authorization: `Bearer ${credential}`, ...(body ? { 'Content-Type': 'application/json' } : {}), 'X-Title': 'AI Router' }, body: body ? JSON.stringify(body) : undefined });
       if (!response.ok) {
-        const message = (await response.json().catch(() => null))?.error?.message;
-        const code = response.status === 401 ? 'OPENROUTER_AUTH_FAILED' : response.status === 402 ? 'OPENROUTER_CREDITS_REQUIRED' : response.status === 429 ? 'OPENROUTER_RATE_LIMITED' : response.status >= 500 ? 'OPENROUTER_UNAVAILABLE' : 'OPENROUTER_REQUEST_FAILED';
-        throw new ProviderError(message || `OpenRouter returned HTTP ${response.status}.`, code, { providerId: this.descriptor.id, retryable: response.status === 429 || response.status >= 500, failureCategory: response.status === 429 ? 'rate_limited' : response.status >= 500 ? 'provider_unavailable' : 'execution_failure' });
+        const code = response.status === 401 ? 'OPENROUTER_AUTH_FAILED' : response.status === 403 ? 'OPENROUTER_FORBIDDEN' : response.status === 402 ? 'OPENROUTER_CREDITS_REQUIRED' : response.status === 429 ? 'OPENROUTER_RATE_LIMITED' : response.status >= 500 ? 'OPENROUTER_UNAVAILABLE' : 'OPENROUTER_REQUEST_FAILED';
+        const failureCategory = response.status === 401 || response.status === 403 ? 'authentication' : response.status === 429 ? 'rate_limited' : response.status >= 500 ? 'provider_unavailable' : 'execution_failure';
+        throw new ProviderError(`OpenRouter returned HTTP ${response.status}.`, code, { providerId: this.descriptor.id, retryable: response.status === 429 || response.status >= 500, failureCategory, details: { provider_id: 'openrouter', http_status: response.status, category: failureCategory, retryable: response.status === 429 || response.status >= 500 } });
       }
-      return response.json();
+      try { return await response.json(); }
+      catch (error) { throw new SyntaxError(`OpenRouter JSON parse failed: ${error?.name ?? 'error'}`); }
     } catch (error) { throw safeProviderError(error, this.descriptor.id); }
     finally { clearTimeout(timeout); }
   }
@@ -51,9 +59,13 @@ export class OpenRouterProvider extends ProviderAdapter {
   }
 
   async connect({ profile_id, credential }) {
-    const result = await this.request('models', { key: credential, profile_id, operation: 'connection_test' });
-    await this.secretStore.set(profile_id, SECRET_NAME, credential);
-    return { status: 'connected', model_count: result.data?.length ?? 0 };
+    const normalized = normalizeCredential(credential);
+    const keyResult = await this.request('key', { key: normalized, profile_id, operation: 'connection_test' });
+    if (!keyResult?.data || typeof keyResult.data !== 'object') throw new ProviderError('OpenRouter returned malformed key metadata.', 'PROVIDER_MALFORMED_RESPONSE', { providerId: 'openrouter', retryable: false, failureCategory: 'malformed_output' });
+    const models = await this.request('models', { key: normalized, profile_id, operation: 'connection_test' });
+    if (!Array.isArray(models?.data)) throw new ProviderError('OpenRouter returned malformed model metadata.', 'PROVIDER_MALFORMED_RESPONSE', { providerId: 'openrouter', retryable: false, failureCategory: 'malformed_output' });
+    await this.secretStore.set(profile_id, SECRET_NAME, normalized);
+    return { status: 'connected', model_count: models.data.length, key_validated: true };
   }
   async disconnect({ profile_id }) { await this.secretStore.remove(profile_id, SECRET_NAME); return { status: 'disconnected' }; }
   async discoverModels(options = {}) { const result = await this.request('models', options); return (result.data ?? []).map((model) => this.modelDescriptor(model)); }

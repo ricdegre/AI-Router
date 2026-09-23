@@ -28,7 +28,7 @@ function json(response, status, value, nonce) {
 function safeError(error) {
   if (error instanceof AiRouterError) {
     const status = error.code === 'CONTROL_ENDPOINT_NOT_FOUND' ? 404 : error.code?.includes('NOT_FOUND') ? 404 : error.code?.includes('EXISTS') ? 409 : 400;
-    return { status, body: { error: error.code, message: error.message } };
+    return { status, body: { error: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } };
   }
   return { status: 500, body: { error: 'CONTROL_INTERNAL_ERROR', message: 'The local control service could not complete the request.' } };
 }

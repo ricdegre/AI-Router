@@ -45,7 +45,7 @@ export function createRuntimeServices(config, options = {}) {
   if (options.registerCloudProviders ?? options.providers === undefined) {
     providerRegistry.register(options.openRouterProvider ?? new OpenRouterProvider({ secretStore, timeoutPolicy: providerTimeouts }));
     providerRegistry.register(options.geminiProvider ?? new GeminiProvider({ secretStore, timeoutPolicy: providerTimeouts }));
-    providerRegistry.register(options.openAiProvider ?? new CodexSubscriptionProvider());
+    providerRegistry.register(options.openAiProvider ?? new CodexSubscriptionProvider({ secretStore, timeoutPolicy: providerTimeouts, dataRoot }));
   }
   for (const provider of options.providers ?? []) providerRegistry.register(provider);
   const memoryManager = new MemoryManager(dataRoot);

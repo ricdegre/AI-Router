@@ -88,10 +88,27 @@ export class ProviderAdapter {
 
 export function safeProviderError(error, providerId) {
   if (error instanceof ProviderError) return error;
-  const safeMessage = error?.name === 'AbortError' ? 'Provider request timed out or was cancelled.' : 'Provider request failed.';
-  return new ProviderError(safeMessage, error?.name === 'AbortError' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_REQUEST_FAILED', {
-    providerId,
-    retryable: true,
-    failureCategory: error?.name === 'AbortError' ? 'timeout' : 'execution_failure'
+  if (error instanceof AiRouterError) return new ProviderError(error.message, error.code, {
+    providerId, retryable: false, failureCategory: error.code === 'PROFILE_CREDENTIAL_MISSING' ? 'authentication' : 'execution_failure', details: error.details
+  });
+  const networkCode = error?.cause?.code ?? error?.code;
+  const tlsCodes = new Set(['CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']);
+  let code = 'PROVIDER_REQUEST_FAILED'; let message = 'Provider request failed.'; let failureCategory = 'execution_failure'; let retryable = true;
+  if (error?.name === 'AbortError' || error?.name === 'TimeoutError' || networkCode === 'ETIMEDOUT') {
+    code = 'PROVIDER_TIMEOUT'; message = 'Provider request timed out.'; failureCategory = 'timeout';
+  } else if (networkCode === 'ENOTFOUND' || networkCode === 'EAI_AGAIN') {
+    code = 'PROVIDER_DNS_ERROR'; message = 'Provider hostname could not be resolved.'; failureCategory = 'provider_unavailable';
+  } else if (tlsCodes.has(networkCode) || String(networkCode ?? '').startsWith('ERR_TLS')) {
+    code = 'PROVIDER_TLS_ERROR'; message = 'Provider TLS verification failed.'; failureCategory = 'provider_unavailable'; retryable = false;
+  } else if (networkCode === 'EACCES' || networkCode === 'EPERM') {
+    code = 'PROVIDER_NETWORK_DENIED'; message = 'Provider network access is blocked by the local runtime.'; failureCategory = 'provider_unavailable'; retryable = false;
+  } else if (['ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'EHOSTUNREACH'].includes(networkCode)) {
+    code = 'PROVIDER_NETWORK_ERROR'; message = 'Provider network connection failed.'; failureCategory = 'provider_unavailable';
+  } else if (error instanceof SyntaxError) {
+    code = 'PROVIDER_MALFORMED_RESPONSE'; message = 'Provider returned malformed JSON.'; failureCategory = 'malformed_output'; retryable = false;
+  }
+  return new ProviderError(message, code, {
+    providerId, retryable, failureCategory,
+    details: { provider_id: providerId, category: failureCategory, retryable, ...(networkCode ? { network_code: String(networkCode).slice(0, 80) } : {}) }
   });
 }

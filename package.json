@@ -1,6 +1,6 @@
 {
   "name": "ai-work-router",
-  "version": "0.7.0-pre.0",
+  "version": "0.8.0-pre.0",
   "description": "Provider-ready continuity platform for AI-assisted project work.",
   "type": "module",
   "private": true,

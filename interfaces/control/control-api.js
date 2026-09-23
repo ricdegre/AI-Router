@@ -252,7 +252,7 @@ export class ControlApi {
         await this.services.profileRegistry.updateConnection(profileId, { status: 'connecting', enabled: false });
         try {
           const connected = await adapter.connect({ profile_id: profileId, credential: body?.credential, metered_opt_in: body?.metered_opt_in === true });
-          const updated = await this.services.profileRegistry.updateConnection(profileId, { status: profile.selected_model_id ? 'ready' : 'model-required', enabled: Boolean(profile.selected_model_id), auth_mode: adapter.authenticationModes()[0] ?? profile.auth_mode });
+          const updated = await this.services.profileRegistry.updateConnection(profileId, { status: profile.selected_model_id ? 'ready' : 'model-required', enabled: Boolean(profile.selected_model_id), auth_mode: adapter.authenticationModes()[0] ?? profile.auth_mode, ...(connected.plan_type ? { plan_type: connected.plan_type } : {}), ...(connected.rate_limits_available !== undefined ? { usage_available: connected.rate_limits_available, limits_available: connected.rate_limits_available } : {}) });
           this.modelCache.clear(); this.providerCache.at = 0;
           await this.services.auditLog.record('profile_connected', { profile_id: profileId, provider_id: profile.provider_id, model_count: connected.model_count ?? null });
           return { profile: updated, ...connected, message: profile.selected_model_id ? 'Connection validated.' : 'Connection validated. Edit the profile and choose a discovered model.' };
