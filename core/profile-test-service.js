@@ -18,6 +18,7 @@ export class ProfileTestService {
     let provider;
     try { provider = this.providerRegistry.get(profile.provider_id); } catch { return { profile_id: profileId, provider_id: profile.provider_id, auth: { mode: profile.auth_mode, status: 'not-configured' }, reachable: false, health: { status: 'unavailable', reason: 'provider-not-registered' }, models: [], model_list_available: false }; }
     const timeoutMs = resolveProviderTimeout('connection_test', { global: this.timeoutPolicy, provider: provider.timeoutPolicy ?? provider.descriptor, profile });
+    if (typeof provider.testConnection === 'function') return provider.testConnection({ profile_id: profileId, timeout_ms: timeoutMs });
     const health = await provider.health({ profile_id: profileId, timeout_ms: timeoutMs, operation: 'connection_test' }).catch(() => ({ status: 'unavailable', reason: 'health-check-failed' }));
     let models = []; let modelListAvailable = false;
     if (typeof provider.discoverModels === 'function' && health.status === 'healthy') { try { models = (await provider.discoverModels({ profile_id: profileId, detailed: false, timeout_ms: timeoutMs })).map((item) => item.model_id).filter(Boolean); modelListAvailable = true; } catch {} }

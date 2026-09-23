@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0-pre.4
+
+- Fixed Google Antigravity connection detection by resolving the official Windows install path and validating the existing secure keyring session with bounded retries.
+- Added explicit CLI/auth states, dynamic multi-family model discovery, literal `/usage` quota parsing, safe diagnostics, and provider-specific Test Connection details.
+- Hardened isolated Antigravity Test Chat execution and updated the dashboard to report connected sessions without obsolete login instructions.
+
 ## 0.11.0-pre.3
 
 - Added REAL, DEMO, TEST, MOCK, and PLACEHOLDER routing eligibility classifications.
