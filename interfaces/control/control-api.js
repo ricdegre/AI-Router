@@ -7,6 +7,7 @@ import { inspectGit, createCheckpointMetadata } from '../../checkpoints/git-chec
 import { AiRouterError } from '../../core/errors.js';
 import { ControlSettingsStore } from '../../core/control-settings-store.js';
 import { isSyntheticProfile } from '../../core/profile-test-service.js';
+import { decorateModelForProfiles } from '../../core/model-catalog.js';
 
 const MEMORY_DOCUMENTS = ['context.md', 'decisions.md', 'constraints.md', 'current-task.md', 'handoff.md', 'ai-changelog.md'];
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{1,79}$/;
@@ -40,7 +41,7 @@ export class ControlApi {
     this.services = services;
     this.version = version;
     this.settingsStore = settingsStore;
-    this.modelCache = { at: 0, value: [] };
+    this.modelCache = new Map();
     this.providerCache = { at: 0, value: [] };
   }
 
@@ -91,17 +92,30 @@ export class ControlApi {
     return value;
   }
 
-  async models({ detailed = false, force = false } = {}) {
-    if (!force && Date.now() - this.modelCache.at < 30_000) return this.modelCache.value;
+  async models({ detailed = false, force = false, providerId = null } = {}) {
+    if (providerId && !SAFE_ID.test(providerId)) throw new AiRouterError('Provider ID is invalid.', 'INVALID_CONTROL_INPUT');
+    const cacheKey = `${providerId ?? '*'}:${detailed ? 'detailed' : 'basic'}`;
+    const cached = this.modelCache.get(cacheKey);
+    if (!force && cached && Date.now() - cached.at < 30_000) return cached.value;
     const models = [];
-    for (const provider of this.services.providerRegistry.list()) {
-      if (!provider.enabled) continue;
+    const providers = this.services.providerRegistry.list().filter((provider) => !providerId || provider.id === providerId);
+    if (providerId && providers.length === 0) {
+      return [{ provider_id: providerId, model_id: null, availability: 'unavailable', error_code: 'MODEL_PROVIDER_NOT_REGISTERED' }];
+    }
+    for (const provider of providers) {
+      if (!provider.enabled) {
+        if (providerId) models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: 'PROVIDER_DISABLED' });
+        continue;
+      }
       const adapter = this.services.providerRegistry.get(provider.id);
-      if (typeof adapter.discoverModels !== 'function') continue;
-      try { models.push(...(await adapter.discoverModels({ detailed })).map((model) => ({ ...model, availability: 'available' }))); }
+      if (typeof adapter.discoverModels !== 'function') {
+        if (providerId) models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: 'MODEL_DISCOVERY_NOT_SUPPORTED' });
+        continue;
+      }
+      try { models.push(...(await adapter.discoverModels({ detailed })).map((model) => decorateModelForProfiles({ ...model, availability: 'available' }))); }
       catch (error) { models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: error.code ?? 'MODEL_DISCOVERY_FAILED' }); }
     }
-    this.modelCache = { at: Date.now(), value: models };
+    this.modelCache.set(cacheKey, { at: Date.now(), value: models });
     return models;
   }
 
@@ -162,7 +176,7 @@ export class ControlApi {
     if (pathname === '/api/projects') return this.projects();
     if (pathname === '/api/providers') return this.providers(query.get('refresh') === 'true');
     if (pathname === '/api/profiles') return this.profiles(query);
-    if (pathname === '/api/models') return this.models({ detailed: query.get('detailed') === 'true', force: query.get('refresh') === 'true' });
+    if (pathname === '/api/models') return this.models({ detailed: query.get('detailed') === 'true', force: query.get('refresh') === 'true', providerId: query.get('provider') || null });
     if (pathname === '/api/tasks') return this.tasks(query);
     if (pathname === '/api/routing/explain') return this.routing(query);
     if (pathname === '/api/decision-engines/status') return this.services.routingPolicy.status();
@@ -204,12 +218,23 @@ export class ControlApi {
       rejectSecretFields(body);
       const profileId = requiredId(body?.profile_id, 'Profile ID');
       let existing = null; try { existing = await this.services.profileRegistry.get(profileId); } catch (error) { if (error.code !== 'PROFILE_NOT_FOUND') throw error; }
+      const providerId = requiredId(body?.provider_id, 'Provider ID');
+      const location = body?.location === 'local' ? 'local' : 'cloud';
+      const provider = this.services.providerRegistry.list().find((item) => item.id === providerId);
+      const requiresModel = location === 'local' || provider?.type === 'local';
+      const models = Array.isArray(body?.models) ? body.models.filter((item) => typeof item === 'object').slice(0, 100) : existing?.models ?? [];
+      const selectedModelId = typeof body?.selected_model_id === 'string' ? cleanText(body.selected_model_id, 'Selected model', 160) : body?.selected_model_id === null ? null : existing?.selected_model_id ?? null;
+      if (requiresModel && !selectedModelId) throw new AiRouterError('Local profiles require a discovered model.', 'MODEL_REQUIRED');
+      const authMode = typeof body?.auth_mode === 'string' ? body.auth_mode.slice(0, 40) : 'not-configured';
+      const configured = Boolean(selectedModelId) && (provider?.type === 'local' || authMode === 'none' || existing?.status === 'connected' || existing?.status === 'ready' || existing?.status === 'available');
+      const enabled = configured ? body?.enabled ?? existing?.enabled ?? true : false;
       const profile = { ...(existing ?? {}),
-        profile_id: profileId, provider_id: requiredId(body?.provider_id, 'Provider ID'),
-        display_name: cleanText(body?.display_name, 'Display name', 120), auth_mode: typeof body?.auth_mode === 'string' ? body.auth_mode.slice(0, 40) : 'not-configured',
-        location: body?.location === 'local' ? 'local' : 'cloud', cost_category: typeof body?.cost_category === 'string' ? body.cost_category : 'UNKNOWN',
-        enabled: body?.enabled ?? existing?.enabled ?? true, status: body?.enabled === false ? 'disabled' : existing?.status ?? 'unknown', profile_type: body?.profile_type === 'synthetic' ? 'synthetic' : existing?.profile_type ?? 'real',
-        models: Array.isArray(body?.models) ? body.models.filter((item) => typeof item === 'object').slice(0, 100) : existing?.models ?? []
+        profile_id: profileId, provider_id: providerId,
+        display_name: cleanText(body?.display_name, 'Display name', 120), auth_mode: authMode,
+        location, cost_category: typeof body?.cost_category === 'string' ? body.cost_category : 'UNKNOWN',
+        enabled, status: configured ? (enabled ? 'ready' : 'disabled') : existing?.status === 'connected' ? 'model-required' : 'unconfigured', profile_type: body?.profile_type === 'synthetic' ? 'synthetic' : existing?.profile_type ?? 'real',
+        selected_model_id: selectedModelId,
+        models
       };
       const result = await this.services.profileRegistry.register(profile);
       await this.services.auditLog.record(result.created ? 'profile_added' : 'profile_updated', { profile_id: profile.profile_id, provider_id: profile.provider_id });
@@ -232,7 +257,7 @@ export class ControlApi {
     if (providerMatch) {
       const providerId = requiredId(decodeURIComponent(providerMatch[1]), 'Provider ID'); const enabled = providerMatch[2] === 'enable';
       this.services.providerRegistry.setEnabled(providerId, enabled); await this.settingsStore.update({ provider_states: { [providerId]: enabled } });
-      this.providerCache.at = 0;
+      this.providerCache.at = 0; this.modelCache.clear();
       await this.services.auditLog.record('provider_state_changed', { provider_id: providerId, enabled }); return { provider_id: providerId, enabled };
     }
     if (pathname === '/api/tasks') {

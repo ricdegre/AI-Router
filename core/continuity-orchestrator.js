@@ -1,5 +1,6 @@
 import { inspectGit, createCheckpointMetadata } from '../checkpoints/git-checkpoint.js';
 import { AiRouterError } from './errors.js';
+import { resolveProviderTimeout } from './provider-timeout-policy.js';
 
 function resultArray(result, snake, camel = undefined) {
   const value = result?.[snake] ?? (camel ? result?.[camel] : undefined) ?? [];
@@ -23,6 +24,7 @@ export class ContinuityOrchestrator {
     const selected = route.selected;
     const profile = profiles.find((item) => item.profile_id === selected.profile_id);
     const provider = this.providerRegistry.get(selected.provider_id);
+    const modelDescriptor = profile?.models?.find((item) => item.model_id === selected.model_id) ?? null;
 
     const gitBefore = inspectGit(project.workspacePath);
     let checkpointBefore = null;
@@ -57,10 +59,10 @@ export class ContinuityOrchestrator {
         workspace_path: project.workspacePath,
         memory: beforeMemory,
         continuation: beforeMemory.handoff,
-        model: task.model,
+        model: selected.model_id ?? task.model,
         messages: task.messages,
         prompt: task.prompt,
-        timeout_ms: task.timeout_ms,
+        timeout_ms: resolveProviderTimeout('inference', { provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.timeout_ms }),
         options: task.provider_options
       });
     } catch (error) {

@@ -79,6 +79,7 @@ export class RoutingPolicy {
         const health = healthById.get(provider.id) ?? { status: 'unknown' };
         if (!provider.enabled) rejected.push('provider-disabled');
         if (!profile.enabled || profile.status === 'disabled') rejected.push('profile-disabled');
+        if (['unconfigured', 'connecting', 'connected', 'model-required'].includes(profile.status)) rejected.push(`profile-${profile.status}`);
         if (profile.status === 'unavailable') rejected.push('profile-unavailable');
         if (health.status !== 'healthy') rejected.push(`provider-${health.status}`);
         if (task.manual_provider && task.manual_provider !== provider.id) rejected.push('not-manual-provider');

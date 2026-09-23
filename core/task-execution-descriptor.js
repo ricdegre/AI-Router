@@ -2,6 +2,7 @@ import path from 'node:path';
 import { TASK_STATES } from './task-state-machine.js';
 import { ACTION_TYPES } from '../actions/action-mediator.js';
 import { AiRouterError } from './errors.js';
+import { DEFAULT_PROVIDER_TIMEOUTS } from './provider-timeout-policy.js';
 
 export const TASK_EXECUTION_DESCRIPTOR_VERSION = '0.1';
 const RISKS = new Set(['low', 'medium', 'high', 'critical']);
@@ -99,7 +100,7 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
   const limits = object(input.execution_limits ?? {}, 'execution_limits');
   const maxAttempts = limits.max_attempts ?? input.max_attempts ?? 3;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10) throw new AiRouterError('max_attempts must be between 1 and 10.', 'UNSAFE_EXECUTION_LIMIT');
-  const timeoutMs = limits.provider_timeout_ms ?? 60_000;
+  const timeoutMs = limits.provider_timeout_ms ?? DEFAULT_PROVIDER_TIMEOUTS.inference_ms;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 300_000) throw new AiRouterError('provider_timeout_ms must be bounded between 1000 and 300000.', 'UNSAFE_EXECUTION_LIMIT');
   const state = input.current_state ?? 'CREATED';
   if (!TASK_STATES.includes(state)) throw new AiRouterError('current_state is invalid.', 'INVALID_TASK_DESCRIPTOR_STATE');

@@ -2,6 +2,16 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.6.0-pre.2 — Provider-aware profile models
+
+- Added provider-scoped model discovery to Add/Edit Profile with loading, honest failure states, and no fabricated cloud availability.
+- Added a required model selector, single-model auto-selection, explicit multi-model choice, and persisted profile model descriptors.
+- Added Ollama embedding exclusion with an Advanced override, OpenRouter free/paid filtering, model type metadata, and a compact capability summary.
+- Test Chat now defaults to the profile model and labels temporary overrides; routing treats same-provider profiles with different models as distinct resources.
+- Consolidated manual Ollama timeout fixes into one bounded policy: 5 s health, 15 s connection/discovery, and 180 s inference/Test Chat, with provider/profile/model overrides.
+- Cloud profiles may now be saved disabled and unconfigured before authentication/model discovery; local profiles still require a real model.
+- Added tests for model classification, scoped discovery, failures, profile storage, routing isolation, and configured-model Test Chat behavior.
+
 ## 0.6.0-pre.1 — Multi-profile connection testing
 
 - Added visual creation, editing, enable/disable, disconnect, and deletion for multiple independent profiles per provider.

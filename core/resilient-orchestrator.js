@@ -1,6 +1,7 @@
 import { inspectGit, createCheckpointMetadata } from '../checkpoints/git-checkpoint.js';
 import { parseStructuredResponse, validateStructuredResponse } from '../providers/core/structured-response.js';
 import { AiRouterError } from './errors.js';
+import { resolveProviderTimeout } from './provider-timeout-policy.js';
 import { descriptorFromTask } from './task-execution-descriptor.js';
 import { actionExecutionIdentity, receiptHashes } from '../actions/idempotency.js';
 
@@ -141,7 +142,10 @@ export class ResilientOrchestrator {
         try {
           const context = await this.contextBuilder.build(project.projectId, task, { providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
           const provider = this.providerRegistry.get(candidate.provider_id);
-          const request = { task, project, profile: profiles.find((item) => item.profile_id === candidate.profile_id), model: candidate.model_id ?? task.model, context: context.rendered, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: task.execution_limits?.provider_timeout_ms };
+          const profile = profiles.find((item) => item.profile_id === candidate.profile_id);
+          const modelDescriptor = profile?.models?.find((item) => item.model_id === candidate.model_id) ?? null;
+          const timeoutMs = resolveProviderTimeout('inference', { global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
+          const request = { task, project, profile, model: candidate.model_id ?? task.model, context: context.rendered, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: timeoutMs };
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);

@@ -2,11 +2,12 @@ import path from 'node:path';
 import { resolveWithin } from './paths.js';
 import { readJson, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
+import { validateProviderTimeouts } from './provider-timeout-policy.js';
 
 export const PROFILE_SCHEMA_VERSION = '0.1';
 const COST_CATEGORIES = ['local', 'subscription', 'metered', 'LOCAL', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN'];
 const LOCATIONS = ['local', 'cloud'];
-const STATUSES = ['unknown', 'available', 'unavailable', 'disabled'];
+const STATUSES = ['unknown', 'unconfigured', 'connecting', 'connected', 'model-required', 'ready', 'available', 'unavailable', 'disabled'];
 const SENSITIVE_PROFILE_KEY = /(password|secret|token|api.?key|credential)/i;
 
 function rejectSecrets(value, trail = '') {
@@ -37,6 +38,11 @@ export function validateProfile(input) {
     }
   }
   if (input.models !== undefined && !Array.isArray(input.models)) throw new AiRouterError('Profile models must be an array.', 'INVALID_PROFILE');
+  if (input.selected_model_id !== undefined && input.selected_model_id !== null && (typeof input.selected_model_id !== 'string' || !input.selected_model_id || input.selected_model_id.length > 160)) throw new AiRouterError('Profile selected model is invalid.', 'INVALID_PROFILE');
+  if (input.models?.some((model) => !model || typeof model !== 'object' || typeof model.model_id !== 'string' || !model.model_id || model.model_id.length > 160 || (model.provider_id && model.provider_id !== input.provider_id))) throw new AiRouterError('Profile model descriptors are invalid.', 'INVALID_PROFILE');
+  if (input.selected_model_id && !input.models?.some((model) => model.model_id === input.selected_model_id)) throw new AiRouterError('The selected model must be present in the profile model list.', 'INVALID_PROFILE');
+  const timeoutPolicy = input.timeout_policy === undefined ? undefined : validateProviderTimeouts(input.timeout_policy, {});
+  for (const model of input.models ?? []) if (model.configured_overrides?.timeout_policy) validateProviderTimeouts(model.configured_overrides.timeout_policy, {});
   return {
     profile_schema_version: PROFILE_SCHEMA_VERSION,
     enabled: true,
@@ -47,6 +53,7 @@ export function validateProfile(input) {
     capabilities_override: { add: [], remove: [] },
     runtime_isolation: {},
     ...input,
+    ...(timeoutPolicy ? { timeout_policy: timeoutPolicy } : {}),
     display_name: input.display_name.trim(),
     capabilities_override: { add: [...(overrides.add ?? [])], remove: [...(overrides.remove ?? [])] }
   };

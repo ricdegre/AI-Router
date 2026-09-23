@@ -16,6 +16,7 @@ test('dashboard visual system includes responsive, accessible light and dark mod
   ]);
   assert.match(html, /skip-link/); assert.match(html, /aria-label="Primary navigation"/);
   assert.match(css, /data-theme="dark"/); assert.match(css, /prefers-color-scheme/); assert.match(css, /@media\(max-width:760px\)/);
+  assert.match(css, /\.model-controls\[hidden\],#provider-default-field\[hidden\]\{display:none\}/);
 });
 
 test('automatic refresh is incremental and never reloads or re-renders the page', async () => {
@@ -51,4 +52,15 @@ test('profiles UI supports multi-account management and isolated connection test
   for (const text of ['Add Profile', 'Developer/Test Mode', 'Connect', 'Reconnect', 'Disconnect', 'Enable', 'Disable', 'Edit', 'Test Connection', 'Test Chat', 'Delete Profile', 'Maximum output tokens', 'no project files, tools, memory, Git, tasks, or routing']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   assert.match(app, /\/api\/profiles\/\$\{encodeURIComponent\(profileId\)\}\/test-chat/);
   assert.match(app, /developer_test_mode/);
+});
+
+test('Add Profile discovers provider models, filters embeddings, and requires explicit multi-model choice', async () => {
+  const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
+  for (const text of ['Loading models…', 'Advanced: show all models', 'OpenRouter cost filter', 'Free only', 'One compatible model found and selected automatically.', 'Choose one to continue.', 'No compatible chat model', 'Temporary override:', 'profile model']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  assert.match(app, /api\/models\?provider=\$\{encodeURIComponent\(provider\)\}&detailed=true&refresh=true/);
+  assert.match(app, /profile_metadata\?\.chat_compatible/);
+  assert.match(app, /selected_model_id/);
+  assert.match(app, /models:selected\s*\?\s*\[selected\]\s*:\s*\[\]/);
+  assert.match(app, /save\.disabled=requiresModel\(\)/);
+  assert.match(app, /You can save this cloud profile now and connect it later/);
 });

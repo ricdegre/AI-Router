@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AiRouterError } from '../core/errors.js';
+import { validateProviderTimeouts } from '../core/provider-timeout-policy.js';
 
 export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -39,7 +40,8 @@ export async function loadConfig(options = {}) {
   return {
     sourceRoot,
     dataRoot: path.resolve(dataRootValue),
-    projectRoots: projectRoots.map((entry) => path.resolve(entry))
+    projectRoots: projectRoots.map((entry) => path.resolve(entry)),
+    providerTimeouts: validateProviderTimeouts(local.providerTimeouts ?? {})
   };
 }
 
@@ -74,4 +76,3 @@ export function publicConfigSummary(config) {
     projectRoots: config.projectRootStatus ?? config.projectRoots.map((entry) => ({ path: entry }))
   };
 }
-

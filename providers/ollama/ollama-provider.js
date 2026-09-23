@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ProviderAdapter, ProviderError, safeProviderError } from '../core/protocol.js';
 import { createModelDescriptor } from '../core/model-descriptor.js';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
+import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
 
 export class OllamaProvider extends ProviderAdapter {
   constructor(options = {}) {
@@ -15,7 +16,8 @@ export class OllamaProvider extends ProviderAdapter {
     });
     this.baseUrl = new URL(options.baseUrl ?? 'http://127.0.0.1:11434');
     this.fetch = options.fetch ?? globalThis.fetch;
-    this.timeoutMs = options.timeoutMs ?? 3_000;
+    this.timeoutPolicy = validateProviderTimeouts(options.timeoutPolicy ?? {});
+    this.legacyTimeoutMs = options.timeoutMs;
     this.activeRequests = new Map();
   }
 
@@ -23,7 +25,8 @@ export class OllamaProvider extends ProviderAdapter {
     const controller = new AbortController();
     const requestId = options.requestId ?? randomUUID();
     let abortReason = null;
-    const timeout = setTimeout(() => { abortReason = 'timeout'; controller.abort(); }, options.timeoutMs ?? this.timeoutMs);
+    const timeoutMs = options.timeoutMs ?? this.legacyTimeoutMs ?? resolveProviderTimeout(options.operation ?? 'inference', { provider: this.timeoutPolicy });
+    const timeout = setTimeout(() => { abortReason = 'timeout'; controller.abort(); }, timeoutMs);
     const upstreamAbort = () => { abortReason = 'user_cancelled'; controller.abort(); };
     options.signal?.addEventListener('abort', upstreamAbort, { once: true });
     this.activeRequests.set(requestId, { controller, cancel: () => { abortReason = 'user_cancelled'; controller.abort(); } });
@@ -58,8 +61,8 @@ export class OllamaProvider extends ProviderAdapter {
     }
   }
 
-  async listModels() {
-    const result = await this.request('/api/tags');
+  async listModels(options = {}) {
+    const result = await this.request('/api/tags', { timeoutMs: options.timeout_ms, operation: options.operation ?? 'connection_test' });
     return (result.models ?? []).map((model) => ({
       name: model.name,
       model: model.model ?? model.name,
@@ -69,15 +72,15 @@ export class OllamaProvider extends ProviderAdapter {
     }));
   }
 
-  async loadedModels() {
-    const result = await this.request('/api/ps');
+  async loadedModels(options = {}) {
+    const result = await this.request('/api/ps', { timeoutMs: options.timeout_ms, operation: options.operation ?? 'connection_test' });
     return result.models ?? [];
   }
 
   async inspectModel(modelId, options = {}) {
     const [details, loaded] = await Promise.all([
-      this.request('/api/show', { method: 'POST', body: { model: modelId, verbose: false } }),
-      this.loadedModels()
+      this.request('/api/show', { method: 'POST', body: { model: modelId, verbose: false }, timeoutMs: options.timeout_ms, operation: 'connection_test' }),
+      this.loadedModels(options)
     ]);
     const capabilities = Array.isArray(details.capabilities) ? details.capabilities : [];
     const modelInfo = details.model_info ?? {};
@@ -100,6 +103,7 @@ export class OllamaProvider extends ProviderAdapter {
         tool_support: capabilities.includes('tools') ? true : capabilities.length ? false : null,
         structured_output_support: capabilities.includes('completion') ? null : null,
         vision: capabilities.includes('vision') ? true : capabilities.length ? false : null,
+        embedding: capabilities.includes('embedding') || capabilities.includes('embed') ? true : capabilities.length ? false : null,
         coding_suitability: null,
         reasoning_support: capabilities.includes('thinking') ? true : capabilities.length ? false : null,
         loaded: loaded.some((item) => (item.name ?? item.model) === modelId),
@@ -114,9 +118,9 @@ export class OllamaProvider extends ProviderAdapter {
   }
 
   async discoverModels(options = {}) {
-    const models = await this.listModels();
+    const models = await this.listModels({ timeout_ms: options.timeout_ms });
     if (options.detailed === false) {
-      const loaded = await this.loadedModels();
+      const loaded = await this.loadedModels({ timeout_ms: options.timeout_ms });
       return models.map((model) => createModelDescriptor({
         providerId: this.descriptor.id,
         modelId: model.name,
@@ -124,12 +128,13 @@ export class OllamaProvider extends ProviderAdapter {
         overrides: options.overrides?.[model.name] ?? {}
       }));
     }
-    return Promise.all(models.map((model) => this.inspectModel(model.name, { overrides: options.overrides?.[model.name] ?? {} })));
+    return Promise.all(models.map((model) => this.inspectModel(model.name, { overrides: options.overrides?.[model.name] ?? {}, timeout_ms: options.timeout_ms })));
   }
 
-  async health() {
+  async health(options = {}) {
     try {
-      const models = await this.listModels();
+      const timeoutMs = options.timeout_ms ?? resolveProviderTimeout(options.operation ?? 'health', { provider: this.timeoutPolicy });
+      const models = await this.listModels({ timeout_ms: timeoutMs, operation: options.operation ?? 'health' });
       return { status: 'healthy', reachable: true, model_count: models.length, models: models.map((item) => item.name) };
     } catch (error) {
       return { status: 'unavailable', reachable: false, error_code: error.code ?? 'OLLAMA_UNAVAILABLE' };
@@ -152,7 +157,7 @@ export class OllamaProvider extends ProviderAdapter {
       method: 'POST',
       requestId,
       signal: request.signal,
-      timeoutMs: request.timeout_ms,
+      timeoutMs: request.timeout_ms ?? resolveProviderTimeout('inference', { provider: this.timeoutPolicy }),
       body: {
         model: request.model,
         messages,
@@ -178,10 +183,10 @@ export class OllamaProvider extends ProviderAdapter {
     };
   }
 
-  async testChat({ profile_id, model, message, max_output_tokens = 32, timeout_ms = 10_000 }) {
+  async testChat({ profile_id, model, message, max_output_tokens = 32, timeout_ms }) {
     if (typeof model !== 'string' || !model) throw new ProviderError('Test Chat requires an explicit Ollama model.', 'OLLAMA_MODEL_REQUIRED', { providerId: this.descriptor.id });
     const started = performance.now();
-    const result = await this.request('/api/chat', { method: 'POST', timeoutMs: timeout_ms, body: { model, messages: [{ role: 'user', content: message }], stream: false, think: false, options: { num_predict: max_output_tokens } } });
+    const result = await this.request('/api/chat', { method: 'POST', timeoutMs: timeout_ms ?? resolveProviderTimeout('test_chat', { provider: this.timeoutPolicy }), operation: 'test_chat', body: { model, messages: [{ role: 'user', content: message }], stream: false, think: false, options: { num_predict: max_output_tokens } } });
     return { status: 'connected', profile_id, response: result.message?.content ?? '', model: result.model ?? model, latency_ms: Math.round(performance.now() - started), usage_delta: result.prompt_eval_count == null && result.eval_count == null ? null : { input_tokens: result.prompt_eval_count ?? null, output_tokens: result.eval_count ?? null } };
   }
 

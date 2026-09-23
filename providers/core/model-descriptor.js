@@ -4,7 +4,7 @@ export const MODEL_DESCRIPTOR_VERSION = '0.1';
 
 const FACT_FIELDS = [
   'display_name', 'family', 'local', 'context_size', 'tool_support', 'structured_output_support',
-  'vision', 'coding_suitability', 'reasoning_support', 'loaded', 'parameter_size'
+  'vision', 'embedding', 'coding_suitability', 'reasoning_support', 'loaded', 'parameter_size'
 ];
 
 function nullableBoolean(value, field) {
@@ -31,6 +31,7 @@ export function createModelDescriptor({ providerId, modelId, discovered = {}, ov
   facts.tool_support = nullableBoolean(facts.tool_support, 'tool_support');
   facts.structured_output_support = nullableBoolean(facts.structured_output_support, 'structured_output_support');
   facts.vision = nullableBoolean(facts.vision, 'vision');
+  facts.embedding = nullableBoolean(facts.embedding, 'embedding');
   facts.reasoning_support = nullableBoolean(facts.reasoning_support, 'reasoning_support');
   facts.loaded = nullableBoolean(facts.loaded, 'loaded');
   facts.context_size = nullableNumber(facts.context_size, 'context_size');
@@ -53,4 +54,3 @@ export function resolvedModelValue(model, field) {
     ?? model?.heuristic_classification?.[field]
     ?? null;
 }
-
