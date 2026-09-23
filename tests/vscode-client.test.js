@@ -35,3 +35,12 @@ test('VS Code client sends selected provider, channel, profile, model, and effor
   const body = JSON.parse(calls.at(-1).options.body); assert.equal(body.provider_id, 'openai'); assert.equal(body.profile_id, 'chatgpt'); assert.equal(body.model_id, 'gpt-6-luna'); assert.equal(body.execution_channel, 'codex-subscription'); assert.equal(body.reasoning_effort, 'high');
   assert.ok(calls.every((call) => call.url.startsWith('http://127.0.0.1:43127/api/')));
 });
+
+test('packaged VS Code extension contributes a local-only activity panel and heartbeat', async () => {
+  const fs = await import('node:fs/promises');
+  const manifest = JSON.parse(await fs.readFile(new URL('../interfaces/vscode/package.json', import.meta.url), 'utf8'));
+  const extension = await fs.readFile(new URL('../interfaces/vscode/extension.js', import.meta.url), 'utf8');
+  assert.equal(manifest.contributes.views.aiRouter[0].id, 'aiRouter.control'); assert.match(manifest.scripts.package, /\.vsix/);
+  assert.match(extension, /\/api\/readiness\/vscode-heartbeat/); assert.match(extension, /registerWebviewViewProvider/);
+  assert.doesNotMatch(extension, /openai\.com|anthropic\.com|openrouter\.ai|generativelanguage\.googleapis/);
+});

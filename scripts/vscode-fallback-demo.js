@@ -13,6 +13,7 @@ import { contentHash } from '../actions/changeset.js';
 
 const require = createRequire(import.meta.url);
 const { RouterClient } = require('../interfaces/vscode/router-client.js');
+const mainClient = new RouterClient(process.env.AI_ROUTER_URL || 'http://127.0.0.1:43127');
 
 function git(workspace, args) {
   const result = spawnSync('git', ['-C', workspace, ...args], { encoding: 'utf8', windowsHide: true });
@@ -59,5 +60,6 @@ try {
     changed_files: detail.workspace_changes.changedFiles, checkpoints: memory.checkpoints?.length ?? 0, handoff_status: memory.handoff?.status ?? null, workspace
   };
   await writeFile(path.join(demoRoot, 'demo-result.json'), `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  if (report.status === 'passed' && report.fallback_demonstrated) await mainClient.post('/api/readiness/evidence', { type: 'fallback', status: 'passed', project_id: project.projectId, task_id: created.descriptor.task_id, provider_id: 'ollama', profile_id: detail.attempts.at(-1)?.profile_id, model_id: detail.attempts.at(-1)?.model_id, checkpoint: report.checkpoints > 0, memory: true, handoff: report.handoff_status === 'completed', attempts: detail.attempts.length });
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`); if (report.status !== 'passed' || !report.fallback_demonstrated) process.exitCode = 1;
 } finally { await server.stop(); }

@@ -39,10 +39,10 @@ test('Antigravity worker supports mocked auth, dynamic multi-family models, effo
   assert.equal(parseAntigravityModels('gemini-x-low  Gemini X (Low)')[0].effort, 'low'); assert.equal(parseAntigravityUsage('{"available":true,"windows":[]}').available, true);
 });
 
-test('Claude Code architecture uses subscription channel and dynamic model effort metadata', async () => {
-  const worker = { run: async (_profileId, args) => args[0] === '-p' ? { stdout: JSON.stringify({ models: [{ id: 'claude-sonnet-5', name: 'Claude Sonnet 5', supported_efforts: ['low', 'medium', 'high'] }] }) } : { stdout: 'Claude Code 2.1' } };
-  const provider = new ClaudeCodeProvider({ worker }); const pending = await provider.connect({ profile_id: 'claude-personal' }); assert.equal(pending.status, 'auth-pending');
-  const models = await provider.discoverModels({ profile_id: 'claude-personal' }); assert.equal(models[0].model_id, 'claude-sonnet-5'); assert.deepEqual(models[0].discovered_facts.supported_reasoning_efforts, ['low', 'medium', 'high']);
+test('Claude Code architecture validates subscription auth and exposes aliases without fabricating account availability', async () => {
+  const worker = { run: async () => ({ stdout: JSON.stringify({ loggedIn: true, subscriptionType: 'max' }) }) };
+  const provider = new ClaudeCodeProvider({ worker }); const connected = await provider.connect({ profile_id: 'claude-personal' }); assert.equal(connected.status, 'connected'); assert.equal(connected.plan_type, 'max');
+  const models = await provider.discoverModels({ profile_id: 'claude-personal' }); assert.deepEqual(models.map((model) => model.model_id), ['sonnet', 'opus', 'haiku', 'fable']); assert.ok(models.every((model) => model.availability === 'unknown'));
   assert.equal(provider.descriptor.execution_channels[0].metered, false);
 });
 

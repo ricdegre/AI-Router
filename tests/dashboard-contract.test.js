@@ -67,3 +67,8 @@ test('Add Profile discovers provider models, filters embeddings, and requires ex
   assert.match(app, /save\.disabled=requiresModel\(\)/);
   assert.match(app, /You can save this cloud profile now and connect it later/);
 });
+
+test('dashboard exposes explicit first-use readiness gates', async () => {
+  const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
+  for (const text of ['FIRST-USE READINESS', 'READY FOR REAL PROJECTS', 'READY FOR DEMO', 'NOT READY', '/api/readiness', 'Last successful test']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+});

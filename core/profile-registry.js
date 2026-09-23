@@ -171,4 +171,19 @@ export class ProfileRegistry {
     });
     return outcome;
   }
+
+  async recordTest(profileId, { status, latencyMs = null, successful = false }) {
+    let outcome;
+    await updateJsonAtomic(this.filePath, { version: PROFILE_SCHEMA_VERSION, profiles: [] }, (state) => {
+      const profile = state.profiles.find((item) => item.profile_id === profileId);
+      if (!profile) throw new AiRouterError(`Unknown profile '${profileId}'.`, 'PROFILE_NOT_FOUND');
+      profile.last_test_status = status;
+      profile.last_test_at = new Date().toISOString();
+      profile.last_test_latency_ms = Number.isFinite(latencyMs) ? Math.max(0, Math.round(latencyMs)) : null;
+      if (successful) profile.last_successful_test = profile.last_test_at;
+      profile.updated_at = profile.last_test_at;
+      outcome = profile; return state;
+    });
+    return outcome;
+  }
 }

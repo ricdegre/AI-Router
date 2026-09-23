@@ -9,6 +9,7 @@ import { ControlSettingsStore } from '../../core/control-settings-store.js';
 import { isSyntheticProfile } from '../../core/profile-test-service.js';
 import { decorateModelForProfiles } from '../../core/model-catalog.js';
 import { validateProviderPluginManifest } from '../../providers/core/plugin-manifest.js';
+import { inferenceVariants } from '../../providers/core/inference-profile.js';
 
 const MEMORY_DOCUMENTS = ['context.md', 'decisions.md', 'constraints.md', 'current-task.md', 'handoff.md', 'ai-changelog.md'];
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{1,79}$/;
@@ -59,8 +60,10 @@ export class ControlApi {
       this.services.projectRegistry.list(), this.services.taskStore.list(), this.providers(), this.services.profileRegistry.list(), this.settingsStore.load(), this.services.routingPolicy.status()
     ]);
     const healthy = providers.filter((item) => item.health.status === 'healthy').length;
+    const requiredProviderIds = new Set(profiles.filter((profile) => profile.enabled && profile.profile_type !== 'synthetic').map((profile) => profile.provider_id));
+    const configuredProviderUnavailable = providers.some((item) => requiredProviderIds.has(item.id) && item.health.status === 'unavailable');
     return {
-      status: providers.some((item) => item.health.status === 'unavailable') ? 'degraded' : 'ready',
+      status: configuredProviderUnavailable || healthy === 0 ? 'degraded' : 'ready',
       version: this.version,
       generated_at: new Date().toISOString(),
       control: { host: '127.0.0.1', local_only: true, uptime_seconds: Math.floor(process.uptime()) },
@@ -114,7 +117,7 @@ export class ControlApi {
         if (providerId) models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: 'MODEL_DISCOVERY_NOT_SUPPORTED' });
         continue;
       }
-      try { models.push(...(await adapter.discoverModels({ detailed, profile_id: profileId })).map((model) => decorateModelForProfiles({ ...model, availability: 'available' }))); }
+      try { models.push(...(await adapter.discoverModels({ detailed, profile_id: profileId })).map((model) => decorateModelForProfiles({ ...model, availability: model.availability ?? 'available' }))); }
       catch (error) { models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: error.code ?? 'MODEL_DISCOVERY_FAILED' }); }
     }
     this.modelCache.set(cacheKey, { at: Date.now(), value: models });
@@ -122,10 +125,38 @@ export class ControlApi {
   }
 
   async profiles(query) {
-    const [profiles, settings] = await Promise.all([this.services.profileRegistry.list(query.get('provider') || undefined), this.settingsStore.load()]);
-    if (settings.developer_test_mode && query.get('include_test') === 'true') return profiles;
+    const [profiles, settings, statuses] = await Promise.all([this.services.profileRegistry.list(query.get('provider') || undefined), this.settingsStore.load(), this.services.providerRegistry.status()]);
     const providers = new Map(this.services.providerRegistry.list().map((item) => [item.id, item]));
-    return profiles.filter((profile) => !isSyntheticProfile(profile, providers.get(profile.provider_id)));
+    const health = new Map(statuses.map((item) => [item.provider_id, item.health]));
+    const visible = settings.developer_test_mode && query.get('include_test') === 'true' ? profiles : profiles.filter((profile) => !isSyntheticProfile(profile, providers.get(profile.provider_id)));
+    return visible.map((profile) => {
+      const providerHealth = health.get(profile.provider_id) ?? { status: 'unavailable' };
+      const connectionState = profile.enabled && providerHealth.status === 'healthy' && profile.selected_model_id ? 'ready' : profile.status;
+      const model = profile.models?.find((item) => item.model_id === profile.selected_model_id) ?? null;
+      const provider = providers.get(profile.provider_id);
+      return { ...profile, execution_channel: profile.execution_channel ?? model?.discovered_facts?.execution_channel ?? provider?.execution_channels?.[0]?.id ?? null, default_reasoning_effort: profile.default_reasoning_effort ?? model?.discovered_facts?.default_reasoning_effort ?? null, connection_state: connectionState, health: providerHealth };
+    });
+  }
+
+  async readiness() {
+    const [stored, providers, profiles, doctor] = await Promise.all([this.services.readinessStore.load(), this.providers(true), this.services.profileRegistry.list(), this.doctor()]);
+    const healthy = new Set(providers.filter((item) => item.enabled && item.health.status === 'healthy').map((item) => item.id));
+    const descriptors = new Map(providers.map((item) => [item.id, item]));
+    const resources = profiles.filter((profile) => profile.enabled && profile.selected_model_id && healthy.has(profile.provider_id)).flatMap((profile) => {
+      const model = profile.models?.find((item) => item.model_id === profile.selected_model_id) ?? null;
+      const normalized = { ...profile, execution_channel: profile.execution_channel ?? model?.discovered_facts?.execution_channel ?? descriptors.get(profile.provider_id)?.execution_channels?.[0]?.id ?? null };
+      try { return inferenceVariants(normalized, model).map((inference) => ({ provider_id: profile.provider_id, profile_id: profile.profile_id, model_id: profile.selected_model_id, execution_channel: inference.execution_channel, reasoning_effort: inference.reasoning_effort })); }
+      catch { return []; }
+    });
+    const vscodeConnected = Boolean(stored.vscode?.connected_at && Date.now() - Date.parse(stored.vscode.connected_at) <= 120_000);
+    const coreHealthy = doctor.status === 'ok' && doctor.checks.find((item) => item.name === 'runtime')?.status === 'ok';
+    const e2ePassed = stored.real_e2e?.status === 'passed'; const fallbackPassed = stored.fallback?.status === 'passed';
+    const continuityPassed = e2ePassed && stored.real_e2e.checkpoint && stored.real_e2e.memory && stored.real_e2e.handoff;
+    const checks = { core_healthy: coreHealthy, runtime_writable: doctor.checks.find((item) => item.name === 'runtime')?.details?.writable === true, execution_resources: resources.length, minimum_resources_met: resources.length >= 2, vscode_connected: vscodeConnected, continuity_passed: continuityPassed, real_e2e_passed: e2ePassed, fallback_passed: fallbackPassed };
+    const realReady = Object.entries(checks).every(([key, value]) => key === 'execution_resources' || value === true);
+    const status = realReady ? 'READY FOR REAL PROJECTS' : coreHealthy && resources.length >= 2 ? 'READY FOR DEMO' : 'NOT READY';
+    const blockers = Object.entries(checks).filter(([key, value]) => key !== 'execution_resources' && value !== true).map(([key]) => key.replaceAll('_', ' '));
+    return { readiness_version: '0.1', status, checked_at: new Date().toISOString(), checks, blockers, resources, evidence: stored };
   }
 
   async tasks(query) {
@@ -188,6 +219,7 @@ export class ControlApi {
     if (pathname === '/api/audit') return (await this.services.auditLog.list(queryFilters(query))).slice(-500).reverse();
     if (pathname === '/api/doctor') return this.doctor();
     if (pathname === '/api/settings') return this.settingsStore.load();
+    if (pathname === '/api/readiness') return this.readiness();
     const taskMatch = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)$/);
     if (taskMatch) return this.task(decodeURIComponent(taskMatch[1]), decodeURIComponent(taskMatch[2]));
     const attemptsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/attempts$/);
@@ -206,6 +238,12 @@ export class ControlApi {
   }
 
   async handlePost(pathname, body) {
+    if (pathname === '/api/readiness/vscode-heartbeat') return this.services.readinessStore.heartbeat(body);
+    if (pathname === '/api/readiness/evidence') {
+      const type = body?.type; const result = await this.services.readinessStore.record(type, body);
+      await this.services.auditLog.record('readiness_evidence_recorded', { evidence_type: type, status: result.status, project_id: result.project_id, task_id: result.task_id, provider_id: result.provider_id });
+      return result;
+    }
     if (pathname === '/api/projects/scan') {
       const roots = body?.root ? [cleanText(body.root, 'Project root')] : [...new Set([...this.config.projectRoots, ...(await this.services.projectRegistry.listRoots()).map((entry) => entry.path)])];
       const results = []; for (const root of roots) results.push(await this.services.projectRegistry.scan(root)); return results;
@@ -289,8 +327,8 @@ export class ControlApi {
         }
         await this.services.auditLog.record('profile_state_changed', { profile_id: profileId, provider_id: profile.provider_id, enabled: action === 'enable' }); return result;
       }
-      if (action === 'test-connection') { const result = await this.services.profileTestService.connection(profileId); await this.services.auditLog.record('profile_connection_tested', { profile_id: profileId, provider_id: profile.provider_id, reachable: result.reachable, health_status: result.health.status, model_count: result.models.length }); return result; }
-      if (action === 'test-chat') { const result = await this.services.profileTestService.chat(profileId, body); await this.services.auditLog.record('profile_chat_tested', { profile_id: profileId, provider_id: profile.provider_id, model_id: result.model, status: result.status, latency_ms: result.latency_ms, usage_available: result.usage_delta != null }); return result; }
+      if (action === 'test-connection') { const result = await this.services.profileTestService.connection(profileId); await this.services.profileRegistry.recordTest(profileId, { status: result.reachable ? 'connected' : 'failed', successful: result.reachable }); await this.services.auditLog.record('profile_connection_tested', { profile_id: profileId, provider_id: profile.provider_id, reachable: result.reachable, health_status: result.health.status, model_count: result.models.length }); return result; }
+      if (action === 'test-chat') { const result = await this.services.profileTestService.chat(profileId, body); await this.services.profileRegistry.recordTest(profileId, { status: result.status, latencyMs: result.latency_ms, successful: result.status === 'connected' || result.status === 'success' }); await this.services.auditLog.record('profile_chat_tested', { profile_id: profileId, provider_id: profile.provider_id, model_id: result.model, status: result.status, latency_ms: result.latency_ms, usage_available: result.usage_delta != null }); return result; }
       if (typeof adapter?.disconnect === 'function') await adapter.disconnect({ profile_id: profileId }).catch(() => {});
       const removed = await this.services.profileRegistry.remove(profileId); await this.services.auditLog.record('profile_deleted', { profile_id: profileId, provider_id: removed.provider_id }); return { deleted: true, profile_id: profileId };
     }

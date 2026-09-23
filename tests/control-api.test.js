@@ -105,3 +105,15 @@ test('control API rejects unsafe identifiers and invalid writes', async (t) => {
   await assert.rejects(() => api.handlePost('/api/providers/../disable', {}), { code: 'INVALID_CONTROL_INPUT' });
   await assert.rejects(() => api.handlePost('/api/settings', { max_attempts: 999 }), { code: 'INVALID_CONTROL_SETTING' });
 });
+
+test('readiness requires live VS Code, continuity, E2E, and fallback evidence', async (t) => {
+  const { api } = await fixture(t);
+  const initial = await api.handleGet('/api/readiness', new URLSearchParams());
+  assert.equal(initial.status, 'NOT READY'); assert.equal(initial.checks.vscode_connected, false);
+  await api.handlePost('/api/readiness/vscode-heartbeat', { version: '0.5.0', workspace: true });
+  await api.handlePost('/api/readiness/evidence', { type: 'real_e2e', status: 'passed', project_id: 'demo-project', task_id: 'demo-task', provider_id: 'local-test', checkpoint: true, memory: true, handoff: true });
+  await api.handlePost('/api/readiness/evidence', { type: 'fallback', status: 'passed', project_id: 'demo-project', task_id: 'fallback-task', provider_id: 'local-test', attempts: 2 });
+  const ready = await api.handleGet('/api/readiness', new URLSearchParams());
+  assert.equal(ready.checks.vscode_connected, true); assert.equal(ready.checks.continuity_passed, true); assert.equal(ready.checks.fallback_passed, true);
+  assert.notEqual(ready.status, 'READY FOR REAL PROJECTS', 'a single execution resource must not satisfy the two-resource gate');
+});

@@ -2,6 +2,13 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.11.0-pre.0 — First-use readiness and installable VS Code client
+
+- Added persisted readiness gates for live resources, VS Code heartbeat, continuity, real E2E execution, and fallback evidence.
+- Added an installable VS Code activity-bar client with workspace/file/selection context, routing controls, validation status, errors, and changed files.
+- Normalized live profile health and successful connection-test timestamps in the Dashboard.
+- Added isolated real-provider and fallback demo runners plus Windows reinstall/recovery documentation and a machine-readable dependency manifest.
+
 ## 0.10.0-pre.0 — Generic inference profiles and subscription CLI channels
 
 - Added provider-independent inference configuration for execution channel, reasoning mode/effort, latency class, output ceiling, timeout, and cost category.

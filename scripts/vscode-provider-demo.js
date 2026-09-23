@@ -1,0 +1,29 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { loadConfig, validateConfig } from '../config/index.js';
+import { contentHash } from '../actions/changeset.js';
+
+const require = createRequire(import.meta.url); const { RouterClient } = require('../interfaces/vscode/router-client.js');
+const config = await validateConfig(await loadConfig()); const client = new RouterClient(process.env.AI_ROUTER_URL || 'http://127.0.0.1:43127');
+const profileId = process.env.AI_ROUTER_DEMO_PROFILE; if (!profileId) throw new Error('AI_ROUTER_DEMO_PROFILE is required.');
+const profiles = await client.get('/api/profiles'); const profile = profiles.find((item) => item.profile_id === profileId); if (!profile) throw new Error(`Profile '${profileId}' is not visible.`);
+const modelId = process.env.AI_ROUTER_DEMO_MODEL || profile.selected_model_id; if (!modelId) throw new Error(`Profile '${profileId}' has no selected model.`);
+const runId = new Date().toISOString().replace(/[:.]/g, '-').toLowerCase(); const slug = profileId.replace(/[^a-z0-9._-]/gi, '-').toLowerCase();
+const demoRoot = path.join(config.dataRoot, 'demos', `vscode-${slug}-${runId}`); const workspace = path.join(demoRoot, 'workspace');
+function git(args) { const result = spawnSync('git', ['-C', workspace, ...args], { encoding: 'utf8', windowsHide: true }); if (result.status !== 0) throw new Error(result.stderr.trim() || 'Git command failed.'); }
+await mkdir(workspace, { recursive: true }); await writeFile(path.join(workspace, 'status.txt'), 'STATUS=PENDING\n', 'utf8'); await writeFile(path.join(workspace, 'README.md'), `# VS Code → AI Router → ${profile.provider_id} demo\n`, 'utf8');
+git(['init', '-b', 'main']); git(['config', 'user.name', 'AI Router Demo']); git(['config', 'user.email', 'demo@invalid.local']); git(['add', '.']); git(['commit', '-m', 'Create isolated provider demo']);
+const selection = { provider_id: profile.provider_id, profile_id: profile.profile_id, model_id: modelId, execution_channel: profile.execution_channel ?? '', reasoning_effort: process.env.AI_ROUTER_DEMO_EFFORT || profile.default_reasoning_effort || '' };
+const project = await client.ensureProject(workspace, `VS Code ${profile.display_name} controlled demo`); await client.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
+const route = await client.explain('Complete one validated isolated status change.', selection); if (route.selected?.profile_id !== profileId || route.selected?.model_id !== modelId) throw new Error('AI Router did not select the requested resource.');
+const action = { action_id: 'complete-provider-demo', type: 'modify_file', target: 'status.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash('STATUS=PENDING\n'), search: 'PENDING', replacement: 'COMPLETE' } } };
+const instruction = `Return only JSON matching the required schema. Propose exactly this action without changing any field: ${JSON.stringify(action)}. Set schema_version to "0.1", status to "ok", summary to "Provider completed the controlled VS Code demo.", observations to [], validation_requested to ["Verify exact status.txt content"], remaining_work to [], uncertainty to [], and handoff_notes to ["Validated by AI Router."].`;
+const taskId = `vscode-${slug}-${Date.now()}`; const created = await client.post('/api/tasks', { project_id: project.projectId, task_id: taskId, objective: 'Complete one validated isolated status change.', instruction, task_type: 'coding', risk: 'low', required_capabilities: ['coding'], max_attempts: 1, provider_id: selection.provider_id, profile_id: selection.profile_id, model_id: selection.model_id, execution_channel: selection.execution_channel || null, reasoning_effort: selection.reasoning_effort || null, action_policy: { allowed: ['modify_file'], denied: [] }, validation_requirements: [{ validation_id: 'status-complete', type: 'exact_content', target: 'status.txt', expected: 'STATUS=COMPLETE\n' }] });
+const started = performance.now(); const resume = await client.resume(project.projectId, created.descriptor.task_id); const latencyMs = Math.round(performance.now() - started); const detail = await client.task(project.projectId, created.descriptor.task_id); const memory = await client.get(`/api/projects/${encodeURIComponent(project.projectId)}/memory`); const finalContent = await readFile(path.join(workspace, 'status.txt'), 'utf8'); const attempt = detail.attempts.at(-1);
+const passed = resume.status === 'completed' && detail.state.state === 'COMPLETED' && finalContent === 'STATUS=COMPLETE\n' && attempt?.validation?.passed === true && memory.summary?.handoff?.status === 'completed';
+const report = { status: passed ? 'passed' : 'failed', client: 'VS Code RouterClient', provider: attempt?.provider_id, profile: attempt?.profile_id, model: attempt?.model_id, execution_channel: attempt?.execution_channel, reasoning_effort: attempt?.reasoning_effort, latency_ms: latencyMs, final_state: detail.state.state, final_content: finalContent.trim(), validation: attempt?.validation ?? null, checkpoint: Boolean(attempt?.workspace_checkpoint), memory: Boolean(memory.summary), handoff: memory.summary?.handoff ?? null, workspace, project_id: project.projectId, task_id: taskId };
+await writeFile(path.join(demoRoot, 'demo-result.json'), `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+if (passed) await client.post('/api/readiness/evidence', { type: 'real_e2e', status: 'passed', project_id: project.projectId, task_id: taskId, provider_id: attempt.provider_id, profile_id: attempt.profile_id, model_id: attempt.model_id, checkpoint: true, memory: true, handoff: true, attempts: detail.attempts.length });
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`); if (!passed) process.exitCode = 1;

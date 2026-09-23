@@ -1,0 +1,22 @@
+{
+  "manifest_version": "0.1",
+  "platform": "Windows 11",
+  "required": [
+    { "id": "git", "minimum": "2.40", "purpose": "checkpoints and repository inspection" },
+    { "id": "node", "minimum": "20", "purpose": "AI Router runtime" },
+    { "id": "vscode", "minimum": "1.85", "purpose": "installable AI Router client" }
+  ],
+  "conditional": [
+    { "id": "ollama", "when": "local inference is used" },
+    { "id": "codex-app-server", "when": "OpenAI ChatGPT subscription is used", "reconnect": "Dashboard > Profiles > OpenAI > Connect" },
+    { "id": "claude-code", "when": "Anthropic subscription is used", "reconnect": "claude auth login, then Dashboard > Profiles > Anthropic > Connect" },
+    { "id": "agy", "when": "Google Antigravity subscription is used", "reconnect": "run agy and complete Google Sign-In, then Dashboard > Profiles > Google > Connect" }
+  ],
+  "not_required": ["Docker", "Python", "global provider API keys"],
+  "paths": {
+    "source": "<workspace>/AI-Router",
+    "runtime_data": "<workspace>/AI-Router-Data",
+    "vsix": "<workspace>/AI-Router/dist/ai-router-vscode-0.5.0.vsix"
+  },
+  "secret_policy": "Do not export OAuth tokens or secrets into plaintext backups. Reconnect after reinstall."
+}

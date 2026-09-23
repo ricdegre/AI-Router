@@ -36,7 +36,7 @@ class AppServerSession extends EventEmitter {
         this.#failAll(appServerError(`Codex App Server exited unexpectedly (exit ${exitCode}).`, 'OPENAI_CODEX_APP_SERVER_EXITED', { retryable: true }));
         this.emit('exit', exitCode);
       });
-      await this.request('initialize', { clientInfo: { name: 'ai-router', title: 'AI Router', version: '0.10.0' }, capabilities: { experimentalApi: true } }, 15_000, true);
+      await this.request('initialize', { clientInfo: { name: 'ai-router', title: 'AI Router', version: '0.11.0' }, capabilities: { experimentalApi: true } }, 15_000, true);
       this.send({ method: 'initialized', params: {} });
     })();
     try { await this.starting; } finally { this.starting = null; }
