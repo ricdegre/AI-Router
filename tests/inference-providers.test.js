@@ -123,6 +123,7 @@ test('Claude model plus effort are distinct routes and visible to future Jev rec
   assert.deepEqual(route.evaluations.map((item) => item.reasoning_effort), ['low', 'medium', 'high', 'xhigh', 'max']);
   const state = new DecisionStateBuilder().build(route.task, route).state;
   assert.deepEqual(state.candidates.map((item) => [item.model_id, item.reasoning_effort]), [['sonnet', 'low'], ['sonnet', 'medium'], ['sonnet', 'high'], ['sonnet', 'xhigh'], ['sonnet', 'max']]);
+  assert.equal(state.task_analysis.intent, 'other'); assert.equal(state.task_analysis.required_strength, 'standard');
 });
 
 test('Claude Test Chat pins supported effort, reports actual model, refreshes limits, and disables tools', async () => {

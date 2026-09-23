@@ -4,9 +4,15 @@ import { limitsAllowRouting } from '../providers/core/limits.js';
 import { evaluateCost } from './cost-policy.js';
 import { inferenceVariants } from '../providers/core/inference-profile.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
+import { analyzeTask } from './task-analysis.js';
 
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 const STRENGTH = { basic: 0, standard: 1, strong: 2 };
+const EFFORT = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, ultra: 7, ultracode: 8 };
+
+function strongest(...values) {
+  return values.filter(Boolean).sort((a, b) => (STRENGTH[b] ?? -1) - (STRENGTH[a] ?? -1))[0] ?? 'basic';
+}
 
 export function normalizeTaskDescriptor(input) {
   if (!input || typeof input !== 'object') throw new AiRouterError('Task descriptor is required.', 'INVALID_TASK_DESCRIPTOR');
@@ -14,19 +20,64 @@ export function normalizeTaskDescriptor(input) {
   if (!RISK_LEVELS.includes(risk)) throw new AiRouterError(`Unsupported task risk '${risk}'.`, 'INVALID_TASK_RISK');
   const capabilities = input.required_capabilities ?? [];
   if (!Array.isArray(capabilities) || capabilities.some((item) => typeof item !== 'string')) throw new AiRouterError('Required capabilities must be an array of strings.', 'INVALID_TASK_CAPABILITIES');
+  const analysis = analyzeTask({ ...input, risk });
   const derivedStrength = risk === 'high' || risk === 'critical' ? 'strong' : risk === 'medium' ? 'standard' : 'basic';
+  const manual = Boolean(input.manual_provider || input.manual_profile || input.manual_model || input.manual_execution_channel || input.manual_reasoning_effort || input.routing_mode === 'manual');
   return {
     task_type: 'general', preferred_cost: 'local-first', allow_metered: false,
     preferred_providers: [], preferred_profiles: [], preferred_models: [], recent_failures: [],
     provider_constraints: {}, model_constraints: {},
     estimated_context_tokens: null, ...input, risk,
-    required_capabilities: [...new Set(capabilities)],
-    minimum_strength: input.minimum_strength ?? derivedStrength,
+    task_analysis: analysis,
+    routing_mode: manual ? 'manual' : 'automatic',
+    required_capabilities: [...new Set([...capabilities, ...analysis.routing_capabilities])],
+    minimum_strength: strongest(input.minimum_strength, derivedStrength, analysis.required_strength),
     cost_policy: {
       prefer_local: true, prefer_subscription: true, allow_metered: input.allow_metered ?? false,
       allow_unknown_cost: false, ...(input.cost_policy ?? {})
     }
   };
+}
+
+function quotaRemaining(value) {
+  const direct = value?.remaining_percentage;
+  if (Number.isFinite(direct)) return direct;
+  const windows = value?.windows ?? [];
+  const reported = windows.map((item) => item.remaining_percentage ?? item.remaining).filter(Number.isFinite);
+  return reported.length ? Math.min(...reported) : -1;
+}
+
+function desiredEffort(complexity) { return ({ trivial: 'low', low: 'low', medium: 'medium', high: 'high', expert: 'max' })[complexity] ?? 'medium'; }
+
+function automaticOrder(task, a, b) {
+  const requiredRank = STRENGTH[task.minimum_strength] ?? 0;
+  const strengthDistanceA = Math.max(0, (STRENGTH[a.strength_class] ?? 0) - requiredRank);
+  const strengthDistanceB = Math.max(0, (STRENGTH[b.strength_class] ?? 0) - requiredRank);
+  if (strengthDistanceA !== strengthDistanceB) return strengthDistanceA - strengthDistanceB;
+  const desired = EFFORT[desiredEffort(task.task_analysis.complexity)] ?? 3;
+  const effortDistanceA = a.reasoning_effort == null ? 1 : Math.abs((EFFORT[a.reasoning_effort] ?? desired) - desired);
+  const effortDistanceB = b.reasoning_effort == null ? 1 : Math.abs((EFFORT[b.reasoning_effort] ?? desired) - desired);
+  if (effortDistanceA !== effortDistanceB) return effortDistanceA - effortDistanceB;
+  if (a.quota_remaining !== b.quota_remaining) return b.quota_remaining - a.quota_remaining;
+  if (a.cost_score !== b.cost_score) return a.cost_score - b.cost_score;
+  return a.preference_score - b.preference_score || a.profile_id.localeCompare(b.profile_id) || String(a.model_id).localeCompare(String(b.model_id)) || String(a.reasoning_effort).localeCompare(String(b.reasoning_effort));
+}
+
+function manualFailure(task, profiles, providers, evaluations) {
+  if (!task.manual_provider && !task.manual_profile && !task.manual_model && !task.manual_execution_channel && !task.manual_reasoning_effort) return 'manual-resource-not-specified';
+  const provider = task.manual_provider ? providers.find((item) => item.id === task.manual_provider) : null;
+  if (task.manual_provider && !provider) return 'provider-not-found';
+  const profile = task.manual_profile ? profiles.find((item) => item.profile_id === task.manual_profile) : null;
+  if (task.manual_profile && !profile) return 'profile-not-found';
+  if (profile && task.manual_provider && profile.provider_id !== task.manual_provider) return 'profile-provider-mismatch';
+  if (profile && task.manual_model && !(profile.models ?? []).some((item) => item.model_id === task.manual_model)) return 'model-not-found';
+  if (profile && task.manual_model && task.manual_reasoning_effort) {
+    const model = (profile.models ?? []).find((item) => item.model_id === task.manual_model);
+    const supported = model?.discovered_facts?.supported_reasoning_efforts ?? [];
+    if (supported.length && !supported.includes(task.manual_reasoning_effort)) return `unsupported-reasoning-effort:${task.manual_reasoning_effort}`;
+  }
+  const relevant = evaluations.filter((item) => (!task.manual_provider || item.provider_id === task.manual_provider) && (!task.manual_profile || item.profile_id === task.manual_profile) && (!task.manual_model || item.model_id === task.manual_model));
+  return relevant.flatMap((item) => item.rejected).find((reason) => !reason.startsWith('not-manual-')) ?? 'resource-not-eligible';
 }
 
 function effectiveCapabilities(provider, profile, model) {
@@ -84,7 +135,7 @@ export class RoutingPolicy {
         const health = healthById.get(provider.id) ?? { status: 'unknown' };
         if (!provider.enabled) rejected.push('provider-disabled');
         if (!profile.enabled || profile.status === 'disabled') rejected.push('profile-disabled');
-        if (['unconfigured', 'connecting', 'connected', 'model-required'].includes(profile.status)) rejected.push(`profile-${profile.status}`);
+        if (['unconfigured', 'connecting', 'model-required'].includes(profile.status) || (profile.status === 'connected' && !profile.selected_model_id)) rejected.push(`profile-${profile.status}`);
         if (profile.status === 'unavailable') rejected.push('profile-unavailable');
         if (routingClassification !== 'REAL' && !explicitNonRealOverride) rejected.push(`non-production-profile:${routingClassification}`);
         if (explicitNonRealOverride) { reasons.push('explicit-non-production-profile-override'); warnings.push(`Manual override is using a ${routingClassification} profile; it is excluded from automatic production routing.`); }
@@ -138,22 +189,32 @@ export class RoutingPolicy {
         }
         if (health.status === 'healthy') reasons.push('provider-healthy');
         if (task.manual_provider === provider.id || task.manual_profile === profile.profile_id || task.manual_model === modelId) reasons.push('manual-override-match');
+        const preference = preferenceScore(task, provider, profile, model);
+        const quota = quotaRemaining(profile.limits);
         evaluations.push({
           provider_id: provider.id, profile_id: profile.profile_id, model_id: modelId,
           routing_classification: routingClassification,
           execution_channel: inference.execution_channel, reasoning_mode: inference.reasoning_mode, reasoning_effort: inference.reasoning_effort, inference,
-          eligible: rejected.length === 0, score: cost.score + preferenceScore(task, provider, profile, model) + (profile.default_reasoning_effort && inference.reasoning_effort !== profile.default_reasoning_effort ? 1 : 0),
+          eligible: rejected.length === 0,
+          score: cost.score + preference + (profile.default_reasoning_effort && inference.reasoning_effort !== profile.default_reasoning_effort ? 1 : 0),
+          cost_score: cost.score, preference_score: preference, quota_remaining: quota,
           reasons, rejected, warnings, health: health.status, capabilities: [...capabilities],
           strength_class: strength, context_size: contextSize, cost_category: cost.category
         });
       }
     }
-    const eligible = evaluations.filter((entry) => entry.eligible).sort((a, b) => a.score - b.score || a.profile_id.localeCompare(b.profile_id) || String(a.model_id).localeCompare(String(b.model_id)) || String(a.reasoning_effort).localeCompare(String(b.reasoning_effort)));
+    const manualSpecified = Boolean(task.manual_provider || task.manual_profile || task.manual_model || task.manual_execution_channel || task.manual_reasoning_effort);
+    const eligible = evaluations.filter((entry) => entry.eligible && (task.routing_mode !== 'manual' || manualSpecified)).sort(task.routing_mode === 'manual'
+      ? (a, b) => a.profile_id.localeCompare(b.profile_id) || String(a.model_id).localeCompare(String(b.model_id)) || String(a.reasoning_effort).localeCompare(String(b.reasoning_effort))
+      : (a, b) => automaticOrder(task, a, b));
+    const manualReason = task.routing_mode === 'manual' && !eligible.length ? manualFailure(task, profiles, providers, evaluations) : null;
     return {
-      policy_version: '0.3', task, selected: eligible[0] ?? null, accepted_candidates: eligible,
+      policy_version: '0.4', task, task_analysis: task.task_analysis, routing_mode: task.routing_mode, selected: eligible[0] ?? null, accepted_candidates: eligible,
       rejected_candidates: evaluations.filter((entry) => !entry.eligible), evaluations,
       warnings: eligible[0]?.warnings ?? [],
-      error: eligible.length ? null : { code: 'NO_ELIGIBLE_PROVIDER', message: 'No enabled and healthy provider/profile/model satisfies the task.' }
+      error: eligible.length ? null : task.routing_mode === 'manual'
+        ? { code: 'MANUAL_RESOURCE_REJECTED', message: `The selected resource was rejected: ${manualReason}.`, reason: manualReason }
+        : { code: 'NO_ELIGIBLE_PROVIDER', message: 'No enabled and healthy provider/profile/model satisfies the analyzed task.' }
     };
   }
 

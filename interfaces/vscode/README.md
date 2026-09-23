@@ -10,7 +10,7 @@ Normally, double-click `Install AI Router VS Code Extension.vbs` in the reposito
 - `AI Router: Open Dashboard`
 - `AI Router: Refresh`
 
-The panel includes the active workspace/file context, instruction input, profile/model/effort selection, an explicit read-only mode, task and validation status, errors, and changed files. It sends a local heartbeat so the Dashboard can verify that the extension is installed and connected. Safe activation, command, request status, and failure events appear in the **AI Router** output channel; prompts, selections, and credentials are not logged.
+The panel includes the active workspace/file context, instruction input, an explicit Automatic Routing / Manual Resource Selection control, profile/model/effort selection, read-only mode, task analysis, selected-resource reasons, task and validation status, errors, and changed files. It sends a local heartbeat so the Dashboard can verify that the extension is installed and connected. Safe activation, command, request status, and failure events appear in the **AI Router** output channel; prompts, selections, and credentials are not logged.
 
 The default service URL is `http://127.0.0.1:43127`. Change `aiRouter.url` if the
 control service selected another local port. Run Task reports the selected

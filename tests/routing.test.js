@@ -5,6 +5,7 @@ import { RoutingPolicy } from '../routing/policy.js';
 import { EscalationPlan } from '../routing/escalation.js';
 import { MockProvider } from './mock-provider.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
+import { createModelDescriptor } from '../providers/core/model-descriptor.js';
 
 function profile(profileId, providerId, cost = 'local', overrides = {}) {
   return { profile_id: profileId, provider_id: providerId, enabled: true, status: 'available', cost_category: cost, capabilities_override: { add: [], remove: [] }, ...overrides };
@@ -94,6 +95,46 @@ test('high-risk tasks require strong provider class', async () => {
   registry.register(new MockProvider('strong', { strength: 'strong' }));
   const result = await new RoutingPolicy().select({ risk: 'high', required_capabilities: ['coding'] }, registry, [profile('standard-p', 'standard'), profile('strong-p', 'strong', 'subscription')]);
   assert.equal(result.selected.provider_id, 'strong');
+});
+
+test('whole-project analysis requires strength before local cost preference', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(new MockProvider('cheap-local', { strength: 'basic', capabilities: ['chat', 'coding', 'local'] }));
+  registry.register(new MockProvider('reasoning-cloud', { strength: 'strong', capabilities: ['chat', 'coding', 'long_context'] }));
+  const result = await new RoutingPolicy().explain({ objective: 'Analyze this entire project architecture without modifying files' }, registry, [
+    profile('cheap', 'cheap-local', 'local'), profile('strong', 'reasoning-cloud', 'subscription')
+  ]);
+  assert.equal(result.task_analysis.scope, 'project'); assert.equal(result.task_analysis.required_strength, 'strong');
+  assert.equal(result.selected.profile_id, 'strong');
+  assert.ok(result.evaluations.find((item) => item.profile_id === 'cheap').rejected.includes('strength-below-strong'));
+});
+
+test('automatic routing considers remaining quota before cost among equally capable resources', async () => {
+  const registry = new ProviderRegistry(); registry.register(new MockProvider('local-equal')); registry.register(new MockProvider('subscription-equal'));
+  const lowQuota = profile('local-low-quota', 'local-equal', 'local', { limits: { availability: 'available', remaining_percentage: 10, windows: [] } });
+  const highQuota = profile('subscription-high-quota', 'subscription-equal', 'subscription', { limits: { availability: 'available', remaining_percentage: 90, windows: [] } });
+  const result = await new RoutingPolicy().explain({ objective: 'Make a small code edit', required_capabilities: ['coding'] }, registry, [lowQuota, highQuota]);
+  assert.equal(result.selected.profile_id, 'subscription-high-quota');
+});
+
+test('manual selection resolves the exact valid model and effort without cost competition', async () => {
+  const registry = new ProviderRegistry(); registry.register(new MockProvider('openai', { strength: 'strong', capabilities: ['chat', 'coding', 'long_context'] }));
+  const model = createModelDescriptor({ providerId: 'openai', modelId: 'gpt-test', discovered: { display_name: 'GPT Test', local: false, reasoning_support: true, supported_reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', execution_channel: 'subscription' } });
+  const chosen = profile('openai-pro', 'openai', 'subscription', { status: 'ready', models: [model], selected_model_id: 'gpt-test', execution_channel: 'subscription', default_reasoning_effort: 'high' });
+  const result = await new RoutingPolicy().explain({ objective: 'Edit one file', required_capabilities: ['coding'], routing_mode: 'manual', manual_provider: 'openai', manual_profile: 'openai-pro', manual_model: 'gpt-test', manual_reasoning_effort: 'low' }, registry, [chosen]);
+  assert.equal(result.routing_mode, 'manual'); assert.equal(result.selected.profile_id, 'openai-pro'); assert.equal(result.selected.model_id, 'gpt-test'); assert.equal(result.selected.reasoning_effort, 'low');
+});
+
+test('manual selection reports exact disabled, unsupported-effort, and capability rejections', async () => {
+  const registry = new ProviderRegistry(); registry.register(new MockProvider('manual-provider', { capabilities: ['chat', 'coding'] }));
+  const model = createModelDescriptor({ providerId: 'manual-provider', modelId: 'manual-model', discovered: { display_name: 'Manual', local: false, reasoning_support: true, supported_reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high' } });
+  const ready = profile('manual-profile', 'manual-provider', 'subscription', { status: 'ready', models: [model], selected_model_id: 'manual-model' });
+  const disabled = await new RoutingPolicy().explain({ routing_mode: 'manual', manual_profile: 'manual-profile', manual_model: 'manual-model', manual_reasoning_effort: 'low' }, registry, [{ ...ready, enabled: false, status: 'disabled' }]);
+  assert.equal(disabled.error.code, 'MANUAL_RESOURCE_REJECTED'); assert.equal(disabled.error.reason, 'profile-disabled');
+  const effort = await new RoutingPolicy().explain({ routing_mode: 'manual', manual_profile: 'manual-profile', manual_model: 'manual-model', manual_reasoning_effort: 'xhigh' }, registry, [ready]);
+  assert.equal(effort.error.reason, 'unsupported-reasoning-effort:xhigh');
+  const capability = await new RoutingPolicy().explain({ routing_mode: 'manual', manual_profile: 'manual-profile', manual_model: 'manual-model', manual_reasoning_effort: 'low', required_capabilities: ['vision'] }, registry, [ready]);
+  assert.match(capability.error.reason, /^missing-capabilities:/);
 });
 
 test('escalation is bounded and user cancellation never escalates', () => {

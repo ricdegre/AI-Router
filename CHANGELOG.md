@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0-pre.6
+
+- Added provider-independent task analysis before hard policy and resource routing.
+- Added explicit automatic and manual routing paths with exact manual rejection reasons and REAL-only production candidates.
+- Fixed the global Test Chat dashboard helper mismatch and exposed auditable routing mode, analysis, model, and effort in Dashboard and VS Code.
+
 ## 0.11.0-pre.5
 
 - Added official Claude Code model and per-model effort discovery through zero-turn subscription CLI commands.

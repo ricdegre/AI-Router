@@ -182,7 +182,7 @@ export class ControlApi {
     const settings = await this.settingsStore.load();
     const capabilities = query.getAll('capability').filter(Boolean);
     return this.services.routingPolicy.explain({
-      objective: (query.get('objective') || '').slice(0, 2_000), task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities,
+      objective: (query.get('objective') || '').slice(0, 2_000), task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities, routing_mode: query.get('mode') || 'automatic', read_only: query.get('read_only') === 'true',
       manual_provider: query.get('provider') || null, manual_profile: query.get('profile') || null, manual_model: query.get('model') || null, manual_execution_channel: query.get('channel') || null, manual_reasoning_effort: query.get('effort') || null,
       allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered,
       cost_policy: { prefer_local: settings.prefer_local, prefer_subscription: settings.prefer_subscription, allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered }

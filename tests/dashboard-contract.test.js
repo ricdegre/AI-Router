@@ -42,7 +42,7 @@ test('polling uses bounded tiers and retains stale data on failure', async () =>
 
 test('dashboard exposes optional Jev controls, status, and auditable route evidence', async () => {
   const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
-  for (const text of ['Decision Engines', 'Jev Decision Engine', 'Deterministic Only', 'Jev Assisted', 'Hybrid', 'Confidence threshold', 'Initial routing', 'Retry / escalation', 'Action risk', 'Handoff quality', 'Context relevance', 'Real Jev connection not enabled yet.', 'Hard rules', 'Jev classification', 'Deterministic policy']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const text of ['Decision Engines', 'Jev Decision Engine', 'Deterministic Only', 'Jev Assisted', 'Hybrid', 'Confidence threshold', 'Initial routing', 'Retry / escalation', 'Action risk', 'Handoff quality', 'Context relevance', 'Real Jev connection not enabled yet.', 'Task analysis', 'Hard rules', 'Jev classification', 'Automatic Routing', 'Manual Resource Selection']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(app, /\/api\/decision-engines\/config/);
   assert.match(app, /connect-jev/);
 });
@@ -60,6 +60,10 @@ test('profiles UI supports multi-account management and isolated connection test
   assert.match(app, /Actual model/);
   assert.match(app, /Updated limits/);
   assert.match(app, /profileLimitText/);
+  assert.match(app, /return enhanceTestChat\(/);
+  assert.match(app, /api\/models\?provider=\$\{encodeURIComponent\(providerId\)\}&profile=\$\{encodeURIComponent\(profileId\)\}&detailed=true/);
+  assert.match(app, /let models=profile\?\.models\|\|\[\]/);
+  assert.doesNotMatch(app, /enhanceTestChatEffort/);
 });
 
 test('Add Profile discovers provider models, filters embeddings, and requires explicit multi-model choice', async () => {
