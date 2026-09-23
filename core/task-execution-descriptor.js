@@ -3,6 +3,7 @@ import { TASK_STATES } from './task-state-machine.js';
 import { ACTION_TYPES } from '../actions/action-mediator.js';
 import { AiRouterError } from './errors.js';
 import { DEFAULT_PROVIDER_TIMEOUTS } from './provider-timeout-policy.js';
+import { REASONING_EFFORTS } from '../providers/core/inference-profile.js';
 
 export const TASK_EXECUTION_DESCRIPTOR_VERSION = '0.1';
 const RISKS = new Set(['low', 'medium', 'high', 'critical']);
@@ -85,6 +86,11 @@ function boundedInteger(value, fallback, minimum, maximum, field) {
 }
 
 function optionalId(value, field) { return value === null || value === undefined ? null : safeId(value, field); }
+function optionalReasoningEffort(value) {
+  if (value === null || value === undefined) return null;
+  if (!REASONING_EFFORTS.includes(value)) throw new AiRouterError('manual reasoning effort is invalid.', 'INVALID_REASONING_EFFORT');
+  return value;
+}
 function optionalModelId(value) {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value) || value.includes('..')) throw new AiRouterError('manual model is invalid.', 'INVALID_TASK_DESCRIPTOR');
@@ -130,7 +136,7 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
       minimum_strength: model.minimum_strength == null ? null : ['basic', 'standard', 'strong'].includes(model.minimum_strength) ? model.minimum_strength : (() => { throw new AiRouterError('minimum_strength is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(),
       minimum_context_tokens: model.minimum_context_tokens == null ? null : boundedInteger(model.minimum_context_tokens, null, 1, 10_000_000, 'minimum_context_tokens'), require_tool_support: model.require_tool_support ?? false
     },
-    manual_overrides: { provider_id: optionalId(input.manual_overrides?.provider_id, 'manual provider'), profile_id: optionalId(input.manual_overrides?.profile_id, 'manual profile'), model_id: optionalModelId(input.manual_overrides?.model_id) },
+    manual_overrides: { provider_id: optionalId(input.manual_overrides?.provider_id, 'manual provider'), profile_id: optionalId(input.manual_overrides?.profile_id, 'manual profile'), model_id: optionalModelId(input.manual_overrides?.model_id), execution_channel: optionalId(input.manual_overrides?.execution_channel, 'execution channel'), reasoning_effort: optionalReasoningEffort(input.manual_overrides?.reasoning_effort) },
     validation_requirements: validationRequirements(input.validation_requirements), action_policy: actionPolicy(input.action_policy),
     filesystem_scope: { workspace_path: path.resolve(workspacePath), allowed_paths: allowedPaths, denied_paths: deniedPaths },
     execution_limits: { max_attempts: maxAttempts, max_actions_per_attempt: boundedInteger(limits.max_actions_per_attempt, 20, 0, 100, 'max_actions_per_attempt'), max_file_bytes: boundedInteger(limits.max_file_bytes, 1_048_576, 1, 10_485_760, 'max_file_bytes'), provider_timeout_ms: timeoutMs },
@@ -152,7 +158,7 @@ export function descriptorFromTask(task, project) {
     objective: task.objective, task_type: task.task_type, risk: task.risk, required_capabilities: task.required_capabilities,
     preferred_cost_policy: task.cost_policy ?? { allow_metered: task.allow_metered ?? false },
     provider_constraints: task.provider_constraints ?? { allow_metered: task.allow_metered ?? false }, model_constraints: task.model_constraints ?? {},
-    manual_overrides: { provider_id: task.manual_provider ?? null, profile_id: task.manual_profile ?? null, model_id: task.manual_model ?? null },
+    manual_overrides: { provider_id: task.manual_provider ?? null, profile_id: task.manual_profile ?? null, model_id: task.manual_model ?? null, execution_channel: task.manual_execution_channel ?? null, reasoning_effort: task.manual_reasoning_effort ?? null },
     validation_requirements: task.validation_requirements ?? [], action_policy: task.action_policy ?? {},
     filesystem_scope: task.filesystem_scope ?? { workspace_path: project.workspacePath, allowed_paths: ['.'], denied_paths: [] },
     execution_limits: { max_attempts: task.max_attempts ?? 3, ...(task.execution_limits ?? {}) }, timeout_policy: task.timeout_policy,
@@ -168,7 +174,7 @@ export function descriptorToTask(descriptor) {
     project_id: value.project_id, task_id: value.task_id, objective: value.objective, task_type: value.task_type,
     risk: value.risk, required_capabilities: value.required_capabilities, cost_policy: value.preferred_cost_policy,
     allow_metered: value.preferred_cost_policy.allow_metered, manual_provider: value.manual_overrides.provider_id,
-    manual_profile: value.manual_overrides.profile_id, manual_model: value.manual_overrides.model_id,
+    manual_profile: value.manual_overrides.profile_id, manual_model: value.manual_overrides.model_id, manual_execution_channel: value.manual_overrides.execution_channel, manual_reasoning_effort: value.manual_overrides.reasoning_effort,
     validation_requirements: value.validation_requirements, action_policy: value.action_policy,
     filesystem_scope: value.filesystem_scope, execution_limits: value.execution_limits, max_attempts: value.execution_limits.max_attempts,
     timeout_policy: value.timeout_policy, escalation_policy: value.escalation_policy, context_policy: value.context_policy,

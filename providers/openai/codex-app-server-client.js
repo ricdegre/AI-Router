@@ -36,7 +36,7 @@ class AppServerSession extends EventEmitter {
         this.#failAll(appServerError(`Codex App Server exited unexpectedly (exit ${exitCode}).`, 'OPENAI_CODEX_APP_SERVER_EXITED', { retryable: true }));
         this.emit('exit', exitCode);
       });
-      await this.request('initialize', { clientInfo: { name: 'ai-router', title: 'AI Router', version: '0.9.0' }, capabilities: { experimentalApi: true } }, 15_000, true);
+      await this.request('initialize', { clientInfo: { name: 'ai-router', title: 'AI Router', version: '0.10.0' }, capabilities: { experimentalApi: true } }, 15_000, true);
       this.send({ method: 'initialized', params: {} });
     })();
     try { await this.starting; } finally { this.starting = null; }
@@ -129,7 +129,7 @@ export class CodexAppServerClient {
     return { status: 'disconnected' };
   }
 
-  async runTurn({ profileId, model, prompt, outputSchema = undefined, timeoutMs = 180_000, purpose = 'task' }) {
+  async runTurn({ profileId, model, effort = undefined, prompt, outputSchema = undefined, timeoutMs = 180_000, purpose = 'task' }) {
     const session = this.session(profileId); await session.start();
     const cwd = resolveWithin(this.home(profileId), 'isolated-workspaces', purpose); await mkdir(cwd, { recursive: true, mode: 0o700 });
     const threadResult = await session.request('thread/start', { model, cwd, approvalPolicy: 'never', sandbox: 'read-only', serviceName: 'ai-router' }, Math.min(timeoutMs, 30_000));
@@ -153,7 +153,7 @@ export class CodexAppServerClient {
       session.on('notification', onNotification);
     });
     try {
-      await session.request('turn/start', { threadId, input: [{ type: 'text', text: prompt }], model, approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' }, ...(outputSchema ? { outputSchema } : {}) }, Math.min(timeoutMs, 30_000));
+      await session.request('turn/start', { threadId, input: [{ type: 'text', text: prompt }], model, ...(effort ? { effort } : {}), approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' }, ...(outputSchema ? { outputSchema } : {}) }, Math.min(timeoutMs, 30_000));
       await turnComplete;
     } catch (error) { cleanup(); throw error; }
     return { request_id: randomUUID(), status: 'completed', model, output: finalText || streamedText, done: true, tool_used: toolUsed, metrics: completedTurn?.usage ?? null };

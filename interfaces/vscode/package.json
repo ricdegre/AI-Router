@@ -2,7 +2,7 @@
   "name": "ai-router-vscode",
   "displayName": "AI Router",
   "description": "Send coding work to the local AI Router control service.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "ai-router-local",
   "private": true,
   "type": "commonjs",
@@ -23,7 +23,9 @@
         "aiRouter.includeSelection": { "type": "boolean", "default": true, "description": "Offer the active text selection as task context." },
         "aiRouter.provider": { "type": "string", "default": "", "description": "Optional AI Router provider ID; blank keeps automatic routing." },
         "aiRouter.profile": { "type": "string", "default": "", "description": "Optional AI Router profile ID selected in the dashboard." },
-        "aiRouter.model": { "type": "string", "default": "", "description": "Optional model ID exposed by the selected AI Router profile." }
+        "aiRouter.model": { "type": "string", "default": "", "description": "Optional model ID exposed by the selected AI Router profile." },
+        "aiRouter.executionChannel": { "type": "string", "default": "", "description": "Optional execution channel selected through AI Router." },
+        "aiRouter.reasoningEffort": { "type": "string", "default": "", "enum": ["", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultracode"], "description": "Optional task-level reasoning effort override validated by AI Router." }
       }
     }
   }

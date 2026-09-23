@@ -25,12 +25,13 @@ test('VS Code client reports router errors and never falls back to a provider en
   await assert.rejects(() => client.explain('work'), { code: 'NO_ELIGIBLE_PROVIDER' });
 });
 
-test('VS Code client sends selected provider, profile, and model only to AI Router', async () => {
+test('VS Code client sends selected provider, channel, profile, model, and effort only to AI Router', async () => {
   const calls = [];
   const fetch = async (url, options = {}) => { calls.push({ url, options }); return new Response(JSON.stringify({ selected: { provider_id: 'openai', profile_id: 'chatgpt', model_id: 'gpt-6-luna' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce-2' } }); };
-  const client = new RouterClient('http://127.0.0.1:43127', fetch); const selection = { provider_id: 'openai', profile_id: 'chatgpt', model_id: 'gpt-6-luna' };
+  const client = new RouterClient('http://127.0.0.1:43127', fetch); const selection = { provider_id: 'openai', execution_channel: 'codex-subscription', profile_id: 'chatgpt', model_id: 'gpt-6-luna', reasoning_effort: 'high' };
   await client.explain('Controlled task', selection); await client.createTask('project-one', 'Controlled task', 'Instruction', selection);
   assert.match(calls[0].url, /provider=openai/); assert.match(calls[0].url, /profile=chatgpt/); assert.match(calls[0].url, /model=gpt-6-luna/);
-  const body = JSON.parse(calls.at(-1).options.body); assert.equal(body.provider_id, 'openai'); assert.equal(body.profile_id, 'chatgpt'); assert.equal(body.model_id, 'gpt-6-luna');
+  assert.match(calls[0].url, /channel=codex-subscription/); assert.match(calls[0].url, /effort=high/);
+  const body = JSON.parse(calls.at(-1).options.body); assert.equal(body.provider_id, 'openai'); assert.equal(body.profile_id, 'chatgpt'); assert.equal(body.model_id, 'gpt-6-luna'); assert.equal(body.execution_channel, 'codex-subscription'); assert.equal(body.reasoning_effort, 'high');
   assert.ok(calls.every((call) => call.url.startsWith('http://127.0.0.1:43127/api/')));
 });

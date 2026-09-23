@@ -8,6 +8,7 @@ import { AiRouterError } from '../../core/errors.js';
 import { ControlSettingsStore } from '../../core/control-settings-store.js';
 import { isSyntheticProfile } from '../../core/profile-test-service.js';
 import { decorateModelForProfiles } from '../../core/model-catalog.js';
+import { validateProviderPluginManifest } from '../../providers/core/plugin-manifest.js';
 
 const MEMORY_DOCUMENTS = ['context.md', 'decisions.md', 'constraints.md', 'current-task.md', 'handoff.md', 'ai-changelog.md'];
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{1,79}$/;
@@ -24,7 +25,7 @@ function cleanText(value, label, max = 4_000) {
 
 function rejectSecretFields(value) {
   if (!value || typeof value !== 'object') return;
-  for (const [key, child] of Object.entries(value)) { if (/(password|secret|token|api.?key|credential)/i.test(key)) throw new AiRouterError('Secret fields are not accepted by the control API.', 'SENSITIVE_PROFILE_FIELD'); rejectSecretFields(child); }
+  for (const [key, child] of Object.entries(value)) { if (/(password|secret|api.?key|credential|^(?:access|refresh|auth|bearer)?_?token$)/i.test(key)) throw new AiRouterError('Secret fields are not accepted by the control API.', 'SENSITIVE_PROFILE_FIELD'); rejectSecretFields(child); }
 }
 
 function queryFilters(query) {
@@ -87,7 +88,7 @@ export class ControlApi {
     if (!force && Date.now() - this.providerCache.at < 10_000) return this.providerCache.value;
     const [descriptors, statuses] = await Promise.all([Promise.resolve(this.services.providerRegistry.list()), this.services.providerRegistry.status()]);
     const byId = new Map(statuses.map((item) => [item.provider_id, item]));
-    const value = descriptors.map((provider) => ({ ...provider, health: byId.get(provider.id)?.health ?? { status: 'unknown' } }));
+    const value = descriptors.map((provider) => { const adapter = this.services.providerRegistry.get(provider.id); return { ...provider, plugin_manifest: validateProviderPluginManifest(adapter.pluginManifest()), health: byId.get(provider.id)?.health ?? { status: 'unknown' } }; });
     this.providerCache = { at: Date.now(), value };
     return value;
   }
@@ -150,7 +151,7 @@ export class ControlApi {
     const capabilities = query.getAll('capability').filter(Boolean);
     return this.services.routingPolicy.explain({
       objective: (query.get('objective') || '').slice(0, 2_000), task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities,
-      manual_provider: query.get('provider') || null, manual_profile: query.get('profile') || null, manual_model: query.get('model') || null,
+      manual_provider: query.get('provider') || null, manual_profile: query.get('profile') || null, manual_model: query.get('model') || null, manual_execution_channel: query.get('channel') || null, manual_reasoning_effort: query.get('effort') || null,
       allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered,
       cost_policy: { prefer_local: settings.prefer_local, prefer_subscription: settings.prefer_subscription, allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered }
     }, this.services.providerRegistry, await this.services.profileRegistry.list());
@@ -236,10 +237,14 @@ export class ControlApi {
         location, cost_category: typeof body?.cost_category === 'string' ? body.cost_category : 'UNKNOWN',
         enabled, status: configured ? (enabled ? 'ready' : 'disabled') : existing?.status === 'connected' ? 'model-required' : 'unconfigured', profile_type: body?.profile_type === 'synthetic' ? 'synthetic' : existing?.profile_type ?? 'real',
         selected_model_id: selectedModelId,
+        execution_channel: typeof body?.execution_channel === 'string' && body.execution_channel ? body.execution_channel : existing?.execution_channel ?? null,
+        default_reasoning_mode: typeof body?.default_reasoning_mode === 'string' && body.default_reasoning_mode ? body.default_reasoning_mode : existing?.default_reasoning_mode ?? null,
+        default_reasoning_effort: typeof body?.default_reasoning_effort === 'string' && body.default_reasoning_effort ? body.default_reasoning_effort : existing?.default_reasoning_effort ?? null,
+        default_max_output_limit: Number.isInteger(body?.default_max_output_limit) ? body.default_max_output_limit : existing?.default_max_output_limit ?? null,
         models
       };
       const result = await this.services.profileRegistry.register(profile);
-      await this.services.auditLog.record(result.created ? 'profile_added' : 'profile_updated', { profile_id: profile.profile_id, provider_id: profile.provider_id });
+      await this.services.auditLog.record(result.created ? 'profile_added' : 'profile_updated', { profile_id: profile.profile_id, provider_id: profile.provider_id, model_id: profile.selected_model_id, execution_channel: profile.execution_channel, reasoning_effort: profile.default_reasoning_effort });
       return result;
     }
     const profileAction = pathname.match(/^\/api\/profiles\/([^/]+)\/(connect|reconnect|auth-status|disconnect|enable|disable|test-connection|test-chat|delete)$/);
@@ -253,9 +258,9 @@ export class ControlApi {
         try {
           const connected = await adapter.connect({ profile_id: profileId, credential: body?.credential, metered_opt_in: body?.metered_opt_in === true, reconnect: action === 'reconnect' });
           if (connected.status === 'auth-pending') {
-            const updated = await this.services.profileRegistry.updateConnection(profileId, { status: 'auth-pending', enabled: false, auth_mode: 'chatgpt-oauth' });
+            const updated = await this.services.profileRegistry.updateConnection(profileId, { status: 'auth-pending', enabled: false, auth_mode: connected.auth_mode ?? adapter.authenticationModes()[0] ?? profile.auth_mode });
             await this.services.auditLog.record('profile_authentication_started', { profile_id: profileId, provider_id: profile.provider_id });
-            return { profile: updated, ...connected, message: 'Complete the official ChatGPT sign-in in your browser.' };
+            return { profile: updated, ...connected, message: connected.user_action ?? 'Complete the provider sign-in flow.' };
           }
           const updated = await this.services.profileRegistry.updateConnection(profileId, { status: profile.selected_model_id ? 'ready' : 'model-required', enabled: Boolean(profile.selected_model_id), auth_mode: adapter.authenticationModes()[0] ?? profile.auth_mode, ...(connected.plan_type ? { plan_type: connected.plan_type } : {}), ...(connected.rate_limits_available !== undefined ? { usage_available: connected.rate_limits_available, limits_available: connected.rate_limits_available } : {}) });
           this.modelCache.clear(); this.providerCache.at = 0;
@@ -267,10 +272,10 @@ export class ControlApi {
         if (typeof adapter.connectionStatus !== 'function') throw new AiRouterError('This provider does not expose interactive authentication status.', 'PROVIDER_AUTH_STATUS_NOT_SUPPORTED');
         const connected = await adapter.connectionStatus({ profile_id: profileId });
         if (connected.status !== 'connected') return { profile, ...connected };
-        const updated = await this.services.profileRegistry.updateConnection(profileId, { status: profile.selected_model_id ? 'ready' : 'model-required', enabled: Boolean(profile.selected_model_id), auth_mode: 'chatgpt-oauth', plan_type: connected.plan_type ?? null, usage_available: connected.rate_limits_available, limits_available: connected.rate_limits_available });
+        const updated = await this.services.profileRegistry.updateConnection(profileId, { status: profile.selected_model_id ? 'ready' : 'model-required', enabled: Boolean(profile.selected_model_id), auth_mode: connected.auth_mode ?? adapter.authenticationModes()[0] ?? profile.auth_mode, plan_type: connected.plan_type ?? null, usage_available: connected.rate_limits_available, limits_available: connected.rate_limits_available });
         this.modelCache.clear(); this.providerCache.at = 0;
         await this.services.auditLog.record('profile_connected', { profile_id: profileId, provider_id: profile.provider_id, model_count: connected.model_count ?? null, plan_type: connected.plan_type ?? null });
-        return { profile: updated, ...connected, message: profile.selected_model_id ? 'ChatGPT subscription connected and ready.' : 'ChatGPT subscription connected. Choose a model to enable routing.' };
+        return { profile: updated, ...connected, message: profile.selected_model_id ? 'Subscription profile connected and ready.' : 'Subscription profile connected. Choose a model to enable routing.' };
       }
       if (action === 'disconnect') { if (typeof adapter.disconnect === 'function') await adapter.disconnect({ profile_id: profileId }); const result = await this.services.profileRegistry.updateConnection(profileId, { status: 'unconfigured', enabled: false }); this.modelCache.clear(); this.providerCache.at = 0; await this.services.auditLog.record('profile_disconnected', { profile_id: profileId, provider_id: profile.provider_id }); return result; }
       if (action === 'enable' || action === 'disable') {
@@ -306,7 +311,7 @@ export class ControlApi {
         project_id: project.projectId, task_id: taskId, objective: cleanText(body?.objective, 'Objective', 2_000), prompt: typeof body?.instruction === 'string' ? body.instruction.slice(0, 64_000) : '',
         task_type: body?.task_type ?? 'general', risk: body?.risk ?? 'low', required_capabilities: Array.isArray(body?.required_capabilities) ? body.required_capabilities : [],
         max_attempts: body?.max_attempts ?? settings.max_attempts, allow_metered: body?.allow_metered === true && settings.allow_metered,
-        manual_provider: body?.provider_id ?? null, manual_profile: body?.profile_id ?? null, manual_model: body?.model_id ?? null,
+        manual_provider: body?.provider_id ?? null, manual_profile: body?.profile_id ?? null, manual_model: body?.model_id ?? null, manual_execution_channel: body?.execution_channel ?? null, manual_reasoning_effort: body?.reasoning_effort ?? null,
         action_policy: body?.action_policy ?? {}, validation_requirements: body?.validation_requirements ?? [],
         provider_constraints: body?.provider_constraints ?? {}, model_constraints: body?.model_constraints ?? {}
       }, project);

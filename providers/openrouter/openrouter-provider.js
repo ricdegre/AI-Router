@@ -17,7 +17,7 @@ function normalizeCredential(value) {
 
 export class OpenRouterProvider extends ProviderAdapter {
   constructor(options = {}) {
-    super({ id: 'openrouter', name: 'OpenRouter', type: 'gateway', strength_class: 'strong', capabilities: ['chat', 'coding', 'vision', 'long_context', 'metered_api', 'streaming', 'tool_use'], authentication_modes: ['api-key'] });
+    super({ id: 'openrouter', name: 'OpenRouter', type: 'gateway', strength_class: 'strong', capabilities: ['chat', 'coding', 'vision', 'long_context', 'metered_api', 'streaming', 'tool_use'], authentication_modes: ['api-key'], execution_channels: [{ id: 'openrouter-cloud', name: 'OpenRouter Cloud', cost_category: 'UNKNOWN', metered: true }], inference_controls: [] });
     this.baseUrl = new URL(options.baseUrl ?? 'https://openrouter.ai/api/v1/');
     this.fetch = options.fetch ?? globalThis.fetch; this.secretStore = options.secretStore;
     this.timeoutPolicy = validateProviderTimeouts(options.timeoutPolicy ?? {});
@@ -53,7 +53,7 @@ export class OpenRouterProvider extends ProviderAdapter {
       context_size: model.context_length ?? null, tool_support: model.supported_parameters?.includes('tools') ?? null,
       structured_output_support: model.supported_parameters?.includes('response_format') ?? null,
       vision: modalities.includes('image'), embedding: false, coding_suitability: null,
-      reasoning_support: model.supported_parameters?.includes('reasoning') ?? null, loaded: null, parameter_size: null
+      reasoning_support: model.supported_parameters?.includes('reasoning') ?? null, loaded: null, parameter_size: null, execution_channel: 'openrouter-cloud'
     }, heuristics: { coding_suitability: /code|coder|devstral|codestral/i.test(`${model.id} ${model.name ?? ''}`) ? 'likely' : 'unknown' } });
     return { ...descriptor, is_free: free, pricing: { prompt: promptPrice, completion: completionPrice }, cost_category: free ? 'FREE' : 'METERED', provider_default_supported: false };
   }

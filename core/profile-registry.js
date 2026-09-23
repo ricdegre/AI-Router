@@ -3,12 +3,13 @@ import { resolveWithin } from './paths.js';
 import { readJson, updateJsonAtomic } from './json-store.js';
 import { AiRouterError } from './errors.js';
 import { validateProviderTimeouts } from './provider-timeout-policy.js';
+import { normalizeInferenceProfile } from '../providers/core/inference-profile.js';
 
 export const PROFILE_SCHEMA_VERSION = '0.1';
 const COST_CATEGORIES = ['local', 'subscription', 'metered', 'LOCAL', 'FREE', 'SUBSCRIPTION_INCLUDED', 'METERED_LOW', 'METERED_MEDIUM', 'METERED_HIGH', 'UNKNOWN'];
 const LOCATIONS = ['local', 'cloud'];
 const STATUSES = ['unknown', 'unconfigured', 'connecting', 'auth-pending', 'connected', 'model-required', 'ready', 'available', 'unavailable', 'disabled'];
-const SENSITIVE_PROFILE_KEY = /(password|secret|token|api.?key|credential)/i;
+const SENSITIVE_PROFILE_KEY = /(password|secret|api.?key|credential|^(?:access|refresh|auth|bearer)?_?token$)/i;
 
 function rejectSecrets(value, trail = '') {
   if (!value || typeof value !== 'object') return;
@@ -41,6 +42,8 @@ export function validateProfile(input) {
   if (input.selected_model_id !== undefined && input.selected_model_id !== null && (typeof input.selected_model_id !== 'string' || !input.selected_model_id || input.selected_model_id.length > 160)) throw new AiRouterError('Profile selected model is invalid.', 'INVALID_PROFILE');
   if (input.models?.some((model) => !model || typeof model !== 'object' || typeof model.model_id !== 'string' || !model.model_id || model.model_id.length > 160 || (model.provider_id && model.provider_id !== input.provider_id))) throw new AiRouterError('Profile model descriptors are invalid.', 'INVALID_PROFILE');
   if (input.selected_model_id && !input.models?.some((model) => model.model_id === input.selected_model_id)) throw new AiRouterError('The selected model must be present in the profile model list.', 'INVALID_PROFILE');
+  const selectedModel = input.models?.find((model) => model.model_id === input.selected_model_id) ?? null;
+  const inference = normalizeInferenceProfile({ execution_channel: input.execution_channel, reasoning_mode: input.default_reasoning_mode, reasoning_effort: input.default_reasoning_effort, max_output_tokens: input.default_max_output_limit, cost_category: input.cost_category }, selectedModel);
   const timeoutPolicy = input.timeout_policy === undefined ? undefined : validateProviderTimeouts(input.timeout_policy, {});
   for (const model of input.models ?? []) if (model.configured_overrides?.timeout_policy) validateProviderTimeouts(model.configured_overrides.timeout_policy, {});
   return {
@@ -54,6 +57,10 @@ export function validateProfile(input) {
     runtime_isolation: {},
     ...input,
     ...(timeoutPolicy ? { timeout_policy: timeoutPolicy } : {}),
+    execution_channel: inference.execution_channel,
+    default_reasoning_mode: inference.reasoning_mode,
+    default_reasoning_effort: inference.reasoning_effort,
+    default_max_output_limit: inference.max_output_tokens,
     display_name: input.display_name.trim(),
     capabilities_override: { add: [...(overrides.add ?? [])], remove: [...(overrides.remove ?? [])] }
   };

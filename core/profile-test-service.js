@@ -1,5 +1,6 @@
 import { AiRouterError } from './errors.js';
 import { resolveProviderTimeout, validateProviderTimeouts } from './provider-timeout-policy.js';
+import { normalizeInferenceProfile } from '../providers/core/inference-profile.js';
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{1,79}$/;
 
@@ -39,7 +40,8 @@ export class ProfileTestService {
     const modelDescriptor = profile.models?.find((item) => item.model_id === model) ?? null;
     const timeoutMs = resolveProviderTimeout('test_chat', { global: this.timeoutPolicy, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor });
     const started = performance.now();
-    const result = await provider.testChat({ profile_id: profile.profile_id, model, message, max_output_tokens: maxOutputTokens, timeout_ms: timeoutMs });
-    return { profile_id: profile.profile_id, provider_id: profile.provider_id, status: result.status ?? 'connected', response: String(result.response ?? '').slice(0, 16_384), model: result.model ?? model, configured_model: configuredModel || null, model_override: Boolean(requestedModel && configuredModel && requestedModel !== configuredModel), latency_ms: result.latency_ms ?? Math.round(performance.now() - started), usage_delta: result.usage_delta ?? null, isolation: { project_files: false, tools: false, memory: false, git: false, tasks: false, routing: false } };
+    const inference = normalizeInferenceProfile({ execution_channel: profile.execution_channel, reasoning_mode: input.reasoning_mode ?? profile.default_reasoning_mode, reasoning_effort: input.reasoning_effort ?? profile.default_reasoning_effort, max_output_tokens: maxOutputTokens, timeout_ms: timeoutMs, cost_category: profile.cost_category }, modelDescriptor);
+    const result = await provider.testChat({ profile_id: profile.profile_id, model, message, max_output_tokens: maxOutputTokens, timeout_ms: timeoutMs, inference });
+    return { profile_id: profile.profile_id, provider_id: profile.provider_id, execution_channel: inference.execution_channel, reasoning_effort: inference.reasoning_effort, reasoning_mode: inference.reasoning_mode, status: result.status ?? 'connected', response: String(result.response ?? '').slice(0, 16_384), model: result.model ?? model, configured_model: configuredModel || null, model_override: Boolean(requestedModel && configuredModel && requestedModel !== configuredModel), latency_ms: result.latency_ms ?? Math.round(performance.now() - started), usage_delta: result.usage_delta ?? null, isolation: { project_files: false, tools: false, memory: false, git: false, tasks: false, routing: false } };
   }
 }

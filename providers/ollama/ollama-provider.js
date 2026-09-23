@@ -12,7 +12,9 @@ export class OllamaProvider extends ProviderAdapter {
       type: 'local',
       strength_class: options.strengthClass ?? 'standard',
       capabilities: ['chat', 'coding', 'local', 'streaming'],
-      authentication_modes: ['none']
+      authentication_modes: ['none'],
+      execution_channels: [{ id: 'ollama-local', name: 'Ollama Local', cost_category: 'LOCAL', metered: false }],
+      inference_controls: []
     });
     this.baseUrl = new URL(options.baseUrl ?? 'http://127.0.0.1:11434');
     this.fetch = options.fetch ?? globalThis.fetch;
@@ -107,7 +109,8 @@ export class OllamaProvider extends ProviderAdapter {
         coding_suitability: null,
         reasoning_support: capabilities.includes('thinking') ? true : capabilities.length ? false : null,
         loaded: loaded.some((item) => (item.name ?? item.model) === modelId),
-        parameter_size: parameterSize
+        parameter_size: parameterSize,
+        execution_channel: 'ollama-local'
       },
       overrides: options.overrides ?? {},
       heuristics: {
@@ -124,7 +127,7 @@ export class OllamaProvider extends ProviderAdapter {
       return models.map((model) => createModelDescriptor({
         providerId: this.descriptor.id,
         modelId: model.name,
-        discovered: { display_name: model.name, local: true, loaded: loaded.some((item) => (item.name ?? item.model) === model.name) },
+        discovered: { display_name: model.name, local: true, loaded: loaded.some((item) => (item.name ?? item.model) === model.name), execution_channel: 'ollama-local' },
         overrides: options.overrides?.[model.name] ?? {}
       }));
     }

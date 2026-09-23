@@ -23,7 +23,7 @@ export class AttemptStore {
     await updateJsonAtomic(this.path(projectId, taskId), [], (attempts) => {
       outcome = {
         attempt_protocol_version: '0.1', attempt_number: attempts.length + 1,
-        provider_id: data.provider_id, profile_id: data.profile_id, model_id: data.model_id ?? null,
+        provider_id: data.provider_id, profile_id: data.profile_id, model_id: data.model_id ?? null, execution_channel: data.execution_channel ?? null, reasoning_mode: data.reasoning_mode ?? null, reasoning_effort: data.reasoning_effort ?? null,
         started_at: new Date().toISOString(), ended_at: null,
         task_version: data.task_version ?? 1, memory_version: data.memory_version,
         workspace_checkpoint: data.workspace_checkpoint ?? null,

@@ -25,6 +25,15 @@ test('profile metadata rejects secrets and provider reassignment', async (t) => 
   await assert.rejects(() => registry.register(localProfile({ provider_id: 'different' })), { code: 'PROFILE_PROVIDER_MISMATCH' });
 });
 
+test('profile model metadata permits output token limits but still rejects authentication tokens', async (t) => {
+  const root = await temporaryDirectory(t, 'profile-token-metadata-');
+  const registry = new ProfileRegistry(root);
+  const profile = localProfile({ models: [{ provider_id: 'ollama', model_id: 'local-model', discovered_facts: { max_output_tokens: 4096 } }], selected_model_id: 'local-model' });
+  const saved = await registry.register(profile);
+  assert.equal(saved.profile.models[0].discovered_facts.max_output_tokens, 4096);
+  await assert.rejects(() => registry.register(localProfile({ access_token: 'forbidden' })), { code: 'SENSITIVE_PROFILE_FIELD' });
+});
+
 test('profile registry removes one identity without affecting siblings', async (t) => {
   const registry = new ProfileRegistry(path.join(await temporaryDirectory(t), 'runtime'));
   await registry.register(localProfile());

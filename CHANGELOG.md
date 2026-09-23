@@ -2,6 +2,15 @@
 
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
+## 0.10.0-pre.0 — Generic inference profiles and subscription CLI channels
+
+- Added provider-independent inference configuration for execution channel, reasoning mode/effort, latency class, output ceiling, timeout, and cost category.
+- OpenAI model discovery now preserves account-reported effort options and defaults; profile defaults and task overrides are validated and sent to Codex App Server per turn.
+- Routing, durable attempts, audit events, VS Code selection, Profiles, Models, and Routing Explain distinguish model and reasoning effort.
+- Added official Antigravity CLI and Claude Code subscription-channel adapters with safe headless execution boundaries, dynamic model parsers, and no implicit API-key fallback.
+- Registered Gemini API as a separate metered channel that is disabled by default.
+- Added a validated provider plugin manifest foundation for future built-in or community adapters.
+
 ## 0.9.0-pre.0 — Personal ChatGPT subscription worker
 
 - Replaced the OpenAI access-token form with official App Server `chatgpt` browser authentication for personal subscription profiles.

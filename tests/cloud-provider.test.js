@@ -105,10 +105,10 @@ test('OpenAI ChatGPT subscription profiles use isolated OAuth state and expose e
     account: async (options) => { calls.push(['account', options.profileId]); return signedIn ? { account: { type: 'chatgpt', planType: 'pro', email: null }, requiresOpenaiAuth: true } : { account: null, requiresOpenaiAuth: true }; },
     startLogin: async (options) => { calls.push(['login', options.profileId]); return { status: 'auth-pending', type: 'chatgpt', login_id: 'login-one', auth_url: 'https://chatgpt.com/auth' }; },
     loginState: () => ({ status: signedIn ? 'completed' : 'pending' }),
-    models: async (options) => { calls.push(['models', options.profileId]); return { data: [{ id: 'model-one', model: 'model-one', displayName: 'Model One', hidden: false, inputModalities: ['text', 'image'], supportedReasoningEfforts: ['medium'], modelSpecialty: 'coding' }] }; },
+    models: async (options) => { calls.push(['models', options.profileId]); return { data: [{ id: 'model-one', model: 'model-one', displayName: 'Model One', hidden: false, inputModalities: ['text', 'image'], supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }], defaultReasoningEffort: 'medium', modelSpecialty: 'coding' }] }; },
     rateLimits: async (options) => { calls.push(['limits', options.profileId]); return { rateLimits: { primary: { usedPercent: 12, windowDurationMins: 180, resetsAt: 1234 } }, rateLimitsByLimitId: { codex: { primary: { usedPercent: 12, windowDurationMins: 180, resetsAt: 1234 } } } }; },
     logout: async () => { signedIn = false; },
-    runTurn: async (options) => ({ status: 'completed', model: options.model, output: 'OK', tool_used: false })
+    runTurn: async (options) => { calls.push(['turn', options.profileId, options.effort]); return { status: 'completed', model: options.model, output: 'OK', tool_used: false }; }
   };
   const provider = new CodexSubscriptionProvider({ secretStore: vault, appServer });
   const pending = await provider.connect({ profile_id: 'openai-pro' });
@@ -117,8 +117,8 @@ test('OpenAI ChatGPT subscription profiles use isolated OAuth state and expose e
   signedIn = true;
   const connected = await provider.connectionStatus({ profile_id: 'openai-pro' });
   assert.equal(connected.status, 'connected'); assert.equal(connected.plan_type, 'pro'); assert.equal(connected.model_count, 1);
-  const models = await provider.discoverModels({ profile_id: 'openai-pro' }); assert.equal(models[0].model_id, 'model-one'); assert.equal(models[0].discovered_facts.vision, true);
+  const models = await provider.discoverModels({ profile_id: 'openai-pro' }); assert.equal(models[0].model_id, 'model-one'); assert.equal(models[0].discovered_facts.vision, true); assert.deepEqual(models[0].discovered_facts.supported_reasoning_efforts, ['low', 'medium']); assert.equal(models[0].discovered_facts.default_reasoning_effort, 'medium');
   const limits = await provider.limits({ profile_id: 'openai-pro' }); assert.equal(limits.rateLimitsByLimitId.codex.primary.windowDurationMins, 180);
-  const chat = await provider.testChat({ profile_id: 'openai-pro', model: 'model-one', message: 'Reply only with OK', max_output_tokens: 8, timeout_ms: 5000 }); assert.equal(chat.response, 'OK');
-  assert.equal(calls.every(([, profile]) => profile === 'openai-pro'), true);
+  const chat = await provider.testChat({ profile_id: 'openai-pro', model: 'model-one', message: 'Reply only with OK', max_output_tokens: 8, timeout_ms: 5000, inference: { reasoning_effort: 'low' } }); assert.equal(chat.response, 'OK');
+  assert.equal(calls.every(([, profile]) => profile === 'openai-pro'), true); assert.equal(calls.find(([name]) => name === 'turn')[2], 'low');
 });

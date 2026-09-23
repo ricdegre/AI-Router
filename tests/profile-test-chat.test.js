@@ -68,7 +68,7 @@ test('Test Connection reports auth, health, reachability, and model availability
 test('Test Chat is profile-isolated and receives no filesystem, tools, memory, Git, task, or routing context', async (t) => {
   const f = await fixture(t); const result = await f.api.handlePost('/api/profiles/account-two/test-chat', { message: 'Reply only with OK', model: 'small-model', max_output_tokens: 16 });
   assert.equal(result.response, 'OK'); assert.equal(result.profile_id, 'account-two'); assert.equal(result.model, 'small-model'); assert.deepEqual(result.isolation, { project_files: false, tools: false, memory: false, git: false, tasks: false, routing: false });
-  assert.deepEqual(Object.keys(f.captured()).sort(), ['max_output_tokens', 'message', 'model', 'profile_id', 'timeout_ms']);
+  assert.deepEqual(Object.keys(f.captured()).sort(), ['inference', 'max_output_tokens', 'message', 'model', 'profile_id', 'timeout_ms']);
   assert.equal(f.captured().profile_id, 'account-two'); assert.equal(f.captured().max_output_tokens, 16);
 });
 

@@ -16,6 +16,8 @@ import { OllamaProvider } from '../providers/ollama/ollama-provider.js';
 import { OpenRouterProvider } from '../providers/openrouter/openrouter-provider.js';
 import { GeminiProvider } from '../providers/gemini/gemini-provider.js';
 import { CodexSubscriptionProvider } from '../providers/openai/codex-subscription-provider.js';
+import { AntigravityProvider } from '../providers/google/antigravity-provider.js';
+import { ClaudeCodeProvider } from '../providers/anthropic/claude-code-provider.js';
 import { SecretStore } from './dpapi-vault.js';
 import { CircuitBreaker } from '../providers/core/circuit-breaker.js';
 import { RoutingPolicy } from '../routing/policy.js';
@@ -44,8 +46,10 @@ export function createRuntimeServices(config, options = {}) {
   if (options.registerOllama !== false) providerRegistry.register(options.ollamaProvider ?? new OllamaProvider({ timeoutPolicy: providerTimeouts }));
   if (options.registerCloudProviders ?? options.providers === undefined) {
     providerRegistry.register(options.openRouterProvider ?? new OpenRouterProvider({ secretStore, timeoutPolicy: providerTimeouts }));
-    providerRegistry.register(options.geminiProvider ?? new GeminiProvider({ secretStore, timeoutPolicy: providerTimeouts }));
+    providerRegistry.register(options.geminiProvider ?? new GeminiProvider({ secretStore, timeoutPolicy: providerTimeouts }), { enabled: false });
     providerRegistry.register(options.openAiProvider ?? new CodexSubscriptionProvider({ secretStore, timeoutPolicy: providerTimeouts, dataRoot }));
+    providerRegistry.register(options.antigravityProvider ?? new AntigravityProvider({ dataRoot }));
+    providerRegistry.register(options.claudeProvider ?? new ClaudeCodeProvider({ dataRoot }));
   }
   for (const provider of options.providers ?? []) providerRegistry.register(provider);
   const memoryManager = new MemoryManager(dataRoot);

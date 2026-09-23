@@ -2,6 +2,7 @@ import { AiRouterError } from '../core/errors.js';
 import { resolvedModelValue } from '../providers/core/model-descriptor.js';
 import { limitsAllowRouting } from '../providers/core/limits.js';
 import { evaluateCost } from './cost-policy.js';
+import { inferenceVariants } from '../providers/core/inference-profile.js';
 
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 const STRENGTH = { basic: 0, standard: 1, strong: 2 };
@@ -72,7 +73,7 @@ export class RoutingPolicy {
         evaluations.push({ provider_id: profile.provider_id, profile_id: profile.profile_id, model_id: null, eligible: false, rejected: ['provider-not-registered'], reasons: [] });
         continue;
       }
-      for (const model of candidateModels) {
+      for (const model of candidateModels) for (const inference of inferenceVariants(profile, model)) {
         const reasons = [];
         const rejected = [];
         const modelId = model?.model_id ?? null;
@@ -85,6 +86,8 @@ export class RoutingPolicy {
         if (task.manual_provider && task.manual_provider !== provider.id) rejected.push('not-manual-provider');
         if (task.manual_profile && task.manual_profile !== profile.profile_id) rejected.push('not-manual-profile');
         if (task.manual_model && task.manual_model !== modelId) rejected.push('not-manual-model');
+        if (task.manual_reasoning_effort && task.manual_reasoning_effort !== inference.reasoning_effort) rejected.push('not-manual-reasoning-effort');
+        if (task.manual_execution_channel && task.manual_execution_channel !== inference.execution_channel) rejected.push('not-manual-execution-channel');
         const providerConstraints = task.provider_constraints ?? {};
         const modelConstraints = task.model_constraints ?? {};
         if (providerConstraints.allowed_provider_ids?.length && !providerConstraints.allowed_provider_ids.includes(provider.id)) rejected.push('provider-not-allowed');
@@ -131,13 +134,14 @@ export class RoutingPolicy {
         if (task.manual_provider === provider.id || task.manual_profile === profile.profile_id || task.manual_model === modelId) reasons.push('manual-override-match');
         evaluations.push({
           provider_id: provider.id, profile_id: profile.profile_id, model_id: modelId,
-          eligible: rejected.length === 0, score: cost.score + preferenceScore(task, provider, profile, model),
+          execution_channel: inference.execution_channel, reasoning_mode: inference.reasoning_mode, reasoning_effort: inference.reasoning_effort, inference,
+          eligible: rejected.length === 0, score: cost.score + preferenceScore(task, provider, profile, model) + (profile.default_reasoning_effort && inference.reasoning_effort !== profile.default_reasoning_effort ? 1 : 0),
           reasons, rejected, health: health.status, capabilities: [...capabilities],
           strength_class: strength, context_size: contextSize, cost_category: cost.category
         });
       }
     }
-    const eligible = evaluations.filter((entry) => entry.eligible).sort((a, b) => a.score - b.score || a.profile_id.localeCompare(b.profile_id) || String(a.model_id).localeCompare(String(b.model_id)));
+    const eligible = evaluations.filter((entry) => entry.eligible).sort((a, b) => a.score - b.score || a.profile_id.localeCompare(b.profile_id) || String(a.model_id).localeCompare(String(b.model_id)) || String(a.reasoning_effort).localeCompare(String(b.reasoning_effort)));
     return {
       policy_version: '0.2', task, selected: eligible[0] ?? null, accepted_candidates: eligible,
       rejected_candidates: evaluations.filter((entry) => !entry.eligible), evaluations,

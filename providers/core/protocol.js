@@ -65,6 +65,15 @@ export class ProviderAdapter {
     return [...this.descriptor.authentication_modes];
   }
 
+  pluginManifest() {
+    return {
+      manifest_version: '0.1', provider_id: this.descriptor.id,
+      auth_modes: this.authenticationModes(), execution_channels: this.descriptor.execution_channels?.length ? this.descriptor.execution_channels : [{ id: `${this.descriptor.id}-default`, name: 'Default', cost_category: 'UNKNOWN', metered: this.descriptor.capabilities.includes('metered_api') }],
+      operations: { health: true, model_discovery: typeof this.discoverModels === 'function', test_connection: true, test_chat: this.testChat !== ProviderAdapter.prototype.testChat, execute: this.execute !== ProviderAdapter.prototype.execute },
+      inference_controls: this.descriptor.inference_controls ?? []
+    };
+  }
+
   async usage() {
     return { available: false };
   }

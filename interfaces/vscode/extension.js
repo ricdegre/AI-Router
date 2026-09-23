@@ -25,8 +25,8 @@ function activate(context) {
     try {
       const router = client(); const project = await router.ensureProject(folder.uri.fsPath, folder.name);
       await router.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
-      const configuration=vscode.workspace.getConfiguration('aiRouter');const selection={provider_id:configuration.get('provider',''),profile_id:configuration.get('profile',''),model_id:configuration.get('model','')};
-      const route = await router.explain(instruction,selection); outputLine(channel, 'Routing status', route.selected ? 'Selected' : 'No eligible route'); outputLine(channel, 'Provider / profile / model', route.selected ? `${route.selected.provider_id} / ${route.selected.profile_id} / ${route.selected.model_id || 'provider default'}` : route.error);
+      const configuration=vscode.workspace.getConfiguration('aiRouter');const selection={provider_id:configuration.get('provider',''),profile_id:configuration.get('profile',''),model_id:configuration.get('model',''),execution_channel:configuration.get('executionChannel',''),reasoning_effort:configuration.get('reasoningEffort','')};
+      const route = await router.explain(instruction,selection); outputLine(channel, 'Routing status', route.selected ? 'Selected' : 'No eligible route'); outputLine(channel, 'Provider / channel / profile / model / effort', route.selected ? `${route.selected.provider_id} / ${route.selected.execution_channel || 'default channel'} / ${route.selected.profile_id} / ${route.selected.model_id || 'provider default'} / ${route.selected.reasoning_effort || 'provider default'}` : route.error);
       if (!route.selected) return;
       const created = await router.createTask(project.projectId, instruction, taskInstruction,selection); const taskId = created.descriptor.task_id; outputLine(channel, 'Task', taskId); outputLine(channel, 'Progress', created.state.state);
       await router.resume(project.projectId, taskId); const detail = await router.task(project.projectId, taskId);

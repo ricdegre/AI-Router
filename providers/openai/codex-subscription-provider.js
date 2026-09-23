@@ -32,7 +32,7 @@ function limitDelta(before, after) {
 
 export class CodexSubscriptionProvider extends ProviderAdapter {
   constructor(options = {}) {
-    super({ id: 'openai', name: 'OpenAI / ChatGPT subscription', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['chatgpt-oauth'] });
+    super({ id: 'openai', name: 'OpenAI', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['chatgpt-oauth'], execution_channels: [{ id: 'codex-subscription', name: 'Codex subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false }], inference_controls: ['reasoning_effort'] });
     this.secretStore = options.secretStore;
     this.timeoutPolicy = validateProviderTimeouts(options.timeoutPolicy ?? {});
     this.appServer = options.appServer ?? new CodexAppServerClient({ dataRoot: options.dataRoot });
@@ -76,16 +76,16 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
 
   async discoverModels({ profile_id } = {}) {
     const result = await this.inspect(profile_id);
-    return result.models.filter((model) => !model.hidden).map((model) => createModelDescriptor({ providerId: 'openai', modelId: model.model ?? model.id, discovered: { display_name: model.displayName ?? model.model ?? model.id, family: model.family ?? null, local: false, context_size: model.contextWindow ?? null, tool_support: true, structured_output_support: true, vision: model.inputModalities?.includes('image') ?? null, embedding: false, coding_suitability: model.modelSpecialty === 'coding' ? 'high' : 'likely', reasoning_support: Array.isArray(model.supportedReasoningEfforts) && model.supportedReasoningEfforts.length > 0, loaded: null, parameter_size: null } }));
+    return result.models.filter((model) => !model.hidden).map((model) => createModelDescriptor({ providerId: 'openai', modelId: model.model ?? model.id, discovered: { display_name: model.displayName ?? model.model ?? model.id, family: model.family ?? null, local: false, context_size: model.contextWindow ?? null, tool_support: true, structured_output_support: true, vision: model.inputModalities?.includes('image') ?? null, embedding: false, coding_suitability: model.modelSpecialty === 'coding' ? 'high' : 'likely', reasoning_support: Array.isArray(model.supportedReasoningEfforts) && model.supportedReasoningEfforts.length > 0, loaded: null, parameter_size: null, execution_channel: 'codex-subscription', supported_reasoning_efforts: (model.supportedReasoningEfforts ?? []).map((item) => typeof item === 'string' ? item : item.reasoningEffort).filter(Boolean), default_reasoning_effort: model.defaultReasoningEffort ?? null, supported_reasoning_modes: [], default_reasoning_mode: null, latency_class: null, max_output_tokens: model.maxOutputTokens ?? null, quota_bucket: null } }));
   }
 
   async limits({ profile_id } = {}) { const result = await this.inspect(profile_id); const safe = safeRateLimits(result.rateLimits); return { available: Boolean(safe?.rateLimits || safe?.rateLimitsByLimitId), ...(safe ?? {}) }; }
   async usage({ profile_id } = {}) { return this.limits({ profile_id }); }
 
-  async testChat({ profile_id, model, message, max_output_tokens = 32, timeout_ms }) {
+  async testChat({ profile_id, model, message, max_output_tokens = 32, timeout_ms, inference = {} }) {
     const before = await this.appServer.rateLimits({ profileId: profile_id, timeoutMs: 15_000 }).catch(() => null);
     const started = performance.now();
-    const result = await this.appServer.runTurn({ profileId: profile_id, model, timeoutMs: timeout_ms, purpose: 'connection-test', prompt: `This is an isolated connection test. Do not use tools, commands, files, Git, memory, or external resources. Reply directly to the user in no more than ${max_output_tokens} output tokens.\n\nUser message:\n${message}` });
+    const result = await this.appServer.runTurn({ profileId: profile_id, model, effort: inference.reasoning_effort, timeoutMs: timeout_ms, purpose: 'connection-test', prompt: `This is an isolated connection test. Do not use tools, commands, files, Git, memory, or external resources. Reply directly to the user in no more than ${max_output_tokens} output tokens.\n\nUser message:\n${message}` });
     if (result.tool_used) throw new ProviderError('The Codex worker attempted to use a tool during isolated Test Chat.', 'OPENAI_TEST_CHAT_TOOL_BLOCKED', { providerId: 'openai', failureCategory: 'policy_rejection' });
     const after = await this.appServer.rateLimits({ profileId: profile_id, timeoutMs: 15_000 }).catch(() => null);
     return { status: 'connected', response: result.output, model: result.model, latency_ms: Math.round(performance.now() - started), usage_delta: limitDelta(before, after) };
@@ -94,7 +94,7 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
   async execute(request) {
     const profileId = request.profile_id ?? request.profile?.profile_id;
     const prompt = `You are a subordinate execution worker for AI Router. You do not own routing, files, Git, memory, validation, checkpoints, or handoff. Analyze only the context supplied below. Do not use tools or attempt to inspect or modify the project.\n\nRESPONSE CONTRACT\nReturn only one JSON object, with no Markdown fence or commentary. It must contain exactly these top-level fields: schema_version (the string "0.1"), status (one of "ok", "partial", "blocked", "failed"), summary (a non-empty string), observations (string array), proposed_actions (object array), validation_requested (string array), remaining_work (string array), uncertainty (string array), and handoff_notes (string array). Preserve any proposed action object supplied by the task exactly.\n\nTASK\n${request.prompt ?? request.task?.objective ?? ''}\n\nROUTER CONTEXT\n${request.context ?? ''}`;
-    return this.appServer.runTurn({ profileId, model: request.model, prompt, timeoutMs: request.timeout_ms, purpose: 'router-task' });
+    return this.appServer.runTurn({ profileId, model: request.model, effort: request.inference?.reasoning_effort, prompt, timeoutMs: request.timeout_ms, purpose: 'router-task' });
   }
 
   async executeStructured(request) {

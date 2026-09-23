@@ -30,6 +30,8 @@ This repository currently provides:
 - multi-account profile management with provider-aware model selection, isolated connection checks, and bounded Test Chat inference that has no project or tool access;
 - encrypted per-profile cloud credentials, real OpenRouter and opt-in Gemini API adapters, and explicit free/metered cost policy;
 - isolated personal ChatGPT subscription profiles using the official Codex App Server browser flow, exact provider-reported limits, model discovery, Test Chat, and routed execution without OpenAI API billing fallback;
+- generic inference profiles that keep provider, execution channel, account, model, reasoning effort, timeout, output ceiling, and cost policy separate;
+- prepared official CLI subscription channels for Google Antigravity and Claude Code, with dynamic discovery activated only after the user installs and signs in to those CLIs;
 - a thin VS Code extension that connects only to the local AI Router control API and can select a router provider/profile/model;
 - an artificial continuity demo and isolated tests.
 
@@ -96,7 +98,7 @@ The source for the VS Code client is in `interfaces/vscode`. Launch it in an Ext
 
 ## Development status
 
-AI Router 0.9.0-pre.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.10.0-pre.0 is in early development and is not production-ready. Protocols are explicitly versioned but may require migration before a stable release. See [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## License
 

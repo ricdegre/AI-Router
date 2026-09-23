@@ -4,7 +4,9 @@ export const MODEL_DESCRIPTOR_VERSION = '0.1';
 
 const FACT_FIELDS = [
   'display_name', 'family', 'local', 'context_size', 'tool_support', 'structured_output_support',
-  'vision', 'embedding', 'coding_suitability', 'reasoning_support', 'loaded', 'parameter_size'
+  'vision', 'embedding', 'coding_suitability', 'reasoning_support', 'loaded', 'parameter_size',
+  'execution_channel', 'supported_reasoning_efforts', 'default_reasoning_effort',
+  'supported_reasoning_modes', 'default_reasoning_mode', 'latency_class', 'max_output_tokens', 'quota_bucket'
 ];
 
 function nullableBoolean(value, field) {
@@ -35,6 +37,11 @@ export function createModelDescriptor({ providerId, modelId, discovered = {}, ov
   facts.reasoning_support = nullableBoolean(facts.reasoning_support, 'reasoning_support');
   facts.loaded = nullableBoolean(facts.loaded, 'loaded');
   facts.context_size = nullableNumber(facts.context_size, 'context_size');
+  facts.max_output_tokens = nullableNumber(facts.max_output_tokens, 'max_output_tokens');
+  for (const field of ['supported_reasoning_efforts', 'supported_reasoning_modes']) {
+    if (facts[field] !== null && (!Array.isArray(facts[field]) || facts[field].some((value) => typeof value !== 'string'))) throw new AiRouterError(`Model field '${field}' must be a string array or unknown.`, 'INVALID_MODEL_DESCRIPTOR');
+    if (Array.isArray(facts[field])) facts[field] = [...new Set(facts[field])];
+  }
   if (overrides.strength_class !== undefined && !['basic', 'standard', 'strong'].includes(overrides.strength_class)) {
     throw new AiRouterError('Model strength override is invalid.', 'INVALID_MODEL_DESCRIPTOR');
   }

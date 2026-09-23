@@ -5,7 +5,7 @@ import { resolveProviderTimeout } from './provider-timeout-policy.js';
 import { descriptorFromTask } from './task-execution-descriptor.js';
 import { actionExecutionIdentity, receiptHashes } from '../actions/idempotency.js';
 
-function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}`; }
+function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}:${candidate.reasoning_effort ?? '-'}`; }
 
 function failureFrom(error) {
   if (error.code === 'MALFORMED_STRUCTURED_RESPONSE' || error.code === 'INVALID_STRUCTURED_RESPONSE' || error.code === 'UNSUPPORTED_STRUCTURED_RESPONSE') return 'malformed_output';
@@ -115,7 +115,7 @@ export class ResilientOrchestrator {
         await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'no-eligible-unused-candidate' });
         return { status: 'blocked', route, attempts: priorAttempts, reason: 'no-eligible-unused-candidate' };
       }
-      await this.auditLog?.record('route_selected', { project_id: task.project_id, task_id: task.task_id, candidates: candidates.map((candidate) => ({ provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id })) });
+      await this.auditLog?.record('route_selected', { project_id: task.project_id, task_id: task.task_id, candidates: candidates.map((candidate) => ({ provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id, execution_channel: candidate.execution_channel, reasoning_effort: candidate.reasoning_effort })) });
 
       for (let index = 0; index < candidates.length; index += 1) {
         const candidate = candidates[index];
@@ -132,7 +132,7 @@ export class ResilientOrchestrator {
         const attempt = await this.attemptStore.start(task.project_id, task.task_id, {
           ...candidate, task_version: task.task_version ?? 1, memory_version: '0.1', workspace_checkpoint: preCheckpoint
         });
-        await this.auditLog?.record('provider_called', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id });
+        await this.auditLog?.record('provider_called', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id, execution_channel: candidate.execution_channel, reasoning_effort: candidate.reasoning_effort });
         await this.executionPlanStore?.advance(task.project_id, task.task_id, 'PROVIDER', { attempt: attempt.attempt_number });
 
         let structured;
@@ -145,7 +145,7 @@ export class ResilientOrchestrator {
           const profile = profiles.find((item) => item.profile_id === candidate.profile_id);
           const modelDescriptor = profile?.models?.find((item) => item.model_id === candidate.model_id) ?? null;
           const timeoutMs = resolveProviderTimeout('inference', { global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
-          const request = { task, project, profile, model: candidate.model_id ?? task.model, context: context.rendered, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: timeoutMs };
+          const request = { task, project, profile, model: candidate.model_id ?? task.model, inference: candidate.inference, context: context.rendered, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: candidate.inference?.timeout_ms ?? timeoutMs };
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);

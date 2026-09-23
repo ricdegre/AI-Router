@@ -22,6 +22,14 @@ OpenAI officially documents App Server `account/login/start` with `type: "chatgp
 
 AI Router does not copy the desktop/CLI login, ask for a password, expose tokens in process arguments, or fall back to an OpenAI API key. The isolated Codex worker runs against a blank read-only workspace and returns untrusted proposals; AI Router retains routing, action mediation, validation, checkpoints, memory, and handoff authority. Disconnect invokes App Server logout and removes that profile's isolated local runtime state.
 
+## Google Antigravity subscription
+
+The Antigravity adapter targets Google's official `agy` CLI account flow and headless JSON mode. It discovers account-visible model slugs with `agy models`, so Gemini, Claude, GPT/open-weight, and future families remain dynamic. It sends only supported model/effort combinations, runs with the CLI sandbox enabled, and parses quota windows literally when `/usage` exposes them. Google API-key variables are removed from the worker environment. The CLI is not bundled or installed automatically.
+
+## Anthropic / Claude subscription
+
+The Anthropic adapter targets official Claude Code login and print mode for Pro/Max subscription access. It removes `ANTHROPIC_API_KEY` and related variables, disables tools and MCP, requests restricted mode, and never switches to Console API billing automatically. Model/effort metadata is accepted only from the connected CLI. The CLI is not bundled or installed automatically; usage credits must remain declined to stay inside subscription allowance.
+
 ## Secret storage
 
 Credentials are encrypted using Windows DPAPI for the current OS user and saved only under the private runtime root. Profile metadata, memory, task descriptors, audit records, dashboard responses, and source control contain no plaintext credential. There is no plaintext fallback on unsupported platforms.
