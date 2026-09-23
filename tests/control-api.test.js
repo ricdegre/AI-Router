@@ -117,3 +117,11 @@ test('readiness requires live VS Code, continuity, E2E, and fallback evidence', 
   assert.equal(ready.checks.vscode_connected, true); assert.equal(ready.checks.continuity_passed, true); assert.equal(ready.checks.fallback_passed, true);
   assert.notEqual(ready.status, 'READY FOR REAL PROJECTS', 'a single execution resource must not satisfy the two-resource gate');
 });
+
+test('VS Code integration API exposes only fixed actions', async (t) => {
+  const { api, services } = await fixture(t); const calls = [];
+  services.vscodeIntegration = { async inspect() { return { vscode: { status: 'Installed' }, extension: { connected: true } }; }, async perform(action) { calls.push(action); return { action, changed: false, extension: { connected: true } }; } };
+  assert.equal((await api.handleGet('/api/integrations/vscode', new URLSearchParams())).extension.connected, true);
+  await api.handlePost('/api/integrations/vscode/repair', {}); assert.deepEqual(calls, ['repair']);
+  await assert.rejects(() => api.handlePost('/api/integrations/vscode/shell', {}), { code: 'CONTROL_ENDPOINT_NOT_FOUND' });
+});

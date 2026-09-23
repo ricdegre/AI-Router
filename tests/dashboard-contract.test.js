@@ -72,3 +72,9 @@ test('dashboard exposes explicit first-use readiness gates', async () => {
   const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
   for (const text of ['FIRST-USE READINESS', 'READY FOR REAL PROJECTS', 'READY FOR DEMO', 'NOT READY', '/api/readiness', 'Last successful test']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
 });
+
+test('dashboard exposes allowlisted VS Code install, repair, and connection controls', async () => {
+  const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
+  for (const text of ['VS Code Integration', '/api/integrations/vscode', 'Install Extension', 'Repair Extension', 'Reinstall Extension', 'Open VS Code', 'Test Connection']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  assert.doesNotMatch(app, /arbitrary shell|command text/i);
+});

@@ -15,7 +15,7 @@ function activate(context) {
   const notifyPanel = (message) => panel?.webview.postMessage(message);
 
   async function heartbeat() {
-    try { const router = client(); await router.post('/api/readiness/vscode-heartbeat', { version: context.extension.packageJSON.version, workspace: Boolean(vscode.workspace.workspaceFolders?.length) }); status.text = '$(check) AI Router: connected'; notifyPanel({ type: 'connection', connected: true, endpoint: baseUrl() }); }
+    try { const router = client(); await router.post('/api/readiness/vscode-heartbeat', { version: context.extension.packageJSON.version, extension_id: context.extension.id, endpoint: baseUrl(), workspace: Boolean(vscode.workspace.workspaceFolders?.length) }); status.text = '$(check) AI Router: connected'; notifyPanel({ type: 'connection', connected: true, endpoint: baseUrl() }); }
     catch (error) { status.text = '$(warning) AI Router: offline'; notifyPanel({ type: 'connection', connected: false, endpoint: baseUrl(), error: error.message }); }
   }
 

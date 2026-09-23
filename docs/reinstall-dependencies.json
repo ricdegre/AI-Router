@@ -16,7 +16,7 @@
   "paths": {
     "source": "<workspace>/AI-Router",
     "runtime_data": "<workspace>/AI-Router-Data",
-    "vsix": "<workspace>/AI-Router/dist/ai-router-vscode-0.5.0.vsix"
+    "vsix": "<workspace>/AI-Router/dist/ai-router-vscode-0.5.1.vsix"
   },
   "secret_policy": "Do not export OAuth tokens or secrets into plaintext backups. Reconnect after reinstall."
 }

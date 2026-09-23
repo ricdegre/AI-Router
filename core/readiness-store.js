@@ -26,7 +26,7 @@ export class ReadinessStore {
   async heartbeat(input = {}) {
     let result;
     await updateJsonAtomic(this.filePath, { ...DEFAULTS }, (state) => {
-      state.vscode = result = { connected_at: new Date().toISOString(), version: String(input.version ?? 'unknown').slice(0, 40), workspace: Boolean(input.workspace) };
+      state.vscode = result = { connected_at: new Date().toISOString(), version: String(input.version ?? 'unknown').slice(0, 40), workspace: Boolean(input.workspace), extension_id: String(input.extension_id ?? 'unknown').slice(0, 120), endpoint: String(input.endpoint ?? '').slice(0, 160) || null };
       return state;
     });
     return result;

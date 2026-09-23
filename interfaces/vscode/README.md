@@ -3,7 +3,7 @@
 This is the first operational thin client. It talks only to the loopback AI Router
 control API; provider credentials remain in the Dashboard.
 
-Install the packaged `.vsix` with VS Code's **Extensions: Install from VSIX...** command. The AI Router activity-bar panel then provides:
+Normally, double-click `Install AI Router VS Code Extension.vbs` in the repository root. Use `Repair AI Router VS Code Extension.vbs` if installation or activation is damaged. Manual **Extensions: Install from VSIX...** remains available as a fallback. The AI Router activity-bar panel then provides:
 
 - `AI Router: Run Task`
 - `AI Router: Explain Route`

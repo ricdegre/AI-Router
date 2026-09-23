@@ -1,6 +1,6 @@
 {
   "name": "ai-work-router",
-  "version": "0.11.0-pre.0",
+  "version": "0.11.0-pre.1",
   "description": "Provider-ready continuity platform for AI-assisted project work.",
   "type": "module",
   "private": true,
@@ -22,6 +22,8 @@
     "benchmark:routing": "node scripts/decision-routing-benchmark.js",
     "status": "node interfaces/cli/ai-router.js status",
     "control": "node scripts/control-service.js",
-    "control:stop": "node scripts/windows-launcher.js stop"
+    "control:stop": "node scripts/windows-launcher.js stop",
+    "vscode:install": "node scripts/vscode-extension-manager.js install",
+    "vscode:repair": "node scripts/vscode-extension-manager.js repair"
   }
 }

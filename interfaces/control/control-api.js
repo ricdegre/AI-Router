@@ -220,6 +220,7 @@ export class ControlApi {
     if (pathname === '/api/doctor') return this.doctor();
     if (pathname === '/api/settings') return this.settingsStore.load();
     if (pathname === '/api/readiness') return this.readiness();
+    if (pathname === '/api/integrations/vscode') return this.services.vscodeIntegration.inspect();
     const taskMatch = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)$/);
     if (taskMatch) return this.task(decodeURIComponent(taskMatch[1]), decodeURIComponent(taskMatch[2]));
     const attemptsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/attempts$/);
@@ -239,6 +240,12 @@ export class ControlApi {
 
   async handlePost(pathname, body) {
     if (pathname === '/api/readiness/vscode-heartbeat') return this.services.readinessStore.heartbeat(body);
+    const vscodeAction = pathname.match(/^\/api\/integrations\/vscode\/(install|repair|reinstall|open|test)$/);
+    if (vscodeAction) {
+      const result = await this.services.vscodeIntegration.perform(vscodeAction[1]);
+      await this.services.auditLog.record('vscode_integration_action', { action: vscodeAction[1], changed: result.changed ?? false, connected: result.heartbeat?.connected ?? result.extension?.connected ?? result.status?.extension?.connected ?? false });
+      return result;
+    }
     if (pathname === '/api/readiness/evidence') {
       const type = body?.type; const result = await this.services.readinessStore.record(type, body);
       await this.services.auditLog.record('readiness_evidence_recorded', { evidence_type: type, status: result.status, project_id: result.project_id, task_id: result.task_id, provider_id: result.provider_id });

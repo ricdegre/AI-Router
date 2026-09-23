@@ -41,6 +41,17 @@ test('packaged VS Code extension contributes a local-only activity panel and hea
   const manifest = JSON.parse(await fs.readFile(new URL('../interfaces/vscode/package.json', import.meta.url), 'utf8'));
   const extension = await fs.readFile(new URL('../interfaces/vscode/extension.js', import.meta.url), 'utf8');
   assert.equal(manifest.contributes.views.aiRouter[0].id, 'aiRouter.control'); assert.match(manifest.scripts.package, /\.vsix/);
-  assert.match(extension, /\/api\/readiness\/vscode-heartbeat/); assert.match(extension, /registerWebviewViewProvider/);
+  assert.equal(manifest.version, '0.5.1'); assert.equal(manifest.engines.vscode, '^1.85.0'); assert.equal(manifest.contributes.configuration.properties['aiRouter.url'].default, 'http://127.0.0.1:43127');
+  assert.match(extension, /\/api\/readiness\/vscode-heartbeat/); assert.match(extension, /extension_id/); assert.match(extension, /endpoint: baseUrl\(\)/); assert.match(extension, /registerWebviewViewProvider/);
   assert.doesNotMatch(extension, /openai\.com|anthropic\.com|openrouter\.ai|generativelanguage\.googleapis/);
+});
+
+test('Windows one-click launchers use only the fixed local extension manager', async () => {
+  const fs = await import('node:fs/promises');
+  const install = await fs.readFile(new URL('../Install AI Router VS Code Extension.vbs', import.meta.url), 'utf8');
+  const repair = await fs.readFile(new URL('../Repair AI Router VS Code Extension.vbs', import.meta.url), 'utf8');
+  const manager = await fs.readFile(new URL('../scripts/vscode-extension-manager.js', import.meta.url), 'utf8');
+  assert.match(install, /vscode-extension-manager\.js/); assert.match(install, /""" install"/); assert.match(repair, /vscode-extension-manager\.js/); assert.match(repair, /""" repair"/);
+  assert.doesNotMatch(`${install}\n${repair}`, /powershell|uninstall-extension/i);
+  assert.match(manager, /integration\.perform\(action/); assert.doesNotMatch(manager, /exec\(|eval\(|uninstall-extension/);
 });

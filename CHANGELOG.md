@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0-pre.1
+
+- Added idempotent one-click Windows install and repair launchers for the packaged VS Code extension.
+- Added strictly allowlisted VS Code integration status and actions to the local dashboard.
+- Added package/version detection, activation heartbeat verification, recovery documentation, and installer tests.
+
 AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
 ## 0.11.0-pre.0 — First-use readiness and installable VS Code client
