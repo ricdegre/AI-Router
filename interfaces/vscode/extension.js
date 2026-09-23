@@ -43,6 +43,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     }
 
     async function runTask(instruction, overrideSelection = null, readOnly = false, attachments = []) {
+      let taskId = null;
       const folder = vscodeApi.workspace.workspaceFolders?.[0]; if (!folder) return vscodeApi.window.showErrorMessage('Open a workspace before running an AI Router task.');
       const objective = instruction || await vscodeApi.window.showInputBox({ prompt: 'Describe the coding change', ignoreFocusOut: true }); if (!objective) return null;
       const editor = vscodeApi.window.activeTextEditor; const activeFile = editor ? workspaceRelativeFile(folder.uri.fsPath, editor.document.uri) : null;
@@ -55,18 +56,32 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
         notifyPanel({ type: 'progress', value: attachments.length ? 'Uploading attached images securely…' : 'Creating task…' });
         const uploaded = [];
         for (const attachment of attachments) uploaded.push(await router.uploadAttachment(attachment));
-        const created = await router.createTask(project.projectId, objective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id) }); const taskId = created.descriptor.task_id; notifyPanel({ type: 'progress', value: `Running ${taskId}…` });
-        let latestDetail = null; let resumeError = null; let pollInFlight = false;
-        const pollOnce = async () => { if (pollInFlight) return; pollInFlight = true; try { latestDetail = await router.task(project.projectId, taskId); notifyPanel({ type: 'taskProgress', taskId, state: latestDetail.state?.state ?? 'RUNNING' }); } catch (error) { log('task.poll.failed', { task_id: taskId, ...safeError(error) }); } finally { pollInFlight = false; } };
-        await pollOnce(); const pollTimer = setInterval(pollOnce, 2000);
-        try { await router.resume(project.projectId, taskId); } catch (error) { resumeError = error; } finally { clearInterval(pollTimer); }
-        let detail; try { detail = await router.task(project.projectId, taskId); } catch (error) { if (latestDetail) detail = latestDetail; else throw resumeError ?? error; }
-        if (resumeError && !['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED'].includes(detail?.state?.state)) throw resumeError;
+        const created = await router.createTask(project.projectId, objective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id) }); taskId = created.descriptor.task_id; notifyPanel({ type: 'progress', value: `Running ${taskId}…` });
+        let resumeError = null; const resumePromise = router.resume(project.projectId, taskId).catch(error => { resumeError = error; log('task.resume.response_lost', { task_id: taskId, ...safeError(error) }); });
+        const deadline = Date.now() + 10 * 60_000; let detail = null;
+        while (Date.now() < deadline) {
+          try {
+            detail = await router.task(project.projectId, taskId);
+            const attempt = detail.attempts?.at(-1);
+            const state = attempt?.failure_category === 'validation_failure' || attempt?.validation?.passed === false ? 'VALIDATION_FAILED'
+              : detail.state?.state === 'BLOCKED' && attempt?.status === 'partial' ? 'READY_FOR_HANDOFF' : detail.state?.state ?? 'RUNNING';
+            notifyPanel({ type: 'taskProgress', taskId, state });
+            if (['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED'].includes(detail.state?.state)) break;
+          } catch (error) { log('task.poll.failed', { task_id: taskId, ...safeError(error) }); }
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        if (!['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED'].includes(detail?.state?.state)) {
+          notifyPanel({ type: 'taskProgress', taskId, state: 'TRACKING_IN_BACKGROUND' });
+          throw Object.assign(new Error(`Task ${taskId} is still being tracked by AI Router. Check its status in the Dashboard.`), { code: resumeError?.code ?? 'TASK_TRACKING_TIMEOUT' });
+        }
+        void resumePromise;
         const attempt = detail.attempts?.at(-1) ?? {};
+        const finalState = attempt.failure_category === 'validation_failure' || attempt.validation?.passed === false ? 'VALIDATION_FAILED'
+          : detail.state.state === 'BLOCKED' && attempt.status === 'partial' ? 'READY_FOR_HANDOFF' : detail.state.state;
         const gitFiles = detail.workspace_changes?.changedFiles ?? []; const mediatedFiles = (detail.attempts ?? []).flatMap(item => (item.execution_results ?? []).filter(result => result.status === 'completed' && result.target).map(result => result.target)); const changedFiles = [...new Set([...gitFiles, ...mediatedFiles])];
-        outputLine(channel, 'Final state', detail.state.state); outputLine(channel, 'Validation', attempt.validation ?? 'Not reported'); outputLine(channel, 'Changed files', changedFiles); outputLine(channel, 'Result', attempt.result ?? attempt.structured_response ?? attempt.summary ?? 'See Dashboard.');
-        notifyPanel({ type: 'task', taskId, state: detail.state.state, selected: route.selected, validation: attempt.validation ?? null, changedFiles, result: attempt.summary ?? attempt.structured_response ?? null }); status.text = detail.state.state === 'COMPLETED' ? '$(check) AI Router: completed' : `$(warning) AI Router: ${detail.state.state}`; log('command.runTask.completed', { task_id: taskId, state: detail.state.state, changed_file_count: changedFiles.length }); return detail;
-      } catch (error) { status.text = '$(error) AI Router: error'; outputLine(channel, 'Error', `${error.code || 'ERROR'} — ${error.message}`); notifyPanel({ type: 'error', error: `${error.code || 'ERROR'} — ${error.message}` }); vscodeApi.window.showErrorMessage(`AI Router: ${error.code || 'ERROR'} — ${error.message}`); log('command.runTask.failed', safeError(error)); return null; }
+        outputLine(channel, 'Final state', finalState); outputLine(channel, 'Validation', attempt.validation ?? 'Not reported'); outputLine(channel, 'Changed files', changedFiles); outputLine(channel, 'Result', attempt.result ?? attempt.structured_response ?? attempt.summary ?? 'See Dashboard.');
+        notifyPanel({ type: 'task', taskId, state: finalState, selected: route.selected, validation: attempt.validation ?? null, changedFiles, result: attempt.summary ?? attempt.structured_response ?? null }); status.text = finalState === 'COMPLETED' ? '$(check) AI Router: completed' : `$(warning) AI Router: ${finalState}`; log('command.runTask.completed', { task_id: taskId, state: finalState, changed_file_count: changedFiles.length }); return detail;
+      } catch (error) { status.text = '$(error) AI Router: error'; outputLine(channel, 'Error', `${error.code || 'ERROR'} — ${error.message}`); notifyPanel({ type: 'error', taskId, error: `${error.code || 'ERROR'} — ${error.message}` }); vscodeApi.window.showErrorMessage(`AI Router: ${error.code || 'ERROR'} — ${error.message}`); log('command.runTask.failed', { ...safeError(error), task_id: taskId }); return null; }
     }
 
     const provider = { resolveWebviewView(view) {

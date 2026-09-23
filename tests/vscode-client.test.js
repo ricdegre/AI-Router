@@ -111,7 +111,7 @@ test('extension activates, registers every command, and handles every webview ac
     async explain() { return { selected: { provider_id: 'ollama', model_id: 'qwen' } }; }
     async ensureProject(workspacePath) { ensuredWorkspace = workspacePath; return { projectId: 'snd-ydb' }; }
     async createTask(_project, _objective, _instruction, _selection, options) { createOptions = options; return { descriptor: { task_id: 'read-only-task' } }; }
-    async resume() { return {}; }
+    async resume() { throw Object.assign(new Error('resume response was interrupted'), { code: 'NETWORK_ERROR' }); }
     async task() { return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Read-only inspection complete.' }], workspace_changes: { changedFiles: [] } }; }
   }
   const Module = require('node:module'); const originalLoad = Module._load;
@@ -126,6 +126,7 @@ test('extension activates, registers every command, and handles every webview ac
   assert.equal(webview.options.enableScripts, true); assert.match(webview.html, /Content-Security-Policy/); assert.match(webview.html, /webview\.js/); assert.match(webview.html, /readOnly/);
   await messageHandler({ type: 'dashboard' }); await messageHandler({ type: 'refresh' }); await messageHandler({ type: 'explain', instruction: 'Inspect only', selection: {} }); await messageHandler({ type: 'run', instruction: 'Inspect only', selection: {}, readOnly: true });
   assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, 'D:\\Workspace\\PROJECTOS\\SND-YDB'); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'task'));
+  assert.ok(messages.some(item => item.type === 'task' && item.state === 'COMPLETED')); assert.ok(logs.some(line => line.includes('task.resume.response_lost')));
   assert.ok(logs.some(line => line.includes('extension.activated'))); assert.ok(logs.some(line => line.includes('webview.message'))); assert.ok(logs.every(line => !line.includes('Inspect only')));
   for (const item of context.subscriptions) item.dispose?.(); void api;
 });
