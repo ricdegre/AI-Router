@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, utimes } from 'node:fs/promises';
 import path from 'node:path';
+import { hostname } from 'node:os';
 import { acquireFileLock } from '../core/file-lock.js';
 import { readJson, updateJsonAtomic } from '../core/json-store.js';
 import { ProjectRegistry } from '../core/project-registry.js';
@@ -18,10 +19,24 @@ test('runtime lock has bounded contention and useful timeout', async (t) => {
 
 test('stale runtime lock is recovered without infinite wait', async (t) => {
   const target = path.join(await temporaryDirectory(t), 'state.json');
-  await writeFile(`${target}.lock`, JSON.stringify({ token: 'stale', pid: 0, hostname: 'test', created_at: '2000-01-01T00:00:00.000Z' }));
+  await writeFile(`${target}.lock`, JSON.stringify({ token: 'stale', pid: 99999999, hostname: hostname(), created_at: '2000-01-01T00:00:00.000Z' }));
+  await utimes(`${target}.lock`, new Date('2000-01-01'), new Date('2000-01-01'));
   const lock = await acquireFileLock(target, { timeoutMs: 100, staleMs: 1 });
   assert.notEqual(lock.metadata.token, 'stale');
   await lock.release();
+});
+
+test('a live owner retains its project lease beyond the stale interval', async (t) => {
+  const target = path.join(await temporaryDirectory(t), 'workspace.lease');
+  const owner = await acquireFileLock(target, { staleMs: 120 });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 360));
+    await assert.rejects(() => acquireFileLock(target, { staleMs: 120, timeoutMs: 35, pollMs: 5 }), { code: 'LOCK_TIMEOUT' });
+    const lock = JSON.parse(await readFile(`${target}.lock`, 'utf8'));
+    assert.equal(lock.token, owner.metadata.token);
+  } finally { await owner.release(); }
+  const successor = await acquireFileLock(target, { staleMs: 120, timeoutMs: 50 });
+  await successor.release();
 });
 
 test('concurrent JSON mutations preserve every update', async (t) => {

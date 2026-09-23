@@ -1,7 +1,7 @@
 import { AiRouterError } from '../core/errors.js';
 import { resolvedModelValue } from '../providers/core/model-descriptor.js';
 import { limitsAllowRouting } from '../providers/core/limits.js';
-import { evaluateCost } from './cost-policy.js';
+import { evaluateCost, normalizeCostCategory } from './cost-policy.js';
 import { inferenceVariants } from '../providers/core/inference-profile.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 import { analyzeTask } from './task-analysis.js';
@@ -33,8 +33,9 @@ export function normalizeTaskDescriptor(input) {
     required_capabilities: [...new Set([...capabilities, ...analysis.routing_capabilities])],
     minimum_strength: strongest(input.minimum_strength, derivedStrength, analysis.required_strength),
     cost_policy: {
-      prefer_local: true, prefer_subscription: true, allow_metered: input.allow_metered ?? false,
-      allow_unknown_cost: false, ...(input.cost_policy ?? {})
+      prefer_local: true, prefer_subscription: true,
+      allow_unknown_cost: false, ...(input.cost_policy ?? {}),
+      allow_metered: input.allow_metered === true && input.cost_policy?.allow_metered !== false
     }
   };
 }
@@ -157,9 +158,13 @@ export class RoutingPolicy {
         if (modelConstraints.allowed_model_ids?.length && !modelConstraints.allowed_model_ids.includes(modelId)) rejected.push('model-not-allowed');
         if (modelConstraints.denied_model_ids?.includes(modelId)) rejected.push('model-denied');
 
-        const cost = evaluateCost(profile.cost_category, task.cost_policy);
-        if (!cost.allowed) rejected.push(cost.reason); else reasons.push(cost.reason, `cost-category-${cost.category}`);
         const channelDescriptor = provider.execution_channels?.find((item) => item.id === inference.execution_channel);
+        if (!channelDescriptor) rejected.push('unknown-execution-channel');
+        const declaredCost = normalizeCostCategory(profile.cost_category);
+        const channelCost = channelDescriptor ? normalizeCostCategory(channelDescriptor.cost_category) : 'UNKNOWN';
+        if (channelDescriptor && declaredCost !== channelCost) rejected.push('execution-channel-cost-mismatch');
+        const cost = evaluateCost(channelCost, task.cost_policy);
+        if (!cost.allowed) rejected.push(cost.reason); else reasons.push(cost.reason, `cost-category-${cost.category}`);
         if (channelDescriptor?.metered && task.cost_policy?.allow_metered !== true) rejected.push('metered-execution-channel-disallowed');
         if (cost.category === 'LOCAL') reasons.push('local-capacity-preferred');
         if (cost.category === 'SUBSCRIPTION_INCLUDED') reasons.push('already-paid-capacity');

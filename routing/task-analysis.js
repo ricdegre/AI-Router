@@ -38,10 +38,25 @@ function inferScope(input, text) {
 
 function inferWriteMode(input, intent, text) {
   if (input.write_mode === 'read_only' || input.write_mode === 'write_allowed') return input.write_mode;
-  if (input.read_only === true || contains(text, [/read[- ]only|do not (?:create|change|modify|write) (?:any )?(?:files?|code|anything)|without (?:changing|modifying|writing) (?:any )?(?:files?|code|anything)|no file changes|sin modificar archivos|solo lectura|no modifiques/])) return 'read_only';
+  if (input.read_only === true || contains(text, [
+    /read[- ]only|solo lectura|analysis[- ]only|analiza solamente|analiza solo|revisa y dime|review and tell me/,
+    /do not (?:create|change|modify|write) (?:any )?(?:files?|code|anything)|without (?:changing|modifying|writing|touching) (?:any )?(?:files?|code|anything)|no file changes/,
+    /sin (?:tocar|modificar|cambiar|editar|escribir) (?:ning[uú]n |los |el |ninguna )?(?:archivos?|c[oó]digo)|no (?:toques|modifiques|cambies) (?:ning[uú]n |los |el |ninguna )?(?:archivos?|c[oó]digo)/
+  ])) return 'read_only';
   const denied = input.action_policy?.denied ?? [];
-  if (['create_file', 'modify_file', 'append_file'].some((action) => denied.includes(action))) return 'read_only';
-  return ['project_analysis', 'code_review', 'architecture', 'research'].includes(intent) ? 'read_only' : 'write_allowed';
+  const writes = ['create_file', 'modify_file', 'append_file'];
+  const allowed = input.action_policy?.allowed;
+  if (writes.every((action) => denied.includes(action)) || (Array.isArray(allowed) && !writes.some((action) => allowed.includes(action)))) return 'read_only';
+  const positive = text.replace(/(?:\bno|do not|don't)\s+(?:cambies?|modifiques?|edites?|alteres?|change|modify|edit|alter)\b[^.;\n]*/gu, '');
+  if (contains(positive, [/\b(?:corrige|cambia|modifica|implementa|agrega|a[nñ]ade|crea|edita|arregla|fix|change|modify|implement|add|create|edit|update|refactor)\b/u])) return 'write_allowed';
+  return ['project_analysis', 'code_review', 'architecture', 'research', 'test'].includes(intent) || contains(text, [/diagnos|investigat|analiz|analy[sz]|review|revisa|explica|explain/]) ? 'read_only' : 'write_allowed';
+}
+
+function requestedOperation(intent, text) {
+  if (['edit', 'refactor'].includes(intent)) return 'edit';
+  if (intent === 'test') return 'validate';
+  if (['project_analysis', 'code_review', 'architecture', 'research'].includes(intent) || /diagnos|analiz|analy[sz]|review|revisa|explica|explain/.test(text)) return 'inspect';
+  return 'other';
 }
 
 function inferComplexity(input, intent, scope, text) {
@@ -87,7 +102,11 @@ export function analyzeTask(input = {}) {
   const attachmentSummary = { count: input.attachments?.length ?? 0, image_count: (input.attachments ?? []).filter((attachment) => attachment?.type === 'image').length };
   return {
     task_analysis_version: TASK_ANALYSIS_VERSION,
-    intent, scope, write_mode: writeMode, complexity,
+    intent, scope, requested_operation: requestedOperation(intent, text),
+    write_permission: writeMode === 'read_only' ? 'denied' : 'allowed',
+    prohibited_operations: [...new Set(input.action_policy?.denied ?? [])],
+    scope_restrictions: [...new Set(input.do_not_modify ?? [])],
+    write_mode: writeMode, complexity,
     required_capabilities: requiredCapabilities,
     routing_capabilities: routingCapabilities,
     required_strength: requiredStrength,

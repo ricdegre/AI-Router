@@ -7,7 +7,7 @@ import { resolveSafePath } from './safe-path.js';
 import { contentHash } from '../actions/changeset.js';
 import { AiRouterError } from './errors.js';
 
-const TYPES = new Set(['task_intent', 'provider_intent', 'provider_response', 'action_intent', 'action_side_effect', 'action_receipt', 'action_recovered', 'validation_intent', 'validation_receipt', 'transition_intent', 'transition_receipt', 'escalation_intent', 'escalation_receipt']);
+const TYPES = new Set(['task_intent', 'provider_intent', 'provider_response', 'recovery_snapshot', 'recovery_restored', 'action_intent', 'action_side_effect', 'action_receipt', 'action_recovered', 'validation_intent', 'validation_receipt', 'transition_intent', 'transition_receipt', 'escalation_intent', 'escalation_receipt']);
 const SENSITIVE = /^(password|secret|token|tokens|api[_-]?key|credential|credentials|private[_-]?prompt)$/i;
 
 function rejectSensitive(value) {

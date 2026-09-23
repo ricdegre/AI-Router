@@ -1,7 +1,7 @@
 import { AiRouterError } from '../../core/errors.js';
 
 export const STRUCTURED_RESPONSE_VERSION = '0.1';
-export const STRUCTURED_RESPONSE_STATUSES = Object.freeze(['ok', 'partial', 'blocked', 'failed']);
+export const STRUCTURED_RESPONSE_STATUSES = Object.freeze(['ok', 'no_change_required', 'partial', 'blocked', 'failed']);
 const ARRAY_FIELDS = ['observations', 'proposed_actions', 'validation_requested', 'remaining_work', 'uncertainty', 'handoff_notes'];
 const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor', 'password', 'token', 'api_key', 'secret', 'credentials']);
 const ACTION_TYPES = new Set(['read_file', 'list_directory', 'create_file', 'modify_file', 'append_file', 'inspect_git_status', 'run_validation_command']);
@@ -48,6 +48,7 @@ export function validateStructuredResponse(input) {
     }
     normalized[field] = value;
   }
+  if (normalized.status === 'no_change_required' && (normalized.proposed_actions.length || !normalized.observations.length || normalized.remaining_work.length)) throw new AiRouterError('No-change result requires evidence, no actions, and no remaining work.', 'INVALID_NO_CHANGE_RESULT');
   return normalized;
 }
 

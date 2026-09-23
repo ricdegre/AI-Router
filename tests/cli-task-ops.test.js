@@ -21,7 +21,7 @@ test('CLI exposes durable task list, show, attempts, validate, doctor, and termi
   const workspace = path.join(root, 'workspace');
   await mkdir(workspace);
   await writeFile(path.join(workspace, 'done.txt'), 'done\n');
-  const provider = new MockProvider('cli-provider', { execute: async () => ({ structured: { schema_version: '0.1', status: 'ok', summary: 'CLI fixture complete', observations: [], proposed_actions: [], validation_requested: [], remaining_work: [], uncertainty: [], handoff_notes: [] } }) });
+  const provider = new MockProvider('cli-provider', { execute: async () => ({ structured: { schema_version: '0.1', status: 'no_change_required', summary: 'CLI fixture complete', observations: ['The required file already has the expected content.'], proposed_actions: [], validation_requested: [], remaining_work: [], uncertainty: [], handoff_notes: [] } }) });
   const services = createRuntimeServices({ dataRoot: runtime, projectRoots: [] }, { registerOllama: false, providers: [provider] });
   const { project } = await services.projectRegistry.register(workspace);
   await services.profileRegistry.register({ profile_id: 'cli-profile', provider_id: 'cli-provider', display_name: 'CLI profile', auth_mode: 'none', location: 'local', cost_category: 'LOCAL', status: 'available' });

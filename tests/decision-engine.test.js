@@ -7,7 +7,7 @@ import { MockProvider } from './mock-provider.js';
 import { MockJevDecisionEngine } from '../decision-engines/jev/mock-engine.js';
 import { normalizeJevResult } from '../decision-engines/jev/normalize.js';
 
-const profile = (id, provider, cost = 'local') => ({ profile_id: id, provider_id: provider, display_name: id, enabled: true, status: 'available', cost_category: cost, auth_mode: 'none', location: cost === 'local' ? 'local' : 'cloud' });
+const profile = (id, provider, cost = 'local') => ({ profile_id: id, provider_id: provider, display_name: id, enabled: true, status: 'available', cost_category: cost, execution_channel: `${provider}-${cost}`, auth_mode: 'none', location: cost === 'local' ? 'local' : 'cloud' });
 
 async function fixture(t, jevOptions = {}) {
   const root = await temporaryDirectory(t, 'decision-engine-');

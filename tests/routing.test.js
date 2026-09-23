@@ -8,7 +8,8 @@ import { classifyProfileRouting } from '../core/profile-routing-classification.j
 import { createModelDescriptor } from '../providers/core/model-descriptor.js';
 
 function profile(profileId, providerId, cost = 'local', overrides = {}) {
-  return { profile_id: profileId, provider_id: providerId, enabled: true, status: 'available', cost_category: cost, capabilities_override: { add: [], remove: [] }, ...overrides };
+  const channel = ({ local: 'local', subscription: 'subscription', metered: 'metered', FREE: 'free', LOCAL: 'local', SUBSCRIPTION_INCLUDED: 'subscription' })[cost] ?? 'local';
+  return { profile_id: profileId, provider_id: providerId, enabled: true, status: 'available', cost_category: cost, execution_channel: `${providerId}-${channel}`, capabilities_override: { add: [], remove: [] }, ...overrides };
 }
 
 test('routing selects compatible local capacity before subscription or metered', async () => {
@@ -96,6 +97,29 @@ test('a FREE model on a metered execution channel is still excluded when metered
   assert.equal(result.selected, null); assert.ok(result.evaluations[0].rejected.includes('metered-execution-channel-disallowed'));
 });
 
+test('registered execution channel is authoritative for local, subscription, free, metered and unknown routes', async () => {
+  const registry = new ProviderRegistry();
+  const provider = new MockProvider('channel-fixture', { executionChannels: [
+    { id: 'local', name: 'Local', cost_category: 'LOCAL', metered: false },
+    { id: 'subscription', name: 'Subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false },
+    { id: 'free-remote', name: 'Free remote', cost_category: 'FREE', metered: false },
+    { id: 'metered', name: 'Metered', cost_category: 'METERED_MEDIUM', metered: true }
+  ] }); registry.register(provider);
+  const policy = new RoutingPolicy();
+  for (const [channel, cost] of [['local', 'LOCAL'], ['subscription', 'SUBSCRIPTION_INCLUDED'], ['free-remote', 'FREE']]) {
+    const result = await policy.explain({ required_capabilities: ['coding'] }, registry, [profile(`real-${channel}`, 'channel-fixture', cost, { execution_channel: channel })]);
+    assert.equal(result.selected.execution_channel, channel);
+  }
+  const metered = await policy.explain({ required_capabilities: ['coding'] }, registry, [profile('real-metered', 'channel-fixture', 'METERED_MEDIUM', { execution_channel: 'metered' })]);
+  assert.equal(metered.selected, null); assert.ok(metered.evaluations[0].rejected.includes('metered-execution-channel-disallowed'));
+  const contradictory = await policy.explain({ required_capabilities: ['coding'], allow_metered: false, cost_policy: { allow_metered: true } }, registry, [profile('real-metered', 'channel-fixture', 'METERED_MEDIUM', { execution_channel: 'metered' })]);
+  assert.equal(contradictory.selected, null); assert.ok(contradictory.evaluations[0].rejected.includes('metered-execution-channel-disallowed'));
+  const unknown = await policy.explain({ required_capabilities: ['coding'] }, registry, [profile('real-unknown', 'channel-fixture', 'FREE', { execution_channel: 'invented' })]);
+  assert.equal(unknown.selected, null); assert.ok(unknown.evaluations[0].rejected.includes('unknown-execution-channel'));
+  const liar = await policy.explain({ required_capabilities: ['coding'] }, registry, [profile('real-liar', 'channel-fixture', 'FREE', { execution_channel: 'metered' })]);
+  assert.equal(liar.selected, null); assert.ok(liar.evaluations[0].rejected.includes('execution-channel-cost-mismatch'));
+});
+
 test('high-risk tasks require strong provider class', async () => {
   const registry = new ProviderRegistry();
   registry.register(new MockProvider('standard', { strength: 'standard' }));
@@ -126,8 +150,8 @@ test('automatic routing considers remaining quota before cost among equally capa
 
 test('manual selection resolves the exact valid model and effort without cost competition', async () => {
   const registry = new ProviderRegistry(); registry.register(new MockProvider('openai', { strength: 'strong', capabilities: ['chat', 'coding', 'long_context'] }));
-  const model = createModelDescriptor({ providerId: 'openai', modelId: 'gpt-test', discovered: { display_name: 'GPT Test', local: false, reasoning_support: true, supported_reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', execution_channel: 'subscription' } });
-  const chosen = profile('openai-pro', 'openai', 'subscription', { status: 'ready', models: [model], selected_model_id: 'gpt-test', execution_channel: 'subscription', default_reasoning_effort: 'high' });
+  const model = createModelDescriptor({ providerId: 'openai', modelId: 'gpt-test', discovered: { display_name: 'GPT Test', local: false, reasoning_support: true, supported_reasoning_efforts: ['low', 'high'], default_reasoning_effort: 'high', execution_channel: 'openai-subscription' } });
+  const chosen = profile('openai-pro', 'openai', 'subscription', { status: 'ready', models: [model], selected_model_id: 'gpt-test', execution_channel: 'openai-subscription', default_reasoning_effort: 'high' });
   const result = await new RoutingPolicy().explain({ objective: 'Edit one file', required_capabilities: ['coding'], routing_mode: 'manual', manual_provider: 'openai', manual_profile: 'openai-pro', manual_model: 'gpt-test', manual_reasoning_effort: 'low' }, registry, [chosen]);
   assert.equal(result.routing_mode, 'manual'); assert.equal(result.selected.profile_id, 'openai-pro'); assert.equal(result.selected.model_id, 'gpt-test'); assert.equal(result.selected.reasoning_effort, 'low');
 });

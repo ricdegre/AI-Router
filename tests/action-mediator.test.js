@@ -27,6 +27,17 @@ test('mediator creates, reads, lists, and dry-runs only inside workspace', async
   assert.ok(list.result.entries.some((entry) => entry.name === 'safe.txt'));
 });
 
+test('absolute and relative targets enforce the same denied subpath', async (t) => {
+  const { workspace } = await fixture(t);
+  await mkdir(path.join(workspace, 'private'));
+  await writeFile(path.join(workspace, 'private', 'secret.txt'), 'private');
+  const mediator = new ActionMediator({ workspaceRoot: workspace, filesystemScope: { allowed_paths: ['.'], denied_paths: ['private'] } });
+  for (const target of ['private/secret.txt', path.join(workspace, 'private', 'secret.txt')]) {
+    const result = await mediator.execute({ action_id: 'scope-check', type: 'read_file', target, parameters: {} });
+    assert.equal(result.status, 'rejected'); assert.equal(result.error.code, 'ACTION_SCOPE_REJECTED');
+  }
+});
+
 test('exact changeset succeeds and preserves a private backup', async (t) => {
   const { workspace, backups, mediator } = await fixture(t);
   const source = 'alpha\nbeta\n';
@@ -37,7 +48,7 @@ test('exact changeset succeeds and preserves a private backup', async (t) => {
   });
   assert.equal(result.status, 'completed');
   assert.equal(await readFile(path.join(workspace, 'file.txt'), 'utf8'), 'alpha\ngamma\n');
-  assert.equal((await readdir(backups)).length, 1);
+  assert.equal((await readdir(backups)).filter((name) => name.endsWith('.bak')).length, 1);
 });
 
 test('changeset rejects stale, ambiguous, invalid, and escaping actions', async (t) => {

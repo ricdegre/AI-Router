@@ -146,7 +146,7 @@ test('read-only project analysis skips actions, validates, completes, and create
   } }]);
   await writeFile(path.join(setup.workspace, 'README.md'), '# Project architecture\nLayered application.\n');
   const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'analysis-complete-01', task_type: 'project_analysis', objective: 'Analyze this entire project read-only', preferred_profiles: ['analysis-profile'], action_policy: { allowed: ['read_file'], denied: ['create_file', 'modify_file', 'append_file'] } }, { maxAttempts: 1 });
-  assert.equal(result.status, 'completed'); assert.equal(result.validation.passed, true);
+  assert.equal(result.status, 'completed'); assert.equal(result.validation.status, 'NOT_REQUESTED'); assert.equal(result.validation.passed, null);
   const audit = await setup.dependencies.auditLog.list({ task_id: 'analysis-complete-01' });
   assert.ok(audit.some((item) => item.type === 'read_only_analysis_received')); assert.ok(!audit.some((item) => item.type === 'actions_proposed'));
   assert.equal((await setup.dependencies.memoryManager.readHandoff(setup.project.projectId)).data.status, 'none');
@@ -205,7 +205,7 @@ test('rejected stale actions and independent validation failures leave tasks rec
   assert.equal((await stale.dependencies.attemptStore.list(stale.project.projectId, staleTask.task_id))[0].failure_category, 'action_rejected');
   assert.equal(await readFile(path.join(stale.workspace, 'status.txt'), 'utf8'), 'STATUS=PENDING\n');
 
-  const invalid = await fixture(t, [{ provider: 'mock-b', profile: 'profile-b', execute: async () => ({ structured: response('ok', 'Model claimed completion.') }) }]);
+  const invalid = await fixture(t, [{ provider: 'mock-b', profile: 'profile-b', execute: async () => ({ structured: { ...response('no_change_required', 'Model claimed completion.'), observations: ['The desired end state supposedly already exists.'] } }) }]);
   await writeFile(path.join(invalid.workspace, 'status.txt'), 'STATUS=PENDING\n');
   const invalidTask = { project_id: invalid.project.projectId, task_id: 'failure-02', objective: 'Validation must overrule claim', preferred_profiles: ['profile-b'], validation_requirements: [{ validation_id: 'must-be-done', type: 'exact_content', target: 'status.txt', expected: 'STATUS=DONE\n' }] };
   assert.equal((await invalid.orchestrator.run(invalidTask, { maxAttempts: 1 })).status, 'blocked');
@@ -221,4 +221,140 @@ test('dirty Git workspace policy blocks before provider execution', async (t) =>
   assert.equal(result.reason, 'dirty_workspace');
   assert.equal(calls, 0);
   assert.equal((await setup.dependencies.taskStore.get(setup.project.projectId, 'dirty-01')).state, 'BLOCKED');
+});
+
+test('provider blocked and unsupported no-change evidence never become COMPLETED', async (t) => {
+  const blocked = await fixture(t, [{ provider: 'blocked-provider', profile: 'blocked-profile', execute: async () => ({ structured: response('blocked', 'Cannot inspect enough evidence.') }) }]);
+  const blockedTask = { project_id: blocked.project.projectId, task_id: 'provider-blocked-01', objective: 'Edit the file' };
+  assert.equal((await blocked.orchestrator.run(blockedTask, { maxAttempts: 1 })).status, 'blocked');
+  assert.equal((await blocked.dependencies.attemptStore.list(blocked.project.projectId, blockedTask.task_id))[0].failure_code, 'PROVIDER_BLOCKED');
+  const noChange = await fixture(t, [{ provider: 'nochange-provider', profile: 'nochange-profile', execute: async () => ({ structured: { ...response('no_change_required', 'Already done.'), observations: ['File already has the required value.'] } }) }]);
+  const task = { project_id: noChange.project.projectId, task_id: 'nochange-unverified-01', objective: 'Edit status.txt' };
+  assert.equal((await noChange.orchestrator.run(task, { maxAttempts: 1 })).status, 'blocked');
+  assert.equal((await noChange.dependencies.attemptStore.list(noChange.project.projectId, task.task_id))[0].failure_code, 'NO_CHANGE_EVIDENCE_MISSING');
+});
+
+test('verified no-change and write postconditions are distinct from unrequested validation', async (t) => {
+  const noChange = await fixture(t, [{ provider: 'nochange-provider', profile: 'nochange-profile', execute: async () => ({ structured: { ...response('no_change_required', 'Already done.'), observations: ['status.txt is DONE.'] } }) }]);
+  await writeFile(path.join(noChange.workspace, 'status.txt'), 'DONE');
+  const task = { project_id: noChange.project.projectId, task_id: 'nochange-verified-01', objective: 'Set status.txt to DONE', validation_requirements: [{ validation_id: 'done', type: 'exact_content', target: 'status.txt', expected: 'DONE' }] };
+  const result = await noChange.orchestrator.run(task, { maxAttempts: 1 });
+  assert.equal(result.status, 'completed'); assert.equal(result.validation.status, 'PASSED');
+  assert.equal((await noChange.dependencies.attemptStore.list(noChange.project.projectId, task.task_id))[0].status, 'no-change-required');
+  const write = await fixture(t, [{ provider: 'write-provider', profile: 'write-profile', execute: async () => ({ structured: response('ok', 'Changed status.', [{ action_id: 'write-status', type: 'create_file', target: 'new.txt', parameters: { content: 'DONE' } }]) }) }]);
+  const written = await write.orchestrator.run({ project_id: write.project.projectId, task_id: 'postcondition-only-01', objective: 'Create new.txt' }, { maxAttempts: 1 });
+  assert.equal(written.status, 'completed'); assert.equal(written.validation.status, 'PASSED');
+  assert.deepEqual(written.validation.results.map((item) => item.type), ['action_postcondition']);
+});
+
+test('complete plan preflight rejects a later stale action before the first write', async (t) => {
+  const source = 'OLD'; const actions = [
+    { action_id: 'first-write', type: 'modify_file', target: 'a.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash(source), search: 'OLD', replacement: 'NEW' } } },
+    { action_id: 'later-stale', type: 'modify_file', target: 'b.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: '0'.repeat(64), search: 'OLD', replacement: 'NEW' } } }
+  ];
+  const setup = await fixture(t, [{ provider: 'plan-provider', profile: 'plan-profile', execute: async () => ({ structured: response('ok', 'Plan.', actions) }) }]);
+  await writeFile(path.join(setup.workspace, 'a.txt'), source); await writeFile(path.join(setup.workspace, 'b.txt'), source);
+  const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'preflight-01', objective: 'Modify both files' }, { maxAttempts: 1 });
+  assert.equal(result.status, 'blocked'); assert.equal(await readFile(path.join(setup.workspace, 'a.txt'), 'utf8'), source);
+  assert.equal(await readFile(path.join(setup.workspace, 'b.txt'), 'utf8'), source);
+});
+
+test('duplicate IDs, conflicting targets, and unavailable recovery all fail before writing', async (t) => {
+  const write = (id) => ({ action_id: id, type: 'modify_file', target: 'status.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash('OLD'), search: 'OLD', replacement: 'NEW' } } });
+  for (const [index, actions, limits, expectedCode] of [
+    [1, [write('same'), write('same')], {}, 'ACTION_PLAN_CONFLICT'],
+    [2, [write('first'), write('second')], {}, 'ACTION_PLAN_CONFLICT'],
+    [3, [write('single')], { max_file_bytes: 2 }, 'RECOVERY_SNAPSHOT_UNAVAILABLE']
+  ]) {
+    await t.test(`case ${index}`, async (st) => {
+      const setup = await fixture(st, [{ provider: `preflight-${index}`, profile: `preflight-profile-${index}`, execute: async () => ({ structured: response('ok', 'Proposed.', actions) }) }]);
+      await writeFile(path.join(setup.workspace, 'status.txt'), 'OLD');
+      const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: `preflight-case-${index}`, objective: 'Modify status', execution_limits: limits }, { maxAttempts: 1 });
+      assert.equal(result.status, 'blocked'); assert.equal(await readFile(path.join(setup.workspace, 'status.txt'), 'utf8'), 'OLD');
+      const attempt = (await setup.dependencies.attemptStore.list(setup.project.projectId, `preflight-case-${index}`))[0];
+      assert.equal(attempt.failure_code, expectedCode);
+    });
+  }
+});
+
+test('failure after the second write restores all files before another provider runs', async (t) => {
+  const action = (id, target) => ({ action_id: id, type: 'modify_file', target, parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash('OLD'), search: 'OLD', replacement: 'NEW' } } });
+  const actions = [action('first-write', 'a.txt'), action('second-write', 'b.txt')];
+  let fallbackSawCleanWorkspace = false;
+  const setup = await fixture(t, [
+    { provider: 'first-provider', profile: 'first-profile', execute: async () => ({ structured: response('ok', 'Attempted both changes.', actions) }) },
+    { provider: 'second-provider', profile: 'second-profile', execute: async () => {
+      fallbackSawCleanWorkspace = (await readFile(path.join(setup.workspace, 'a.txt'), 'utf8')) === 'OLD' && (await readFile(path.join(setup.workspace, 'b.txt'), 'utf8')) === 'OLD';
+      return { structured: response('ok', 'Applied after clean recovery.', actions) };
+    } }
+  ]);
+  await writeFile(path.join(setup.workspace, 'a.txt'), 'OLD'); await writeFile(path.join(setup.workspace, 'b.txt'), 'OLD');
+  let injected = false;
+  setup.dependencies.actionMediatorFactory = () => new ActionMediator({ workspaceRoot: setup.workspace, faultInjector: async (stage, context) => {
+    if (!injected && stage === 'during-action-after-write' && context.action.action_id === 'second-write') { injected = true; throw new AiRouterError('Injected action failure.', 'INJECTED_ACTION_FAILURE'); }
+  } });
+  const result = await new ResilientOrchestrator(setup.dependencies).run({ project_id: setup.project.projectId, task_id: 'recover-batch-01', objective: 'Modify both files', preferred_profiles: ['first-profile', 'second-profile'] }, { maxAttempts: 2 });
+  assert.equal(result.status, 'completed'); assert.equal(fallbackSawCleanWorkspace, true);
+  assert.equal(await readFile(path.join(setup.workspace, 'a.txt'), 'utf8'), 'NEW'); assert.equal(await readFile(path.join(setup.workspace, 'b.txt'), 'utf8'), 'NEW');
+  const attempts = await setup.dependencies.attemptStore.list(setup.project.projectId, 'recover-batch-01');
+  assert.equal(attempts[0].recovery_restored.restored, true); assert.equal(attempts[1].status, 'success');
+});
+
+test('validation failure restores a write before a second provider reuses the action', async (t) => {
+  const action = { action_id: 'validated-edit', type: 'modify_file', target: 'status.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash('OLD'), search: 'OLD', replacement: 'NEW' } } };
+  let fallbackSawOriginal = false;
+  const setup = await fixture(t, [
+    { provider: 'first-validation-provider', profile: 'first-validation-profile', execute: async () => ({ structured: response('ok', 'First edit.', [action]) }) },
+    { provider: 'second-validation-provider', profile: 'second-validation-profile', execute: async () => {
+      fallbackSawOriginal = (await readFile(path.join(setup.workspace, 'status.txt'), 'utf8')) === 'OLD';
+      return { structured: response('ok', 'Second edit.', [action]) };
+    } }
+  ]);
+  await writeFile(path.join(setup.workspace, 'status.txt'), 'OLD');
+  setup.dependencies.validationEngineFactory = ({ attempt }) => attempt.attempt_number === 1
+    ? { validate: async () => ({ results: [{ validation_id: 'verify-new', type: 'exact_content', passed: false }] }) }
+    : new ValidationEngine({ workspaceRoot: setup.workspace });
+  const task = { project_id: setup.project.projectId, task_id: 'validation-restore-01', objective: 'Modify status', preferred_profiles: ['first-validation-profile', 'second-validation-profile'], validation_requirements: [{ validation_id: 'verify-new', type: 'exact_content', target: 'status.txt', expected: 'NEW' }] };
+  const result = await new ResilientOrchestrator(setup.dependencies).run(task, { maxAttempts: 2 });
+  assert.equal(result.status, 'completed'); assert.equal(fallbackSawOriginal, true);
+  const attempts = await setup.dependencies.attemptStore.list(setup.project.projectId, task.task_id);
+  assert.equal(attempts[0].failure_code, 'VALIDATION_FAILED'); assert.equal(attempts[0].recovery_restored.restored, true);
+  assert.equal(await readFile(path.join(setup.workspace, 'status.txt'), 'utf8'), 'NEW');
+});
+
+test('failed create is removed before fallback and retried from an absent file', async (t) => {
+  const action = { action_id: 'create-output', type: 'create_file', target: 'output.txt', parameters: { content: 'COMPLETE' } };
+  let fallbackSawAbsent = false; let injected = false;
+  const setup = await fixture(t, [
+    { provider: 'first-create-provider', profile: 'first-create-profile', execute: async () => ({ structured: response('ok', 'Created output.', [action]) }) },
+    { provider: 'second-create-provider', profile: 'second-create-profile', execute: async () => {
+      fallbackSawAbsent = await readFile(path.join(setup.workspace, 'output.txt')).then(() => false, (error) => error.code === 'ENOENT');
+      return { structured: response('ok', 'Retried output.', [action]) };
+    } }
+  ]);
+  setup.dependencies.actionMediatorFactory = () => new ActionMediator({ workspaceRoot: setup.workspace, backupRoot: path.join(setup.runtime, 'backups'), faultInjector: async (stage) => {
+    if (!injected && stage === 'during-action-after-write') { injected = true; throw new AiRouterError('Injected create failure.', 'INJECTED_ACTION_FAILURE'); }
+  } });
+  const result = await new ResilientOrchestrator(setup.dependencies).run({ project_id: setup.project.projectId, task_id: 'create-restore-01', objective: 'Create output.txt', preferred_profiles: ['first-create-profile', 'second-create-profile'] }, { maxAttempts: 2 });
+  assert.equal(result.status, 'completed'); assert.equal(fallbackSawAbsent, true);
+  assert.equal(await readFile(path.join(setup.workspace, 'output.txt'), 'utf8'), 'COMPLETE');
+});
+
+test('missing or thrown validation fails closed and restores the write', async (t) => {
+  for (const [index, validate] of [
+    [1, async () => ({ results: [] })],
+    [2, async () => { throw new AiRouterError('Unavailable validation.', 'VALIDATOR_UNAVAILABLE'); }]
+  ]) {
+    await t.test(`case ${index}`, async (st) => {
+      const action = { action_id: 'write-status', type: 'modify_file', target: 'status.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash('OLD'), search: 'OLD', replacement: 'NEW' } } };
+      const setup = await fixture(st, [{ provider: `unavailable-provider-${index}`, profile: `unavailable-profile-${index}`, execute: async () => ({ structured: response('ok', 'Edited.', [action]) }) }]);
+      await writeFile(path.join(setup.workspace, 'status.txt'), 'OLD');
+      setup.dependencies.validationEngineFactory = () => ({ validate });
+      const task = { project_id: setup.project.projectId, task_id: `validation-unavailable-${index}`, objective: 'Modify status', validation_requirements: [{ validation_id: 'verify', type: 'exact_content', target: 'status.txt', expected: 'NEW' }] };
+      const result = await new ResilientOrchestrator(setup.dependencies).run(task, { maxAttempts: 1 });
+      assert.equal(result.status, 'blocked'); assert.equal(await readFile(path.join(setup.workspace, 'status.txt'), 'utf8'), 'OLD');
+      const attempt = (await setup.dependencies.attemptStore.list(setup.project.projectId, task.task_id))[0];
+      assert.equal(attempt.failure_code, 'VALIDATION_UNAVAILABLE'); assert.equal(attempt.validation.status, 'UNAVAILABLE'); assert.equal(attempt.recovery_restored.restored, true);
+    });
+  }
 });

@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, stat, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AiRouterError } from './errors.js';
@@ -10,21 +10,24 @@ function delay(milliseconds) {
 
 async function staleAge(lockPath) {
   try {
-    const metadata = JSON.parse(await readFile(lockPath, 'utf8'));
-    const created = Date.parse(metadata.created_at);
-    if (Number.isFinite(created)) return Date.now() - created;
-  } catch {
-    // A truncated or foreign lock still has filesystem timestamps.
-  }
-  try {
     return Date.now() - (await stat(lockPath)).mtimeMs;
   } catch {
     return 0;
   }
 }
 
+function localOwnerAlive(metadata) {
+  if (!metadata || metadata.hostname !== hostname() || !Number.isInteger(metadata.pid) || metadata.pid <= 0) return null;
+  try { process.kill(metadata.pid, 0); return true; }
+  catch (error) { return error.code === 'ESRCH' ? false : true; }
+}
+
 async function recoverStaleLock(lockPath, staleMs, token) {
   if (await staleAge(lockPath) < staleMs) return false;
+  let owner = null;
+  try { owner = JSON.parse(await readFile(lockPath, 'utf8')); } catch { /* interrupted lock creation */ }
+  // Never steal a live lease. An owner on another host cannot be proved dead.
+  if (owner && localOwnerAlive(owner) !== false) return false;
   const stalePath = `${lockPath}.stale-${token}`;
   try {
     await rename(lockPath, stalePath);
@@ -56,12 +59,21 @@ export async function acquireFileLock(targetPath, options = {}) {
       await handle.writeFile(`${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
       await handle.close();
       let released = false;
+      const heartbeat = setInterval(async () => {
+        try {
+          const current = JSON.parse(await readFile(lockPath, 'utf8'));
+          if (current.token !== token) { clearInterval(heartbeat); return; }
+          const now = new Date(); await utimes(lockPath, now, now);
+        } catch { clearInterval(heartbeat); }
+      }, Math.max(100, Math.floor(staleMs / 3)));
+      heartbeat.unref?.();
       return {
         lockPath,
         metadata,
         async release() {
           if (released) return;
           released = true;
+          clearInterval(heartbeat);
           try {
             const current = JSON.parse(await readFile(lockPath, 'utf8'));
             if (current.token !== token) throw new AiRouterError('Lock ownership changed before release.', 'LOCK_OWNERSHIP_LOST');
@@ -105,4 +117,3 @@ export async function inspectLock(targetPath, options = {}) {
     return { locked: true, lock_path: lockPath, metadata: null, error: 'unreadable-lock' };
   }
 }
-

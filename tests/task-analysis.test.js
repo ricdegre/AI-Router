@@ -37,3 +37,25 @@ test('write scope limits do not turn an explicitly requested edit into read-only
   assert.equal(analysis.intent, 'edit'); assert.equal(analysis.write_mode, 'write_allowed');
   assert.equal(analyzeTask({ objective: 'Explain the page without changing any files' }).write_mode, 'read_only');
 });
+
+test('requested editing and permission remain separate from scoped prohibitions', () => {
+  for (const objective of [
+    'Solo cambia X; no modifiques Y.',
+    'Corrige X pero conserva todo lo demás.',
+    'No cambies navegación no relacionada. Corrige únicamente este archivo.',
+    'Puedes modificar archivos existentes pero no crear nuevos.'
+  ]) {
+    const analysis = analyzeTask({ objective, action_policy: { allowed: ['modify_file'], denied: ['create_file', 'append_file'] } });
+    assert.equal(analysis.write_mode, 'write_allowed', objective);
+    assert.equal(analysis.write_permission, 'allowed');
+    assert.deepEqual(analysis.prohibited_operations, ['create_file', 'append_file']);
+  }
+});
+
+test('diagnosis and whole-task no-write instructions stay read-only', () => {
+  for (const objective of ['Diagnostica el problema sin tocar archivos.', 'Analiza solamente.', 'Revisa y dime qué está mal.']) {
+    const analysis = analyzeTask({ objective });
+    assert.equal(analysis.write_mode, 'read_only', objective);
+    assert.equal(analysis.write_permission, 'denied');
+  }
+});

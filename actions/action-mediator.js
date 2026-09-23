@@ -1,5 +1,7 @@
-import { mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { isPathWithin } from '../core/paths.js';
 import { randomUUID } from 'node:crypto';
 import { resolveSafePath } from '../core/safe-path.js';
 import { withFileLock } from '../core/file-lock.js';
@@ -22,10 +24,14 @@ function ensureText(buffer) {
   return buffer.toString('utf8');
 }
 
-async function writeAtomic(filePath, content) {
-  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, content, { encoding: 'utf8', mode: 0o600 });
-  await rename(temporary, filePath);
+async function writeAtomic(filePath, content, stagingRoot, mode) {
+  await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+  const temporary = path.join(stagingRoot, `${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, content, { flag: 'wx', encoding: 'utf8', mode: 0o600 });
+    await chmod(temporary, mode);
+    await rename(temporary, filePath);
+  } finally { await unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; }); }
 }
 
 export class ActionMediator {
@@ -41,6 +47,8 @@ export class ActionMediator {
 
   validateAction(action) {
     if (!action || typeof action !== 'object') throw new AiRouterError('Action must be an object.', 'INVALID_ACTION');
+    if (Object.keys(action).some((key) => !['action_id', 'type', 'target', 'parameters', 'risk', 'action_protocol_version'].includes(key))) throw new AiRouterError('Action contains unsupported fields.', 'INVALID_ACTION');
+    if (action.parameters !== undefined && (!action.parameters || typeof action.parameters !== 'object' || Array.isArray(action.parameters))) throw new AiRouterError('Action parameters must be an object.', 'INVALID_ACTION');
     safeActionId(action.action_id);
     if (!ACTION_TYPES.includes(action.type)) throw new AiRouterError(`Action type '${action.type}' is not allowed.`, 'ACTION_TYPE_REJECTED');
     if (this.actionPolicy?.allowed && !this.actionPolicy.allowed.includes(action.type)) throw new AiRouterError(`Action type '${action.type}' is outside this task policy.`, 'ACTION_POLICY_REJECTED');
@@ -48,14 +56,20 @@ export class ActionMediator {
     if (action.type !== 'inspect_git_status' && action.type !== 'run_validation_command' && typeof action.target !== 'string') {
       throw new AiRouterError('Action target is required.', 'INVALID_ACTION');
     }
-    if (action.target && this.filesystemScope) {
-      const relative = path.normalize(action.target).replaceAll('\\', '/').toLowerCase();
+    let target = action.target;
+    if (target) {
+      const absolute = path.resolve(this.workspaceRoot, target);
+      if (!isPathWithin(this.workspaceRoot, absolute)) throw new AiRouterError('Action target is outside the workspace.', 'PATH_OUTSIDE_ROOT');
+      target = path.relative(this.workspaceRoot, absolute).replaceAll('\\', '/');
+    }
+    if (target && this.filesystemScope) {
+      const relative = target.toLowerCase();
       const contains = (scope) => scope === '.' || relative === scope || relative.startsWith(`${scope}/`);
       const allowed = (this.filesystemScope.allowed_paths ?? ['.']).map((item) => item.replaceAll('\\', '/').toLowerCase());
       const denied = (this.filesystemScope.denied_paths ?? []).map((item) => item.replaceAll('\\', '/').toLowerCase());
       if (!allowed.some(contains) || denied.some(contains)) throw new AiRouterError('Action target is outside the descriptor filesystem scope.', 'ACTION_SCOPE_REJECTED');
     }
-    return { action_protocol_version: ACTION_PROTOCOL_VERSION, risk: 'low', parameters: {}, ...action };
+    return { action_protocol_version: ACTION_PROTOCOL_VERSION, risk: 'low', action_id: action.action_id, type: action.type, ...(target !== undefined ? { target } : {}), parameters: action.parameters ?? {} };
   }
 
   async backup(actionId, target, content) {
@@ -116,8 +130,16 @@ export class ActionMediator {
       if (dryRun) return { would_create: action.target, size: Buffer.byteLength(content), sha256: contentHash(content) };
       if (action.parameters.create_parents) await mkdir(path.dirname(safe.path), { recursive: true });
       await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
-      const handle = await open(safe.path, 'wx', 0o600);
-      try { await handle.writeFile(content, 'utf8'); } finally { await handle.close(); }
+      // Stage outside the workspace, then expose the complete bytes with a
+      // no-overwrite hard link. A crash during staging cannot leave a partial
+      // workspace file; a cross-volume link fails without writing the target.
+      const stagingRoot = path.join(this.backupRoot ?? tmpdir(), 'ai-router-staging');
+      await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+      const staged = path.join(stagingRoot, `${randomUUID()}.tmp`);
+      try {
+        await writeFile(staged, content, { flag: 'wx', encoding: 'utf8', mode: 0o600 });
+        await link(staged, safe.path);
+      } finally { await unlink(staged).catch((error) => { if (error.code !== 'ENOENT') throw error; }); }
       await this.faultInjector?.('during-action-after-write', { action, target: safe.path });
       return { created: action.target, size: Buffer.byteLength(content), sha256: contentHash(content) };
     }
@@ -133,7 +155,7 @@ export class ActionMediator {
         if (dryRun) return { would_modify: action.target, ...patched, content: undefined };
         const backup = await this.backup(action.action_id, action.target, source);
         await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
-        await writeAtomic(safe.path, patched.content);
+        await writeAtomic(safe.path, patched.content, path.join(this.backupRoot ?? tmpdir(), 'ai-router-staging'), info.mode);
         await this.faultInjector?.('during-action-after-write', { action, target: safe.path });
         return { modified: action.target, summary: patched.summary, before_sha256: patched.before_sha256, after_sha256: patched.after_sha256, backup };
       }
@@ -144,7 +166,7 @@ export class ActionMediator {
       if (dryRun) return { would_append: action.target, before_sha256: contentHash(source), after_sha256: contentHash(updated) };
       const backup = await this.backup(action.action_id, action.target, source);
       await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
-      await writeAtomic(safe.path, updated);
+      await writeAtomic(safe.path, updated, path.join(this.backupRoot ?? tmpdir(), 'ai-router-staging'), info.mode);
       await this.faultInjector?.('during-action-after-write', { action, target: safe.path });
       return { appended: action.target, before_sha256: contentHash(source), after_sha256: contentHash(updated), backup };
     });

@@ -4,10 +4,29 @@ import { AiRouterError } from './errors.js';
 import { resolveExecutionTimeouts, resolveProviderTimeout } from './provider-timeout-policy.js';
 import { descriptorFromTask } from './task-execution-descriptor.js';
 import { actionExecutionIdentity, receiptHashes } from '../actions/idempotency.js';
+import { prepareActionPlan } from '../actions/action-plan.js';
+import { createRecoverySnapshot, restoreRecoverySnapshot } from '../checkpoints/workspace-snapshot.js';
+import { resolveSafePath } from './safe-path.js';
+import { readFile } from 'node:fs/promises';
+import { contentHash } from '../actions/changeset.js';
 
 function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}:${candidate.reasoning_effort ?? '-'}`; }
 function resourceKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}`; }
 function readOnlyAnalysis(analysis) { return analysis?.write_mode === 'read_only'; }
+const WRITE_ACTIONS = new Set(['create_file', 'modify_file', 'append_file']);
+
+async function verifyActionPostconditions(workspaceRoot, results) {
+  const checks = [];
+  for (const result of results.filter((item) => ['completed', 'skipped-duplicate', 'recovered'].includes(item.status) && WRITE_ACTIONS.has(item.type))) {
+    const expected = result.postcondition_hash ?? result.result?.after_sha256 ?? result.result?.sha256;
+    try {
+      const safe = await resolveSafePath(workspaceRoot, result.target, { mustExist: true });
+      const actual = contentHash(await readFile(safe.path, 'utf8'));
+      checks.push({ validation_id: `action:${result.action_id}`, type: 'action_postcondition', passed: Boolean(expected) && actual === expected });
+    } catch (error) { checks.push({ validation_id: `action:${result.action_id}`, type: 'action_postcondition', passed: false, error: { code: error.code ?? 'POSTCONDITION_FAILED' } }); }
+  }
+  return checks;
+}
 
 function failureFrom(error) {
   if (error.code === 'MALFORMED_STRUCTURED_RESPONSE' || error.code === 'INVALID_STRUCTURED_RESPONSE' || error.code === 'UNSUPPORTED_STRUCTURED_RESPONSE') return 'malformed_output';
@@ -105,14 +124,20 @@ export class ResilientOrchestrator {
         return { status: 'blocked', reason: 'dirty_workspace', checkpoint: taskCheckpoint };
       }
       const priorAttempts = await this.attemptStore.list(task.project_id, task.task_id);
+      const unrestoredPriorWrites = priorAttempts.some((previous) => previous.recovery_restored?.restored !== true && (previous.execution_results ?? []).some((result) => WRITE_ACTIONS.has(result.type) && ['completed', 'recovered'].includes(result.status)));
+      const unfinishedWriteAttempt = [...priorAttempts].reverse().find((previous) => previous.recovery_restored?.restored !== true && (previous.execution_results ?? []).some((result) => WRITE_ACTIONS.has(result.type) && ['completed', 'recovered'].includes(result.status)));
       const countedAttempts = priorAttempts.filter((attempt) => attempt.resume_disposition !== 'retry-safe');
       const usedCandidates = new Set(countedAttempts.map((attempt) => candidateKey(attempt)));
-      const executedActionIds = new Set(priorAttempts.flatMap((attempt) => attempt.approved_actions ?? []).map((action) => action.action_id));
+      const previousReceipts = new Map();
+      for (const previous of priorAttempts) for (const action of previous.recovery_restored?.restored ? [] : previous.approved_actions ?? []) {
+        const receipt = (previous.execution_results ?? []).find((item) => item.action_id === action.action_id && ['completed', 'recovered', 'skipped-duplicate'].includes(item.status));
+        if (receipt) previousReceipts.set(action.action_id, { execution_id: receipt.execution_id ?? actionExecutionIdentity(task.project_id, task.task_id, action), target: receipt.target ?? null, postcondition_hash: receipt.postcondition_hash ?? receipt.result?.after_sha256 ?? receipt.result?.sha256 ?? null });
+      }
       const profiles = await this.profileRegistry.list();
       await this.executionPlanStore?.advance(task.project_id, task.task_id, 'ROUTE');
       const route = await this.routingPolicy.explain({ ...task, recent_failures: priorAttempts.filter((attempt) => attempt.failure_category) }, this.providerRegistry, profiles);
       const remainingAttempts = Math.max(0, maxAttempts - countedAttempts.length);
-      const availableCandidates = route.accepted_candidates.filter((candidate) => !usedCandidates.has(candidateKey(candidate)));
+      const availableCandidates = route.accepted_candidates.filter((candidate) => !usedCandidates.has(candidateKey(candidate)) || (unfinishedWriteAttempt && candidate.provider_id === unfinishedWriteAttempt.provider_id && candidate.profile_id === unfinishedWriteAttempt.profile_id));
       const seenResources = new Set();
       const automaticCandidates = availableCandidates.filter((candidate) => { const key = resourceKey(candidate); if (seenResources.has(key)) return false; seenResources.add(key); return true; });
       const initialAutomatic = automaticCandidates[0];
@@ -121,7 +146,9 @@ export class ResilientOrchestrator {
         ...automaticCandidates.slice(1).filter((candidate) => candidate.provider_id !== initialAutomatic.provider_id),
         ...automaticCandidates.slice(1).filter((candidate) => candidate.provider_id === initialAutomatic.provider_id)
       ] : [];
-      const candidates = (route.routing_mode === 'manual' ? availableCandidates.slice(0, 1) : recoveryOrdered).slice(0, remainingAttempts);
+      let candidates = route.routing_mode === 'manual' ? availableCandidates.slice(0, 1) : recoveryOrdered;
+      if (unfinishedWriteAttempt) candidates = candidates.filter((candidate) => candidate.provider_id === unfinishedWriteAttempt.provider_id && candidate.profile_id === unfinishedWriteAttempt.profile_id).slice(0, 1);
+      candidates = candidates.slice(0, remainingAttempts);
       if (!candidates.length) {
         await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'no-eligible-unused-candidate' });
         return { status: 'blocked', route, attempts: priorAttempts, reason: 'no-eligible-unused-candidate' };
@@ -178,9 +205,19 @@ export class ResilientOrchestrator {
         let approvedActions = [];
         let rejectedActions = [];
         let executionResults = [];
+        let recoverySnapshot = null;
+        let preparedPlan = null;
         const analysisOnly = readOnlyAnalysis(route.task_analysis ?? route.task?.task_analysis);
         const taskAnalysis = route.task_analysis ?? route.task?.task_analysis;
-        if (!failureCategory && !analysisOnly && structured?.status === 'ok' && proposedActions.length === 0 && taskAnalysis?.intent === 'edit') {
+        if (!failureCategory && unfinishedWriteAttempt && JSON.stringify(proposedActions) !== JSON.stringify(unfinishedWriteAttempt.proposed_actions ?? [])) {
+          failureCategory = 'recovery_failure'; failureCode = 'UNRESTORED_PLAN_CHANGED';
+        }
+        if (!failureCategory && structured?.status === 'blocked') { failureCategory = 'provider_blocked'; failureCode = 'PROVIDER_BLOCKED'; }
+        if (!failureCategory && structured?.status === 'ok' && structured.remaining_work?.length) { failureCategory = 'provider_incomplete'; failureCode = 'REMAINING_WORK_REPORTED'; }
+        if (!failureCategory && structured?.status === 'no_change_required' && (analysisOnly || !(task.validation_requirements ?? []).some((item) => item.type !== 'git_inspected'))) {
+          failureCategory = 'no_change_unverified'; failureCode = 'NO_CHANGE_EVIDENCE_MISSING';
+        }
+        if (!failureCategory && !analysisOnly && structured?.status === 'ok' && !proposedActions.some((action) => WRITE_ACTIONS.has(action.type))) {
           failureCategory = 'no_actions_proposed'; failureCode = 'NO_ACTIONS_PROPOSED';
         }
         if (!failureCategory && analysisOnly && proposedActions.length) {
@@ -196,15 +233,30 @@ export class ResilientOrchestrator {
             rejectedActions = proposedActions;
             executionResults = proposedActions.map((action) => ({ action_id: action.action_id ?? null, type: action.type ?? null, target: action.target ?? null, status: 'rejected', result: null, error: { code: 'ACTION_LIMIT_EXCEEDED', message: 'Provider proposed more actions than the descriptor permits.' } }));
             await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: proposedActions, approved_actions: [], rejected_actions: rejectedActions, execution_results: executionResults });
-          } else for (const action of proposedActions) {
+          } else {
+            try {
+              preparedPlan = await prepareActionPlan(mediator, proposedActions, { previousReceipts, projectId: task.project_id, taskId: task.task_id });
+              if (preparedPlan.writes.length) {
+                recoverySnapshot = await createRecoverySnapshot({ dataRoot: this.memoryManager.dataRoot, projectId: task.project_id, taskId: task.task_id, attemptNumber: attempt.attempt_number, workspaceRoot: project.workspacePath, actions: preparedPlan.actions, maxFileBytes: task.execution_limits?.max_file_bytes ?? 1024 * 1024 });
+                await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { recovery_snapshot: { attempt_number: attempt.attempt_number, targets: recoverySnapshot.manifest.entries.map((entry) => entry.target), complete: true } });
+                await this.recoveryJournal?.record(task.project_id, task.task_id, 'recovery_snapshot', { attempt_number: attempt.attempt_number, targets: recoverySnapshot.manifest.entries.map((entry) => entry.target) });
+              }
+            } catch (error) {
+              failureCategory = error.code === 'RECOVERY_SNAPSHOT_UNAVAILABLE' ? 'checkpoint_failure' : 'action_rejected';
+              failureCode = error.code ?? 'ACTION_PLAN_REJECTED';
+              rejectedActions = proposedActions;
+              executionResults = proposedActions.map((action) => ({ action_id: action.action_id ?? null, type: action.type ?? null, target: action.target ?? null, status: 'rejected', result: null, error: { code: failureCode, message: 'The complete action plan did not pass preflight or recovery setup.' } }));
+            }
+          }
+          if (preparedPlan && !failureCategory) for (const action of preparedPlan.actions) {
             let result;
             const executionId = actionExecutionIdentity(task.project_id, task.task_id, action);
-            if (executedActionIds.has(action.action_id)) {
-              result = { action_id: action.action_id, execution_id: executionId, type: action.type, target: action.target ?? null, status: 'skipped-duplicate', result: { reason: 'already-completed' }, error: null };
+            if (previousReceipts.has(action.action_id)) {
+              result = { action_id: action.action_id, execution_id: executionId, type: action.type, target: action.target ?? null, status: 'skipped-duplicate', postcondition_hash: previousReceipts.get(action.action_id).postcondition_hash, result: { reason: 'already-completed' }, error: null };
             } else if (!mediator) {
               result = { action_id: action.action_id, execution_id: executionId, status: 'rejected', error: { code: 'ACTION_MEDIATOR_UNAVAILABLE', message: 'No action mediator is configured.' } };
             } else {
-              const preview = await mediator.execute(action, { dryRun: true });
+              const preview = preparedPlan.previews.get(action.action_id);
               const previewHashes = receiptHashes(preview);
               await this.recoveryJournal?.record(task.project_id, task.task_id, 'action_intent', {
                 attempt_number: attempt.attempt_number, execution_id: executionId, action_id: action.action_id,
@@ -212,7 +264,7 @@ export class ResilientOrchestrator {
                 precondition_hash: previewHashes.precondition_hash, postcondition_hash: previewHashes.postcondition_hash
               });
               await options.faultInjector?.('before-action', { action, attempt, preview });
-              result = await mediator.execute(action, { dryRun: options.dryRun });
+              result = await mediator.execute(action, { dryRun: options.dryRun === true });
               await options.faultInjector?.('after-action-before-receipt', { action, result, attempt, preview });
               const hashes = receiptHashes(result);
               result = { ...result, execution_id: executionId, ...hashes };
@@ -221,7 +273,7 @@ export class ResilientOrchestrator {
             executionResults.push(result);
             if (['completed', 'dry-run', 'skipped-duplicate'].includes(result.status)) {
               approvedActions.push(action);
-              executedActionIds.add(action.action_id);
+              previousReceipts.set(action.action_id, { execution_id: result.execution_id, target: result.target ?? null, postcondition_hash: result.postcondition_hash ?? result.result?.after_sha256 ?? result.result?.sha256 ?? null });
             } else rejectedActions.push(action);
             await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { approved_actions: approvedActions, rejected_actions: rejectedActions, execution_results: executionResults });
             await this.recoveryJournal?.record(task.project_id, task.task_id, 'action_receipt', { attempt_number: attempt.attempt_number, execution_id: executionId, action_id: action.action_id, status: result.status, precondition_hash: result.precondition_hash ?? null, postcondition_hash: result.postcondition_hash ?? null });
@@ -231,7 +283,8 @@ export class ResilientOrchestrator {
             }
             await options.faultInjector?.('after-action-persisted', { action, result, attempt });
           }
-          if (rejectedActions.length) { failureCategory = 'action_rejected'; failureCode = executionResults.find((result) => result.status === 'rejected')?.error?.code; }
+          if (executionResults.some((result) => result.status === 'dry-run') && !failureCategory) { failureCategory = 'dry_run_only'; failureCode = 'DRY_RUN_NOT_APPLIED'; }
+          if (rejectedActions.length && !failureCategory) { failureCategory = 'action_rejected'; failureCode = executionResults.find((result) => result.status === 'rejected')?.error?.code; }
         } else if (!failureCategory) {
           await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: [], approved_actions: [], rejected_actions: [], execution_results: [], summary: structured.summary });
           await this.auditLog?.record('read_only_analysis_received', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, provider_id: candidate.provider_id, model_id: candidate.model_id, attachment_count: task.attachments?.length ?? 0, vision_required: (route.task_analysis ?? route.task?.task_analysis)?.vision_required === true });
@@ -244,21 +297,40 @@ export class ResilientOrchestrator {
           const engine = this.validationEngineFactory?.({ project, task, attempt });
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'validation_intent', { attempt_number: attempt.attempt_number, validation_ids: (task.validation_requirements ?? []).map((item) => item.validation_id) });
           await options.faultInjector?.('before-validation', { attempt });
-          validation = task.validation_requirements?.length
-            ? engine ? await engine.validate(task.validation_requirements) : { passed: false, results: [{ passed: false, error: { code: 'VALIDATION_ENGINE_UNAVAILABLE' } }] }
-            : { passed: true, results: [], validated_at: new Date().toISOString() };
-          await this.recoveryJournal?.record(task.project_id, task.task_id, 'validation_receipt', { attempt_number: attempt.attempt_number, passed: validation.passed, result_count: validation.results.length });
+          const postconditions = await verifyActionPostconditions(project.workspacePath, executionResults);
+          const requirements = task.validation_requirements ?? [];
+          let requested = null; let validationError = null;
+          if (requirements.length && engine) try { requested = await engine.validate(requirements); }
+          catch (error) {
+            if (error.code === 'SIMULATED_CRASH') throw error;
+            validationError = { code: error.code ?? 'VALIDATION_EXECUTION_FAILED' };
+          }
+          const received = requested?.results;
+          const requestedComplete = !requirements.length || (Array.isArray(received) && received.length === requirements.length && requirements.every((requirement) => received.some((item) => item.validation_id === requirement.validation_id)));
+          const results = [...postconditions, ...(Array.isArray(received) ? received : [])];
+          const status = validationError || !requestedComplete ? 'UNAVAILABLE' : results.length ? results.every((item) => item.passed) ? 'PASSED' : 'FAILED' : 'NOT_REQUESTED';
+          validation = { status, passed: status === 'PASSED' ? true : status === 'NOT_REQUESTED' ? null : false, scope: requirements.length ? 'requested_validation' : postconditions.length ? 'action_integrity_only' : 'none', requirements_status: requirements.length ? status : 'NOT_REQUESTED', error: validationError, results, validated_at: results.length ? new Date().toISOString() : null };
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'validation_receipt', { attempt_number: attempt.attempt_number, status, passed: validation.passed, result_count: validation.results.length });
           await options.faultInjector?.('after-validation-before-state-update', { attempt, validation });
           await this.auditLog?.record('validation', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, passed: validation.passed, result_count: validation.results.length });
-          if (!validation.passed) { failureCategory = 'validation_failure'; failureCode = 'VALIDATION_FAILED'; }
+          if (status === 'FAILED' || status === 'UNAVAILABLE') { failureCategory = 'validation_failure'; failureCode = status === 'UNAVAILABLE' ? 'VALIDATION_UNAVAILABLE' : 'VALIDATION_FAILED'; }
         }
 
-        const partialFallback = !failureCategory && structured.status === 'partial' && route.routing_mode !== 'manual'
+        const partialFallback = !failureCategory && structured?.status === 'partial' && route.routing_mode !== 'manual'
           && candidates.slice(index + 1).some((item) => item.provider_id !== candidate.provider_id);
         if (partialFallback) { failureCategory = 'execution_failure'; failureCode = 'PROVIDER_PARTIAL_RESULT'; }
+        let recoverySafe = true;
+        if (failureCategory && recoverySnapshot) {
+          try {
+            const restored = await restoreRecoverySnapshot({ dataRoot: this.memoryManager.dataRoot, projectId: task.project_id, taskId: task.task_id, attemptNumber: attempt.attempt_number, workspaceRoot: project.workspacePath, expectedCurrent: preparedPlan.expectedCurrent });
+            await this.recoveryJournal?.record(task.project_id, task.task_id, 'recovery_restored', { attempt_number: attempt.attempt_number, targets: restored.targets });
+            await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { recovery_restored: restored });
+            for (const action of approvedActions) previousReceipts.delete(action.action_id);
+          } catch (error) { recoverySafe = false; failureCategory = 'recovery_failure'; failureCode = error.code ?? 'RECOVERY_FAILED'; }
+        }
         const postCheckpoint = task.checkpoint_policy?.post_attempt === false ? null : await this.checkpoint(project, task, attempt.attempt_number, 'post-attempt', validation?.results?.map((result) => `${result.validation_id}:${result.passed}`) ?? []);
         const escalationAllowed = !task.escalation_policy || (task.escalation_policy.enabled !== false && (task.escalation_policy.categories ?? []).includes(failureCategory));
-        const next = failureCategory && !escalationAllowed ? null : route.routing_mode === 'manual' ? null
+        const next = failureCategory && (!escalationAllowed || !recoverySafe || unrestoredPriorWrites) ? null : route.routing_mode === 'manual' ? null
           : ['timeout', 'provider_unavailable', 'execution_failure'].includes(failureCategory)
             ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id) ?? null
             : candidates[index + 1] ?? null;
@@ -289,7 +361,7 @@ export class ResilientOrchestrator {
             return { status: 'ready-for-handoff', route, selected: candidate, attempt: attempt.attempt_number, validation, checkpoint: postCheckpoint };
           }
           await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
-            status: 'success', proposed_actions: proposedActions, approved_actions: approvedActions,
+             status: structured.status === 'no_change_required' ? 'no-change-required' : 'success', proposed_actions: proposedActions, approved_actions: approvedActions,
             rejected_actions: rejectedActions, execution_results: executionResults, validation,
             summary: structured.summary, escalation_decision: 'stop-success', next_candidate: null
           });
@@ -304,7 +376,7 @@ export class ResilientOrchestrator {
             checkpoint: finalCheckpoint ?? postCheckpoint, recommended_next_action: structured.handoff_notes[0] ?? 'No remaining work.',
             confidence: structured.uncertainty.length ? 0.7 : 1, uncertainty: structured.uncertainty
           });
-          await this.taskStore.transition(task.project_id, task.task_id, 'COMPLETED', { reason: 'router-validation-passed', attempt: attempt.attempt_number });
+           await this.taskStore.transition(task.project_id, task.task_id, 'COMPLETED', { reason: structured.status === 'no_change_required' ? 'no-change-required-validated' : 'router-validation-passed', attempt: attempt.attempt_number });
           await this.executionPlanStore?.advance(task.project_id, task.task_id, 'FINALIZE', { attempt: attempt.attempt_number, status: 'completed' });
           await this.memoryManager.updateCurrentTask(project.projectId, {
             task_id: task.task_id, objective: task.objective, status: 'completed',

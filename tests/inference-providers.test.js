@@ -31,9 +31,9 @@ test('generic inference profiles accept supported effort and reject unsupported 
 test('routing distinguishes the same model at different efforts and honors a task override', async () => {
   const provider = new MockProvider('reasoning-provider'); provider.descriptor.capabilities.push('coding');
   const registry = new ProviderRegistry(); registry.register(provider);
-  const profile = { profile_id: 'reasoning-profile', provider_id: provider.descriptor.id, enabled: true, status: 'available', cost_category: 'SUBSCRIPTION_INCLUDED', default_reasoning_effort: 'medium', execution_channel: 'subscription-worker', capabilities_override: { add: [], remove: [] }, models: [reasoningModel(provider.descriptor.id)] };
+  const profile = { profile_id: 'reasoning-profile', provider_id: provider.descriptor.id, enabled: true, status: 'available', cost_category: 'SUBSCRIPTION_INCLUDED', default_reasoning_effort: 'medium', execution_channel: 'reasoning-provider-subscription', capabilities_override: { add: [], remove: [] }, models: [reasoningModel(provider.descriptor.id)] };
   const result = await new RoutingPolicy().explain({ required_capabilities: ['coding'], manual_reasoning_effort: 'high' }, registry, [profile]);
-  assert.equal(result.evaluations.length, 3); assert.equal(result.selected.reasoning_effort, 'high'); assert.equal(result.selected.execution_channel, 'subscription-worker');
+  assert.equal(result.evaluations.length, 3); assert.equal(result.selected.reasoning_effort, 'high'); assert.equal(result.selected.execution_channel, 'reasoning-provider-subscription');
 });
 
 test('Antigravity worker supports mocked auth, dynamic multi-family models, effort, and literal quotas', async () => {
