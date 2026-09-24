@@ -6,7 +6,6 @@
   if (focusMode) {
     const layout = document.createElement('main'); layout.className = 'focus-layout';
     const compose = document.createElement('section'); compose.className = 'focus-compose';
-    const monitor = document.createElement('section'); monitor.className = 'focus-monitor';
     const advanced = document.createElement('details'); advanced.id = 'advanced';
     const summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
     const taskId = document.createElement('div'); taskId.id = 'advancedTaskId'; advanced.append(taskId);
@@ -15,9 +14,12 @@
     for (const id of ['explain', 'preview', 'executeArtp']) advancedActions.append(document.querySelector(`#${id}`));
     advanced.append(advancedActions);
     const technicalOutput = document.createElement('button'); technicalOutput.type = 'button'; technicalOutput.className = 'secondary'; technicalOutput.textContent = 'Show Technical Output'; technicalOutput.addEventListener('click', () => vscode.postMessage({ type: 'output' })); advanced.append(technicalOutput);
-    compose.append(instruction.closest('label'), dropZone, readOnly.closest('label'), routingMode.closest('label'), document.querySelector('#run').parentElement, document.querySelector('#dashboard').parentElement, advanced);
-    const taskSection = document.querySelector('#taskStatus'); taskSection.querySelector('h4').textContent = 'Current Task'; monitor.append(taskSection, result.previousElementSibling, result);
-    layout.append(compose, monitor); document.body.append(layout);
+    compose.append(instruction.closest('label'), dropZone, readOnly.closest('label'), routingMode.closest('label'), document.querySelector('#run').parentElement, document.querySelector('#dashboard').parentElement);
+    const taskSection = document.querySelector('#taskStatus'); taskSection.querySelector('h4').textContent = 'Current Task'; document.querySelector('#workspaceStatus').after(taskSection);
+    const resultSection = document.createElement('section'); resultSection.className = 'focus-result';
+    result.previousElementSibling.textContent = 'Result'; resultSection.append(result.previousElementSibling, document.querySelector('#taskResult'), result);
+    result.textContent = '';
+    layout.append(compose, resultSection, advanced); document.body.append(layout);
   } else {
     const launch = document.createElement('button'); launch.type = 'button'; launch.className = 'focus-launch'; launch.textContent = 'Open Focus Mode'; launch.addEventListener('click', () => vscode.postMessage({ type: 'focus' })); document.querySelector('#workspaceStatus').after(launch);
   }
@@ -36,7 +38,8 @@
     row('Validation', task.validation ? (task.validation.passed === true ? 'Passed' : task.validation.passed === false ? 'Failed' : JSON.stringify(task.validation)) : task.terminal ? 'Not reported' : null);
     row('Changed Files', task.terminal ? (task.changedFiles?.length ? task.changedFiles.join(', ') : 'none') : null);
     row('Error', task.error);
-    const output = document.querySelector('#taskResult'); output.hidden = !task.result; output.textContent = task.result ? `Result\n${typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}` : '';
+    const output = document.querySelector('#taskResult'); output.hidden = !task.result; output.textContent = task.result ? `${focusMode ? '' : 'Result\n'}${typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}` : '';
+    if (focusMode && task.taskId && task.terminal) result.textContent = '';
   }
   function option(value, label) { const element = document.createElement('option'); element.value = value; element.textContent = label; return element; }
   function selection() { const manual = routingMode.value === 'manual'; const profile = manual ? data.find(item => item.profile_id === profiles.value) : null; return { routing_mode: manual ? 'manual' : 'automatic', provider_id: profile?.provider_id || '', profile_id: profile?.profile_id || '', model_id: manual ? models.value || profile?.selected_model_id || '' : '', execution_channel: profile?.execution_channel || '', reasoning_effort: manual ? effort.value : '', read_only: readOnly.checked }; }
@@ -61,7 +64,7 @@
   window.addEventListener('message', ({ data: message }) => {
     if (message.type === 'workspace') { workspaceMatched = message.status === 'MATCH'; document.querySelector('#vscodeFolder').textContent = message.vscodePath || 'No VS Code folder open'; document.querySelector('#registeredWorkspace').textContent = message.registeredPath || 'Not registered'; document.querySelector('#workspaceMatch').textContent = workspaceMatched ? 'MATCH' : 'WORKSPACE MISMATCH'; document.querySelector('#workspaceStatus').className = `workspace-status ${workspaceMatched ? 'ok' : 'bad'}`; updateWriteGuard(); }
     if (message.type === 'connection') { const connection = document.querySelector('#connection'); connection.className = `status ${message.connected ? 'ok' : 'bad'}`; connection.textContent = `${message.connected ? 'Connected: ' : 'Offline: '}${message.endpoint}${message.error ? `\n${message.error}` : ''}`; }
-    if (message.type === 'resources') { const savedProfile = profiles.value || message.selection?.profile_id || ''; const savedModel = models.value || message.selection?.model_id || ''; data = Array.isArray(message.profiles) ? message.profiles : []; profiles.replaceChildren(option('', 'Select a profile')); for (const profile of data) profiles.append(option(profile.profile_id, `${profile.display_name} · ${profile.provider_id}`)); if ([...profiles.options].some(item => item.value === savedProfile)) profiles.value = savedProfile; fillModels(savedModel); if (message.selection?.reasoning_effort && !effort.value) effort.value = message.selection.reasoning_effort; routingMode.value = savedProfile ? 'manual' : 'automatic'; routingMode.dispatchEvent(new Event('change')); if (!currentTask?.taskId) result.textContent = `${message.readiness?.status || 'Unknown'}\n${(message.readiness?.blockers || []).join(', ')}`.trim(); }
+    if (message.type === 'resources') { const savedProfile = profiles.value || message.selection?.profile_id || ''; const savedModel = models.value || message.selection?.model_id || ''; data = Array.isArray(message.profiles) ? message.profiles : []; profiles.replaceChildren(option('', 'Select a profile')); for (const profile of data) profiles.append(option(profile.profile_id, `${profile.display_name} · ${profile.provider_id}`)); if ([...profiles.options].some(item => item.value === savedProfile)) profiles.value = savedProfile; fillModels(savedModel); if (message.selection?.reasoning_effort && !effort.value) effort.value = message.selection.reasoning_effort; routingMode.value = savedProfile ? 'manual' : 'automatic'; routingMode.dispatchEvent(new Event('change')); if (!focusMode && !currentTask?.taskId) result.textContent = `${message.readiness?.status || 'Unknown'}\n${(message.readiness?.blockers || []).join(', ')}`.trim(); }
     if (message.type === 'taskStatus') renderTask(message.task);
     if (message.type === 'progress') result.textContent = message.value;
     if (message.type === 'taskProgress') result.textContent = `Task ${message.taskId}\nStatus: ${message.state}`;

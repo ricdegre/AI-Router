@@ -160,7 +160,8 @@ test('packaged VS Code extension contributes a local-only activity panel and hea
   assert.equal(manifest.contributes.views.aiRouter[0].id, 'aiRouter.control'); assert.match(manifest.scripts.package, /\.vsix/);
   assert.equal(manifest.version, '0.6.0'); assert.equal(manifest.engines.vscode, '^1.85.0'); assert.equal(manifest.contributes.configuration.properties['aiRouter.url'].default, 'http://127.0.0.1:43127');
   assert.match(extension, /\/api\/readiness\/vscode-heartbeat/); assert.match(extension, /extension_id/); assert.match(extension, /endpoint: baseUrl\(\)/); assert.match(extension, /registerWebviewViewProvider/);
-  assert.equal(manifest.activationEvents, undefined); assert.ok(manifest.contributes.commands.some(item => item.command === 'aiRouter.refresh'));
+  assert.deepEqual(manifest.activationEvents, ['onStartupFinished']); assert.ok(manifest.contributes.commands.some(item => item.command === 'aiRouter.refresh'));
+  assert.equal(manifest.contributes.configuration.properties['aiRouter.openFocusModeAutomatically'].default, false);
   assert.ok(manifest.files.includes('webview.js')); assert.ok(manifest.files.includes('webview.css'));
   assert.ok(manifest.files.includes('workspace-context.js'), 'VSIX must include extension.js runtime dependency');
   assert.match(extension, /Content-Security-Policy/); assert.match(extension, /asWebviewUri/); assert.doesNotMatch(extension, /<script>const vscode=acquireVsCodeApi/);
@@ -229,7 +230,7 @@ test('extension activates, registers every command, and handles every webview ac
 });
 
 test('Focus Mode opens a central panel, closes noisy views, and shares sidebar task state', async () => {
-  const commands = new Map(); const builtins = []; const sidebarMessages = []; const focusMessages = []; let sidebar; let central; let sidebarHandler; let focusHandler;
+  const commands = new Map(); const builtins = []; const sidebarMessages = []; const focusMessages = []; let sidebar; let central; let sidebarHandler; let focusHandler; let panelCount = 0; let reveals = 0;
   const disposable = () => ({ dispose() {} });
   const workspacePath = 'D:\\Workspace\\fixture';
   const makeWebview = (messages, onHandler) => ({ cspSource: 'vscode-webview:', asWebviewUri: value => value, postMessage(message) { messages.push(message); }, onDidReceiveMessage(handler) { onHandler(handler); return disposable(); }, html: '' });
@@ -241,7 +242,7 @@ test('Focus Mode opens a central panel, closes noisy views, and shares sidebar t
     window: {
       createOutputChannel() { return { appendLine() {}, clear() {}, show() {}, dispose() {} }; }, createStatusBarItem() { return { text: '', show() {}, dispose() {} }; },
       registerWebviewViewProvider(_id, value) { sidebar = value; return disposable(); },
-      createWebviewPanel(id, title, column, options) { central = { id, title, column, options, webview: makeWebview(focusMessages, handler => { focusHandler = handler; }), reveal() {}, onDidDispose() { return disposable(); } }; return central; }
+      createWebviewPanel(id, title, column, options) { panelCount += 1; central = { id, title, column, options, webview: makeWebview(focusMessages, handler => { focusHandler = handler; }), reveal() { reveals += 1; }, onDidDispose() { return disposable(); } }; return central; }
     }
   };
   class FakeClient {
@@ -260,17 +261,55 @@ test('Focus Mode opens a central panel, closes noisy views, and shares sidebar t
     const side = { webview: makeWebview(sidebarMessages, handler => { sidebarHandler = handler; }) };
     sidebar.resolveWebviewView(side);
     await commands.get('aiRouter.focusMode')();
+    await sidebarHandler({ type: 'focus' });
+    assert.equal(panelCount, 1); assert.equal(reveals, 1);
     assert.equal(central.id, 'aiRouter.focus'); assert.equal(central.column, vscode.ViewColumn.Active); assert.match(central.webview.html, /<body class="focus-mode">/);
     assert.match(side.webview.html, /id="taskStatus"/); assert.match(central.webview.html, /id="taskStatus"/); assert.equal(sidebarHandler, focusHandler);
-    assert.deepEqual(builtins, ['workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel']);
+    assert.deepEqual(builtins, ['workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel', 'workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel']);
     await api.refresh();
     assert.ok(sidebarMessages.some(item => item.type === 'taskStatus' && item.task.result === 'Fixture result.'));
     assert.ok(focusMessages.some(item => item.type === 'taskStatus' && item.task.result === 'Fixture result.'));
     assert.ok(focusMessages.some(item => item.type === 'workspace' && item.status === 'MATCH'));
     const source = await (await import('node:fs/promises')).readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8');
     assert.match(source, /document\.createElement\('details'\)/); assert.doesNotMatch(source, /advanced\.open\s*=/);
+    assert.match(source, /Open Focus Mode/); assert.match(source, /workspaceStatus'\)\.after\(taskSection\)/);
+    assert.match(source, /resultSection\.append\(result\.previousElementSibling, document\.querySelector\('#taskResult'\), result\)/);
+    assert.match(source, /result\.previousElementSibling\.textContent = 'Result'/); assert.match(source, /result\.textContent = ''/);
+    const css = await (await import('node:fs/promises')).readFile(new URL('../interfaces/vscode/webview.css', import.meta.url), 'utf8');
+    assert.match(css, /\.focus-layout \{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+    assert.doesNotMatch(css, /\.focus-monitor/);
     assert.match(source, /workspaceMatched = message\.status === 'MATCH'/); assert.match(source, /task\.result/);
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
+});
+
+test('optional Focus Mode auto-open requires an exact registered workspace match', async () => {
+  const Module = require('node:module'); const originalLoad = Module._load;
+  const workspacePath = 'D:\\Workspace\\fixture';
+  const makeVscode = (enabled, registeredPath) => {
+    let panels = 0; const commands = new Map();
+    const disposable = () => ({ dispose() {} });
+    const api = {
+      StatusBarAlignment: { Left: 1 }, ViewColumn: { Active: 1, One: 1 }, Uri: { joinPath: (...parts) => parts.join('/') },
+      commands: { registerCommand(id, handler) { commands.set(id, handler); return disposable(); }, executeCommand() { return Promise.resolve(); } },
+      workspace: { workspaceFolders: [{ name: 'fixture', uri: { fsPath: workspacePath } }], getConfiguration() { return { get(name, fallback) { return name === 'openFocusModeAutomatically' ? enabled : fallback; } }; } },
+      window: {
+        createOutputChannel() { return { appendLine() {}, dispose() {} }; }, createStatusBarItem() { return { show() {}, dispose() {} }; },
+        registerWebviewViewProvider() { return disposable(); },
+        createWebviewPanel() { panels += 1; return { webview: { cspSource: 'vscode-webview:', asWebviewUri: value => value, postMessage() {}, onDidReceiveMessage() { return disposable(); } }, onDidDispose() { return disposable(); } }; }
+      }
+    };
+    class FakeClient { async post() { return {}; } async get(path) { if (path === '/api/projects') return [{ projectId: 'fixture', workspacePath: registeredPath }]; if (path === '/api/profiles') return []; return { status: 'READY' }; } }
+    return { api, FakeClient, count: () => panels };
+  };
+  for (const [enabled, registeredPath, expected] of [[false, workspacePath, 0], [true, 'D:\\Workspace\\other', 0], [true, workspacePath, 1]]) {
+    const fixture = makeVscode(enabled, registeredPath);
+    Module._load = function (request, parent, isMain) { if (request === 'vscode') return fixture.api; return originalLoad.call(this, request, parent, isMain); };
+    let createExtension;
+    try { ({ createExtension } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
+    const context = { subscriptions: [], extension: { packageJSON: { version: '0.6.0' }, id: 'ai-router-local.ai-router-vscode' }, extensionUri: 'extension-root', workspaceState: { get() { return null; }, update() {} } };
+    try { createExtension(fixture.api, fixture.FakeClient)(context); await new Promise(resolve => setImmediate(resolve)); assert.equal(fixture.count(), expected); }
+    finally { for (const item of context.subscriptions) item.dispose?.(); }
+  }
 });
 
 test('a different registered workspace blocks writes but permits a read-only task with a warning', async () => {

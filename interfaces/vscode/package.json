@@ -9,6 +9,7 @@
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
   "contributes": {
     "viewsContainers": { "activitybar": [{ "id": "aiRouter", "title": "AI Router", "icon": "media/router.svg" }] },
     "views": { "aiRouter": [{ "type": "webview", "id": "aiRouter.control", "name": "Control" }] },
@@ -23,6 +24,7 @@
       "title": "AI Router",
       "properties": {
         "aiRouter.url": { "type": "string", "default": "http://127.0.0.1:43127", "description": "Local AI Router dashboard URL." },
+        "aiRouter.openFocusModeAutomatically": { "type": "boolean", "default": false, "description": "Open Focus Mode at startup when the current VS Code folder matches a registered AI Router workspace." },
         "aiRouter.includeSelection": { "type": "boolean", "default": true, "description": "Offer the active text selection as task context." },
         "aiRouter.provider": { "type": "string", "default": "", "description": "Optional AI Router provider ID; blank keeps automatic routing." },
         "aiRouter.profile": { "type": "string", "default": "", "description": "Optional AI Router profile ID selected in the dashboard." },

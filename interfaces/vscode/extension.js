@@ -204,6 +204,9 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     context.subscriptions.push(vscodeApi.window.registerWebviewViewProvider('aiRouter.control', provider)); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.openDashboard', openDashboard)); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.explainRoute', () => explainRoute())); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.runTask', () => runTask())); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.refresh', refresh)); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.focusMode', focusMode));
     if (vscodeApi.workspace.onDidChangeWorkspaceFolders) context.subscriptions.push(vscodeApi.workspace.onDidChangeWorkspaceFolders(() => void loadResources()));
     log('extension.activated', { version: context.extension.packageJSON.version, endpoint: baseUrl() }); heartbeat(); const timer = setInterval(heartbeat, 45_000); context.subscriptions.push({ dispose: () => clearInterval(timer) });
+    if (vscodeApi.workspace.getConfiguration('aiRouter').get('openFocusModeAutomatically', false)) {
+      void loadResources().then(resources => { if (resources?.binding?.status === 'MATCH') return focusMode(); return null; }).catch(error => log('focus.autoOpen.failed', safeError(error)));
+    }
     return { heartbeat, loadResources, refresh, openDashboard, explainRoute, runTask, previewArtp, focusMode, provider, channel };
   };
 }
