@@ -3,6 +3,7 @@ const vscode = require('vscode');
 const { randomUUID, createHash } = require('node:crypto');
 const { RouterClient } = require('./router-client');
 const { workspaceRelativeFile, sameWorkspacePath, workspaceBinding } = require('./workspace-context');
+const { taskSnapshot, trackTask } = require('./task-tracking');
 
 function outputLine(channel, label, value) { channel.appendLine(`${label}: ${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}`); }
 function safeError(error) { return { code: error?.code || 'ERROR', status: error?.status ?? null, message: error?.message || 'Unknown error' }; }
@@ -17,7 +18,57 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     const configuredSelection = () => { const configuration = vscodeApi.workspace.getConfiguration('aiRouter'); return { provider_id: configuration.get('provider', ''), profile_id: configuration.get('profile', ''), model_id: configuration.get('model', ''), execution_channel: configuration.get('executionChannel', ''), reasoning_effort: configuration.get('reasoningEffort', '') }; };
     let panel = null;
     let pendingArtp = null;
+    let currentTask = context.workspaceState?.get('aiRouter.currentTask') ?? null;
+    let trackingKey = null;
+    let trackingGeneration = 0;
+    let taskStatus = currentTask?.status ?? 'READY';
+    let lastTaskSnapshot = null;
     const notifyPanel = (message) => panel?.webview.postMessage(message);
+    const showTask = snapshot => {
+      if (!snapshot) return;
+      lastTaskSnapshot = snapshot.taskId && lastTaskSnapshot?.taskId === snapshot.taskId ? { ...lastTaskSnapshot, ...snapshot } : snapshot;
+      snapshot = lastTaskSnapshot;
+      taskStatus = snapshot.status;
+      status.text = snapshot.status === 'COMPLETED' ? '$(check) AI Router: Completed' : ['FAILED', 'BLOCKED', 'VALIDATION_FAILED', 'TRACKING_LOST'].includes(snapshot.status) ? `$(warning) AI Router: ${snapshot.status}` : ['READY', 'CANCELLED'].includes(snapshot.status) ? `$(circle-outline) AI Router: ${snapshot.status}` : `$(sync~spin) AI Router: ${snapshot.status}`;
+      notifyPanel({ type: 'taskStatus', task: snapshot });
+      if (currentTask && snapshot.taskId === currentTask.taskId) {
+        currentTask = { ...currentTask, status: snapshot.status };
+        const saved = context.workspaceState?.update?.('aiRouter.currentTask', currentTask);
+        if (saved?.catch) void saved.catch(error => log('task.state.persist.failed', safeError(error)));
+      }
+    };
+    showTask({ status: taskStatus, taskId: currentTask?.taskId ?? null });
+    async function followTask(record, resume = false) {
+      const key = `${record.projectId}:${record.taskId}`;
+      if (trackingKey === key) return null;
+      trackingKey = key; const generation = ++trackingGeneration;
+      try {
+        return await trackTask(client(), record.projectId, record.taskId, { ...record, resume,
+          active: () => generation === trackingGeneration,
+          onUpdate(snapshot) { if (generation === trackingGeneration) showTask(snapshot); },
+          onResumeError(error) { log('task.resume.response_lost', { task_id: record.taskId, ...safeError(error) }); },
+          onPollError(error) { log('task.poll.failed', { task_id: record.taskId, ...safeError(error) }); }
+        });
+      } finally { if (generation === trackingGeneration) trackingKey = null; }
+    }
+    async function rememberTask(project, taskId, readOnly) {
+      ++trackingGeneration; trackingKey = null;
+      currentTask = { projectId: project.projectId, taskId, workspacePath: project.workspacePath, readOnly, startedAt: new Date().toISOString(), status: 'ANALYZING' };
+      const saved = context.workspaceState?.update?.('aiRouter.currentTask', currentTask);
+      if (saved?.catch) void saved.catch(error => log('task.state.persist.failed', safeError(error)));
+      showTask({ taskId, status: 'ANALYZING', stage: 'Starting task' });
+    }
+    async function refreshTask() {
+      if (!currentTask) return showTask({ status: 'READY', taskId: null });
+      const folder = vscodeApi.workspace.workspaceFolders?.[0];
+      if (!sameWorkspacePath(folder?.uri?.fsPath, currentTask.workspacePath)) return;
+      try {
+        const detail = await client().task(currentTask.projectId, currentTask.taskId);
+        const snapshot = taskSnapshot(detail, currentTask);
+        showTask(snapshot);
+        if (!snapshot.terminal && !trackingKey && snapshot.status !== 'TRACKING_LOST') void followTask(currentTask);
+      } catch (error) { showTask({ ...lastTaskSnapshot, taskId: currentTask.taskId, status: 'TRACKING_LOST', error: error.message }); log('task.refresh.failed', safeError(error)); }
+    }
 
     function publishWorkspace(folder, projects) {
       const binding = workspaceBinding(folder?.uri?.fsPath, projects, context.workspaceState?.get('aiRouter.projectId'));
@@ -37,8 +88,8 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     async function heartbeat() {
       try {
         const router = client(); await router.post('/api/readiness/vscode-heartbeat', { version: context.extension.packageJSON.version, extension_id: context.extension.id, endpoint: baseUrl(), workspace: Boolean(vscodeApi.workspace.workspaceFolders?.length) });
-        status.text = '$(check) AI Router: connected'; notifyPanel({ type: 'connection', connected: true, endpoint: baseUrl() }); log('heartbeat.connected', { endpoint: baseUrl() });
-      } catch (error) { status.text = '$(warning) AI Router: offline'; notifyPanel({ type: 'connection', connected: false, endpoint: baseUrl(), error: error.message }); log('heartbeat.failed', safeError(error)); }
+        status.tooltip = `AI Router service: connected · ${baseUrl()}`; notifyPanel({ type: 'connection', connected: true, endpoint: baseUrl() }); log('heartbeat.connected', { endpoint: baseUrl() });
+      } catch (error) { status.tooltip = `AI Router service: offline · ${baseUrl()}`; notifyPanel({ type: 'connection', connected: false, endpoint: baseUrl(), error: error.message }); log('heartbeat.failed', safeError(error)); }
     }
 
     async function loadResources() {
@@ -50,7 +101,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
       } catch (error) { publishWorkspace(vscodeApi.workspace.workspaceFolders?.[0], []); notifyPanel({ type: 'error', error: `${error.code || 'ERROR'} — ${error.message}` }); log('resources.refresh.failed', safeError(error)); return null; }
     }
 
-    async function refresh() { log('command.refresh'); return Promise.all([heartbeat(), loadResources()]); }
+    async function refresh() { log('command.refresh'); return Promise.all([heartbeat(), loadResources(), refreshTask()]); }
     async function openDashboard() { log('command.openDashboard', { endpoint: baseUrl() }); const opened = await vscodeApi.env.openExternal(vscodeApi.Uri.parse(baseUrl())); if (!opened) vscodeApi.window.showErrorMessage('AI Router could not open the Dashboard.'); return opened; }
 
     async function previewArtp(instruction, attachments = []) {
@@ -85,20 +136,9 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
         await router.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
         const created = await router.createArtpTask(pending.descriptor, pending.preview, { draftId: pending.draftId, attachmentIds: pending.attachmentIds, idempotencyKey: pending.idempotencyKey, selection });
         taskId = created.descriptor.task_id; pendingArtp = null;
-        notifyPanel({ type: 'taskProgress', taskId, state: 'CREATED' }); status.text = '$(sync~spin) AI Router: running';
-        void router.resume(project.projectId, taskId).catch(error => log('artp.resume.failed', { task_id: taskId, ...safeError(error) }));
-        let detail = null; const deadline = Date.now() + 10 * 60_000;
-        while (Date.now() < deadline) {
-          detail = await router.task(project.projectId, taskId);
-          notifyPanel({ type: 'taskProgress', taskId, state: detail.state?.state ?? 'RUNNING' });
-          if (['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED'].includes(detail.state?.state)) break;
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-        const attempt = detail?.attempts?.at(-1) ?? {}; const changedFiles = [...new Set([...(detail?.workspace_changes?.changedFiles ?? []), ...(attempt.execution_results ?? []).filter(item => item.status === 'completed' && item.target).map(item => item.target)])];
-        notifyPanel({ type: 'task', taskId, state: detail?.state?.state ?? 'TRACKING_IN_BACKGROUND', selected: { provider_id: attempt.provider_id, profile_id: attempt.profile_id, model_id: attempt.model_id }, validation: attempt.validation ?? null, changedFiles, result: attempt.summary ?? null });
-        status.text = detail?.state?.state === 'COMPLETED' ? '$(check) AI Router: completed' : '$(warning) AI Router: attention needed';
-        return detail;
-      } catch (error) { notifyPanel({ type: 'error', taskId, error: `${error.code || 'ERROR'} — ${error.message}` }); status.text = '$(error) AI Router: error'; log('artp.execute.failed', { task_id: taskId, ...safeError(error) }); return null; }
+        await rememberTask(project, taskId, false);
+        return followTask(currentTask, true);
+      } catch (error) { if (taskId) showTask({ taskId, status: 'TRACKING_LOST', error: error.message }); else notifyPanel({ type: 'error', error: `${error.code || 'ERROR'} — ${error.message}` }); log('artp.execute.failed', { task_id: taskId, ...safeError(error) }); return null; }
     }
 
     async function explainRoute(instruction, selection = configuredSelection(), attachments = []) {
@@ -118,7 +158,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
       const editor = vscodeApi.window.activeTextEditor; const activeFile = editor ? workspaceRelativeFile(folder.uri.fsPath, editor.document.uri) : null;
       let selectedText = ''; if (activeFile && editor && vscodeApi.workspace.getConfiguration('aiRouter').get('includeSelection', true) && !editor.selection.isEmpty) selectedText = editor.document.getText(editor.selection);
       const taskInstruction = [objective, readOnly ? 'Read-only mode: do not create, modify, move, or delete files.' : '', activeFile ? `Active file: ${activeFile}` : '', selectedText ? `Selected text (user supplied):\n${selectedText}` : ''].filter(Boolean).join('\n\n');
-      channel.clear(); channel.show(true); status.text = '$(sync~spin) AI Router: running'; notifyPanel({ type: 'progress', value: 'Routing task…' }); outputLine(channel, 'Workspace', folder.uri.fsPath); outputLine(channel, 'Mode', readOnly ? 'Read-only' : 'Standard'); outputLine(channel, 'Attached images', attachments.length); if (activeFile) outputLine(channel, 'Active file', activeFile); log('command.runTask', { workspace: folder.uri.fsPath, active_file: activeFile, read_only: readOnly, attachment_count: attachments.length, attachment_types: attachments.map(item => item.mime_type) });
+      channel.clear(); channel.show(true); showTask({ status: 'ROUTING', taskId: null, stage: 'Selecting provider' }); notifyPanel({ type: 'progress', value: 'Routing task…' }); outputLine(channel, 'Workspace', folder.uri.fsPath); outputLine(channel, 'Mode', readOnly ? 'Read-only' : 'Standard'); outputLine(channel, 'Attached images', attachments.length); if (activeFile) outputLine(channel, 'Active file', activeFile); log('command.runTask', { workspace: folder.uri.fsPath, active_file: activeFile, read_only: readOnly, attachment_count: attachments.length, attachment_types: attachments.map(item => item.mime_type) });
       try {
         const router = client(); const { binding, project: registeredProject } = await inspectWorkspace(router, folder);
         if (!readOnly) requireWorkspaceMatch(binding);
@@ -129,39 +169,19 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
         notifyPanel({ type: 'progress', value: attachments.length ? 'Uploading attached images securely…' : 'Creating task…' });
         const uploaded = [];
         for (const attachment of attachments) uploaded.push(await router.uploadAttachment(attachment));
-        const created = await router.createTask(project.projectId, objective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id), requiredFiles: activeFile ? [activeFile] : [] }); taskId = created.descriptor.task_id; notifyPanel({ type: 'progress', value: `Running ${taskId}…` });
-        let resumeError = null; const resumePromise = router.resume(project.projectId, taskId).catch(error => { resumeError = error; log('task.resume.response_lost', { task_id: taskId, ...safeError(error) }); });
-        const deadline = Date.now() + 10 * 60_000; let detail = null;
-        while (Date.now() < deadline) {
-          try {
-            detail = await router.task(project.projectId, taskId);
-            const attempt = detail.attempts?.at(-1);
-            const state = attempt?.failure_category === 'validation_failure' || attempt?.validation?.passed === false ? 'VALIDATION_FAILED'
-              : detail.state?.state === 'BLOCKED' && attempt?.status === 'partial' ? 'READY_FOR_HANDOFF' : detail.state?.state ?? 'RUNNING';
-            notifyPanel({ type: 'taskProgress', taskId, state });
-            if (['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED'].includes(detail.state?.state)) break;
-          } catch (error) { log('task.poll.failed', { task_id: taskId, ...safeError(error) }); }
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-        if (!['COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED'].includes(detail?.state?.state)) {
-          notifyPanel({ type: 'taskProgress', taskId, state: 'TRACKING_IN_BACKGROUND' });
-          throw Object.assign(new Error(`Task ${taskId} is still being tracked by AI Router. Check its status in the Dashboard.`), { code: resumeError?.code ?? 'TASK_TRACKING_TIMEOUT' });
-        }
-        void resumePromise;
-        const attempt = detail.attempts?.at(-1) ?? {};
-        const finalState = attempt.failure_category === 'validation_failure' || attempt.validation?.passed === false ? 'VALIDATION_FAILED'
-          : detail.state.state === 'BLOCKED' && attempt.status === 'partial' ? 'READY_FOR_HANDOFF' : detail.state.state;
-        const gitFiles = detail.workspace_changes?.changedFiles ?? []; const mediatedFiles = (detail.attempts ?? []).flatMap(item => (item.execution_results ?? []).filter(result => result.status === 'completed' && result.target).map(result => result.target)); const changedFiles = [...new Set([...gitFiles, ...mediatedFiles])];
-        outputLine(channel, 'Final state', finalState); outputLine(channel, 'Validation', attempt.validation ?? 'Not reported'); outputLine(channel, 'Changed files', changedFiles); outputLine(channel, 'Result', attempt.result ?? attempt.structured_response ?? attempt.summary ?? 'See Dashboard.');
-        notifyPanel({ type: 'task', taskId, state: finalState, selected: route.selected, validation: attempt.validation ?? null, changedFiles, result: attempt.summary ?? attempt.structured_response ?? null }); status.text = finalState === 'COMPLETED' ? '$(check) AI Router: completed' : `$(warning) AI Router: ${finalState}`; log('command.runTask.completed', { task_id: taskId, state: finalState, changed_file_count: changedFiles.length }); return detail;
-      } catch (error) { status.text = '$(error) AI Router: error'; outputLine(channel, 'Error', `${error.code || 'ERROR'} — ${error.message}`); notifyPanel({ type: 'error', taskId, error: `${error.code || 'ERROR'} — ${error.message}` }); vscodeApi.window.showErrorMessage(`AI Router: ${error.code || 'ERROR'} — ${error.message}`); log('command.runTask.failed', { ...safeError(error), task_id: taskId }); return null; }
+        const created = await router.createTask(project.projectId, objective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id), requiredFiles: activeFile ? [activeFile] : [] }); taskId = created.descriptor.task_id;
+        await rememberTask(project, taskId, readOnly);
+        const outcome = await followTask(currentTask, true);
+        log('command.runTask.tracking', { task_id: taskId, state: outcome?.status ?? 'TRACKING_LOST', changed_file_count: outcome?.changedFiles?.length ?? 0 });
+        return outcome;
+      } catch (error) { outputLine(channel, 'Error', `${error.code || 'ERROR'} — ${error.message}`); if (taskId) showTask({ taskId, status: 'TRACKING_LOST', error: error.message }); else { showTask({ status: 'FAILED', taskId: null, error: error.message }); notifyPanel({ type: 'error', error: `${error.code || 'ERROR'} — ${error.message}` }); } vscodeApi.window.showErrorMessage(`AI Router: ${error.code || 'ERROR'} — ${error.message}`); log('command.runTask.failed', { ...safeError(error), task_id: taskId }); return null; }
     }
 
     const provider = { resolveWebviewView(view) {
       panel = view; view.webview.options = { enableScripts: true, localResourceRoots: [context.extensionUri] };
       const scriptUri = view.webview.asWebviewUri(vscodeApi.Uri.joinPath(context.extensionUri, 'webview.js')); const styleUri = view.webview.asWebviewUri(vscodeApi.Uri.joinPath(context.extensionUri, 'webview.css'));
-      view.webview.html = `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${view.webview.cspSource} data: blob:; style-src ${view.webview.cspSource}; script-src ${view.webview.cspSource};"><link rel="stylesheet" href="${styleUri}"></head><body><h3>AI Router</h3><div id="connection" class="status">Checking local service…</div><section id="workspaceStatus" class="workspace-status bad" aria-live="polite"><div>VS Code Folder:</div><code id="vscodeFolder">Checking…</code><div>AI Router Registered Workspace:</div><code id="registeredWorkspace">Checking…</code><div>Status: <strong id="workspaceMatch">WORKSPACE MISMATCH</strong></div></section><label>Instruction<textarea id="instruction" placeholder="Describe the coding task or paste ARTP/1"></textarea></label><section id="dropZone" class="drop-zone" aria-label="Image attachments"><div class="attachment-heading"><span>Visual references</span><button id="attach" class="secondary compact" type="button">Attach image</button></div><input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple hidden><div id="attachmentList" class="attachment-list"></div><small>PNG, JPEG or WebP · up to 4 images · 5 MB each · paste or drop supported</small></section><label>Routing mode<select id="routingMode"><option value="automatic">Automatic Routing</option><option value="manual">Manual Resource Selection</option></select></label><label>Profile<select id="profile"><option value="">Select a profile</option></select></label><label>Model<select id="model"><option value="">Provider default</option></select></label><label>Reasoning effort<select id="effort"><option value="">Provider default / Auto</option>${['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'ultracode'].map(value => `<option>${value}</option>`).join('')}</select></label><label class="check"><input id="readOnly" type="checkbox"> Read-only / no file changes</label><div class="row"><button id="run">Run Task</button><button id="explain" class="secondary">Explain Route</button><button id="preview" class="secondary">Preview ARTP</button><button id="executeArtp" hidden>Execute ARTP</button></div><div class="row"><button id="dashboard" class="secondary">Open Dashboard</button><button id="refresh" class="secondary">Refresh</button></div><h4>Status / result</h4><div id="result" class="status">Ready.</div><script src="${scriptUri}"></script></body></html>`;
-      view.webview.onDidReceiveMessage(async message => { log('webview.message', { type: message.type, attachment_count: Array.isArray(message.attachments) ? message.attachments.length : 0 }); if (message.type === 'dashboard') return vscodeApi.commands.executeCommand('aiRouter.openDashboard'); if (message.type === 'ready' || message.type === 'refresh') return vscodeApi.commands.executeCommand('aiRouter.refresh'); if (message.type === 'preview') return previewArtp(message.instruction, message.attachments ?? []); if (message.type === 'executeArtp') return executeArtp(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'explain') return explainRoute(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'run') return runTask(message.instruction, message.selection, Boolean(message.readOnly), message.attachments ?? []); log('webview.message.ignored', { type: String(message.type || 'missing') }); return null; });
+      view.webview.html = `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${view.webview.cspSource} data: blob:; style-src ${view.webview.cspSource}; script-src ${view.webview.cspSource};"><link rel="stylesheet" href="${styleUri}"></head><body><h3>AI Router</h3><div id="connection" class="status">Checking local service…</div><section id="workspaceStatus" class="workspace-status bad" aria-live="polite"><div>VS Code Folder:</div><code id="vscodeFolder">Checking…</code><div>AI Router Registered Workspace:</div><code id="registeredWorkspace">Checking…</code><div>Status: <strong id="workspaceMatch">WORKSPACE MISMATCH</strong></div></section><section id="taskStatus" class="task-status" aria-live="polite"><h4>Task Status</h4><div id="taskState">READY</div><div id="taskDetails"></div><div id="taskResult" class="task-result" hidden></div></section><label>Instruction<textarea id="instruction" placeholder="Describe the coding task or paste ARTP/1"></textarea></label><section id="dropZone" class="drop-zone" aria-label="Image attachments"><div class="attachment-heading"><span>Visual references</span><button id="attach" class="secondary compact" type="button">Attach image</button></div><input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple hidden><div id="attachmentList" class="attachment-list"></div><small>PNG, JPEG or WebP · up to 4 images · 5 MB each · paste or drop supported</small></section><label>Routing mode<select id="routingMode"><option value="automatic">Automatic Routing</option><option value="manual">Manual Resource Selection</option></select></label><label>Profile<select id="profile"><option value="">Select a profile</option></select></label><label>Model<select id="model"><option value="">Provider default</option></select></label><label>Reasoning effort<select id="effort"><option value="">Provider default / Auto</option>${['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'ultracode'].map(value => `<option>${value}</option>`).join('')}</select></label><label class="check"><input id="readOnly" type="checkbox"> Read-only / no file changes</label><div class="row"><button id="run">Run Task</button><button id="explain" class="secondary">Explain Route</button><button id="preview" class="secondary">Preview ARTP</button><button id="executeArtp" hidden>Execute ARTP</button></div><div class="row"><button id="dashboard" class="secondary">Open Dashboard</button><button id="refresh" class="secondary">Refresh</button></div><h4>Status / result</h4><div id="result" class="status">Ready.</div><script src="${scriptUri}"></script></body></html>`;
+      view.webview.onDidReceiveMessage(async message => { log('webview.message', { type: message.type, attachment_count: Array.isArray(message.attachments) ? message.attachments.length : 0 }); if (message.type === 'dashboard') return vscodeApi.commands.executeCommand('aiRouter.openDashboard'); if (message.type === 'ready') { notifyPanel({ type: 'taskStatus', task: lastTaskSnapshot ?? { taskId: currentTask?.taskId ?? null, status: taskStatus } }); return vscodeApi.commands.executeCommand('aiRouter.refresh'); } if (message.type === 'refresh') return vscodeApi.commands.executeCommand('aiRouter.refresh'); if (message.type === 'preview') return previewArtp(message.instruction, message.attachments ?? []); if (message.type === 'executeArtp') return executeArtp(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'explain') return explainRoute(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'run') return runTask(message.instruction, message.selection, Boolean(message.readOnly), message.attachments ?? []); log('webview.message.ignored', { type: String(message.type || 'missing') }); return null; });
       log('webview.resolved'); refresh();
     } };
 

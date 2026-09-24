@@ -13,6 +13,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .bad { color: var(--vscode-testing-iconFailed); }
 .workspace-status { display: grid; gap: 4px; padding: 10px; border: 1px solid currentColor; border-radius: 4px; background: var(--vscode-editor-background); font-size: 12px; }
 .workspace-status code { display: block; color: var(--vscode-foreground); white-space: normal; overflow-wrap: anywhere; user-select: text; margin-bottom: 6px; }
+.task-status { margin-top: 10px; padding: 10px; border: 1px solid var(--vscode-input-border); border-radius: 4px; background: var(--vscode-editor-background); font-size: 12px; overflow-wrap: anywhere; }
+.task-status h4 { margin: 0 0 6px; }
+#taskState { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+#taskDetails > div { margin: 3px 0; }
+.task-result { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vscode-input-border); white-space: pre-wrap; user-select: text; }
 .check { display: flex; align-items: center; gap: 7px; }
 .check input { width: auto; margin: 0; }
 .drop-zone { margin-top: 10px; padding: 8px; border: 1px dashed var(--vscode-input-border); border-radius: 4px; }

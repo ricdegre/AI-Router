@@ -32,6 +32,6 @@
     }
   },
   "scripts": { "package": "vsce package --allow-missing-repository --out ../../dist/ai-router-vscode-0.6.0.vsix" },
-  "files": ["extension.js", "router-client.js", "workspace-context.js", "webview.js", "webview.css", "README.md", "LICENSE", "media/router.svg"],
+  "files": ["extension.js", "router-client.js", "workspace-context.js", "task-tracking.js", "webview.js", "webview.css", "README.md", "LICENSE", "media/router.svg"],
   "devDependencies": { "@vscode/vsce": "^3.6.2" }
 }

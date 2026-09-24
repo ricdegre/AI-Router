@@ -5,6 +5,45 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { RouterClient } = require('../interfaces/vscode/router-client.js');
 const { workspaceRelativeFile, sameWorkspacePath, workspaceBinding } = require('../interfaces/vscode/workspace-context.js');
+const { taskSnapshot, trackTask } = require('../interfaces/vscode/task-tracking.js');
+
+test('task status reflects persisted progress and terminal outcomes', () => {
+  const base = { state: { state: 'RUNNING', created_at: '2026-09-24T00:00:00Z' }, execution_plan: { current_step: 'PROVIDER' }, attempts: [{ provider_id: 'ollama', model_id: 'gemma4:26b' }], workspace_changes: { changedFiles: [] } };
+  assert.equal(taskSnapshot(base, { taskId: 'task-1' }).status, 'WAITING_FOR_PROVIDER');
+  assert.equal(taskSnapshot({ ...base, execution_plan: { current_step: 'ACTIONS' } }, { readOnly: true }).status, 'RUNNING');
+  assert.equal(taskSnapshot({ ...base, execution_plan: { current_step: 'ACTIONS' } }, { readOnly: false }).status, 'APPLYING_CHANGES');
+  const completed = taskSnapshot({ ...base, state: { ...base.state, state: 'COMPLETED', updated_at: '2026-09-24T00:01:00Z' }, attempts: [{ provider_id: 'ollama', model_id: 'gemma4:26b', summary: 'Wholesale review complete.', validation: { passed: true } }] }, { taskId: 'task-1', readOnly: true });
+  assert.equal(completed.status, 'COMPLETED'); assert.equal(completed.result, 'Wholesale review complete.'); assert.deepEqual(completed.changedFiles, []); assert.equal(completed.durationMs, 60000); assert.equal(completed.terminal, true);
+  assert.equal(taskSnapshot({ ...base, state: { state: 'FAILED' } }).status, 'FAILED');
+  assert.equal(taskSnapshot({ ...base, state: { state: 'BLOCKED' } }).status, 'BLOCKED');
+  assert.equal(taskSnapshot({ ...base, state: { state: 'FAILED' }, attempts: [{ validation: { passed: false } }] }).status, 'VALIDATION_FAILED');
+});
+
+test('persisted pre-start resume blocker is shown instead of a tracking timeout', async () => {
+  const detail = { state: { state: 'CREATED' }, attempts: [], resume: { recommendation: 'BLOCKED', reasons: ['git-commit-changed'] } };
+  const updates = [];
+  const result = await trackTask({ async resume() { return { status: 'blocked', explanation: detail.resume }; }, async task() { return detail; } }, 'project', 'task', { resume: true, onUpdate: snapshot => updates.push(snapshot), wait: async () => {} });
+  assert.equal(result.status, 'BLOCKED'); assert.match(result.error, /git-commit-changed/); assert.equal(updates.length, 1);
+});
+
+test('blocked resume response is authoritative even when task state has not transitioned', async () => {
+  const detail = { state: { state: 'CREATED' }, attempts: [], resume: { recommendation: 'RESUMABLE', reasons: [] } };
+  const outcome = await trackTask({ async resume() { return { status: 'blocked', explanation: { reasons: ['project-lock-active'] } }; }, async task() { return detail; } }, 'project', 'task', { resume: true, wait: async () => {} });
+  assert.equal(outcome.status, 'BLOCKED'); assert.equal(outcome.persistedState, 'CREATED'); assert.match(outcome.error, /project-lock-active/);
+});
+
+test('tracking window consults persisted state, keeps running tasks visible, and observes later completion', async () => {
+  const updates = []; let clock = 0; let calls = 0;
+  const result = await trackTask({ async task() { calls += 1; return { state: { state: calls === 3 ? 'COMPLETED' : 'RUNNING' }, attempts: [{ summary: calls === 3 ? 'Done' : '' }], workspace_changes: { changedFiles: [] } }; } }, 'project', 'task', { trackingWindowMs: 1, now: () => clock, wait: async () => { clock += 2; }, onUpdate: snapshot => updates.push(snapshot) });
+  assert.ok(updates.some(item => item.status === 'STILL RUNNING')); assert.equal(result.status, 'COMPLETED'); assert.equal(result.result, 'Done');
+});
+
+test('tracking window resolves completed backend state and lost polling without task failure', async () => {
+  const completed = await trackTask({ async task() { return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Done' }] }; } }, 'project', 'task', { trackingWindowMs: 0 });
+  assert.equal(completed.status, 'COMPLETED');
+  let failures = 0; const lost = await trackTask({ async task() { failures += 1; throw new Error('service unreachable'); } }, 'project', 'task', { wait: async () => {} });
+  assert.equal(failures, 3); assert.equal(lost.status, 'TRACKING_LOST'); assert.equal(lost.terminal, false);
+});
 
 test('active editor context is accepted only for files inside the workspace', () => {
   assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'file', fsPath: 'D:\\Workspace\\PROJECTOS\\SND-YDB\\src\\main.js' }), 'src\\main.js');
@@ -131,7 +170,7 @@ test('packaged VS Code extension contributes a local-only activity panel and hea
 });
 
 test('extension activates, registers every command, and handles every webview action', async () => {
-  const messages = []; const commands = new Map(); const logs = []; let opened = 0; let messageHandler; let provider; let createOptions; let ensuredWorkspace;
+  const messages = []; const commands = new Map(); const logs = []; let opened = 0; let messageHandler; let provider; let createOptions; let ensuredWorkspace; let statusBar;
   const disposable = () => ({ dispose() {} });
   const configuration = { url: 'http://127.0.0.1:43127', includeSelection: true, provider: '', profile: '', model: '', executionChannel: '', reasoningEffort: '' };
   const vscode = {
@@ -149,7 +188,7 @@ test('extension activates, registers every command, and handles every webview ac
     window: {
       activeTextEditor: null,
       createOutputChannel() { return { appendLine(line) { logs.push(line); }, clear() {}, show() {}, dispose() {} }; },
-      createStatusBarItem() { return { show() {}, dispose() {}, text: '', command: '', tooltip: '' }; },
+      createStatusBarItem() { statusBar = { show() {}, dispose() {}, text: '', command: '', tooltip: '' }; return statusBar; },
       registerWebviewViewProvider(_id, value) { provider = value; return disposable(); },
       async showInputBox() { return 'inspect'; },
       showErrorMessage() {}
@@ -181,8 +220,9 @@ test('extension activates, registers every command, and handles every webview ac
   await messageHandler({ type: 'run', instruction: 'Inspect only', selection: {}, readOnly: true });
   await messageHandler({ type: 'preview', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
   await messageHandler({ type: 'run', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
-  assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, undefined); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'workspace' && item.status === 'MATCH' && item.registeredPath === 'D:\\Workspace\\PROJECTOS\\SND-YDB')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'task'));
-  assert.ok(messages.some(item => item.type === 'task' && item.state === 'COMPLETED')); assert.ok(logs.some(line => line.includes('task.resume.response_lost')));
+  assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, undefined); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'workspace' && item.status === 'MATCH' && item.registeredPath === 'D:\\Workspace\\PROJECTOS\\SND-YDB')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'taskStatus'));
+  assert.ok(messages.some(item => item.type === 'taskStatus' && item.task.status === 'COMPLETED' && item.task.result === 'Read-only inspection complete.')); assert.ok(logs.some(line => line.includes('task.resume.response_lost')));
+  assert.match(statusBar.text, /Completed/); assert.match(statusBar.tooltip, /service: connected/); assert.doesNotMatch(statusBar.text, /connected/i);
   assert.equal(messages.filter(item => item.type === 'artpPreview').length, 2); assert.equal(createOptions.readOnly, true);
   assert.ok(logs.some(line => line.includes('extension.activated'))); assert.ok(logs.some(line => line.includes('webview.message'))); assert.ok(logs.every(line => !line.includes('Inspect only')));
   for (const item of context.subscriptions) item.dispose?.(); void api;
@@ -229,6 +269,38 @@ test('a different registered workspace blocks writes but permits a read-only tas
     assert.ok(errors.some(item => item.includes('WORKSPACE_MISMATCH')));
     await api.runTask('Inspect only', null, true);
     assert.equal(created, 1); assert.equal(registered, 1);
+  } finally { for (const item of context.subscriptions) item.dispose?.(); }
+});
+
+test('webview reload restores the current persisted task without resuming it again', async () => {
+  const messages = []; let provider; let handler; let resumes = 0; let reads = 0;
+  const disposable = () => ({ dispose() {} });
+  const folderPath = 'D:\\Workspace\\fixture';
+  const vscode = {
+    StatusBarAlignment: { Left: 1 }, Uri: { parse: value => value, joinPath: (...values) => values.join('/') },
+    env: { async openExternal() { return true; } }, commands: { registerCommand() { return disposable(); }, executeCommand() {} },
+    workspace: { workspaceFolders: [{ name: 'fixture', uri: { fsPath: folderPath } }], getConfiguration() { return { get(_name, fallback) { return fallback; } }; } },
+    window: { createOutputChannel() { return { appendLine() {}, dispose() {} }; }, createStatusBarItem() { return { show() {}, dispose() {}, text: '' }; }, registerWebviewViewProvider(_id, value) { provider = value; return disposable(); } }
+  };
+  class FakeClient {
+    async post() { return {}; }
+    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/projects') return [{ projectId: 'fixture', workspacePath: folderPath }]; return { status: 'READY' }; }
+    async task() { reads += 1; return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Recovered result.', provider_id: 'ollama', model_id: 'gemma4:26b' }], workspace_changes: { changedFiles: [] } }; }
+    async resume() { resumes += 1; }
+  }
+  const Module = require('node:module'); const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) { if (request === 'vscode') return vscode; return originalLoad.call(this, request, parent, isMain); };
+  let createExtension;
+  try { ({ createExtension } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
+  const saved = { projectId: 'fixture', taskId: 'task-recover', workspacePath: folderPath, readOnly: true, status: 'RUNNING' };
+  const context = { subscriptions: [], extension: { packageJSON: { version: '0.6.0' }, id: 'ai-router-local.ai-router-vscode' }, extensionUri: 'extension-root', workspaceState: { get(key) { return key === 'aiRouter.currentTask' ? saved : 'fixture'; }, update() {} } };
+  try {
+    createExtension(vscode, FakeClient)(context);
+    provider.resolveWebviewView({ webview: { cspSource: 'vscode-webview:', asWebviewUri: value => value, postMessage(message) { messages.push(message); }, onDidReceiveMessage(value) { handler = value; return disposable(); } } });
+    await handler({ type: 'ready' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(reads >= 1); assert.equal(resumes, 0);
+    assert.ok(messages.some(item => item.type === 'taskStatus' && item.task.status === 'COMPLETED' && item.task.result === 'Recovered result.' && item.task.taskId === 'task-recover'));
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });
 
