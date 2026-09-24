@@ -1,0 +1,29 @@
+# F09 multimodal execution
+
+F09 extends traditional Task Execution Descriptor v0.1 tasks. ARTP/1 remains **preview-only**: pasting ARTP cannot create or execute a task. Image bytes remain in the existing private `AttachmentStore`, not in the descriptor, profile metadata, context manifest or audit log.
+
+## Execution contract
+
+For each routed attempt, Core builds a provider-neutral `ExecutionEnvelope` v0.1 from the resolved task. It separates `semantics` and `task_analysis` from `destination` (provider/profile/model/channel/inference). It carries effective permissions, narrowed path scope, rendered context sections, required-file and attachment references, ordered resolved attachment bindings, validation requirements, completion criteria, and separate semantic, policy, context-manifest and full execution-manifest hashes. The envelope never contains raw ARTP, aliases, credentials, OAuth state or the full project/profile object. A private image path appears only in the transient adapter-facing attachment; `executionEnvelopeAudit` records identity, slot, MIME, size and hash, not the path or Base64. Existing F01–F08 routing, action preflight, recovery snapshot, independent validation and fallback barriers remain in the orchestrator.
+
+`ContextBuilder.plan` identifies explicitly required workspace-relative files; `render` reads full exact text only inside the task filesystem scope, rejects secret/generated paths and unsafe links, includes its SHA-256, and marks task text, image references, constraints, effective policy and required sources mandatory. If mandatory material exceeds the selected context budget, execution stops with `MANDATORY_CONTEXT_TOO_LARGE`. Optional project inspection is scope-filtered and may be truncated. VS Code can pass the active file as a required file through the existing task API. The provider does not get unrestricted filesystem access.
+
+Image eligibility is the intersection of **model vision support**, **execution-channel image input declaration**, and **adapter image transport implementation**. Routing no longer infers executable vision from model metadata or a generic provider badge alone. Rejections identify `VISION_MODEL_UNSUPPORTED`, `VISION_CHANNEL_UNSUPPORTED` or `VISION_ADAPTER_UNSUPPORTED`; manual routing never silently falls back. The separate `real_provider_verified` flag remains false unless actual receipt of pixels is demonstrated; unit mocks do not set it. The runtime does not yet persist per-installation verification evidence into routing metadata, so even a successful external verification run does not turn a generic provider badge into “verified.”
+
+## Provider transports and evidence
+
+| Provider/channel | Model vision fact | Implemented transport | Contract tests | Real provider visual test |
+| --- | --- | --- | --- | --- |
+| Ollama `/api/chat` | `/api/show` capabilities per installed model | Base64 pixels in `messages[].images` | Yes | **Passed** with local `gemma4:26b` |
+| Claude Code subscription CLI | Model metadata may report vision | `--input-format stream-json` stdin user message containing base64 image content block; tools disabled | Yes | **Not verified**: authenticated `claude.ai` Pro CLI 2.1.280 timed out in controlled test |
+| OpenAI Codex App Server subscription | Per-model metadata | Existing `localImage` turn input | Yes | Not tested in F09; no login started |
+| OpenRouter | Per-model metadata | Existing image data URL message part | Yes | Not tested; metered requests prohibited |
+| Antigravity | Do not infer from model name | None verified or implemented | Filtering only | Not tested; ineligible for visual execution |
+
+Ollama's [official vision documentation](https://docs.ollama.com/capabilities/vision) specifies `images` on chat messages. Claude's [official Agent SDK streaming-input documentation](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode) specifies image content blocks for streaming input, while single-message input is text-only. That supports the implemented mechanism, **not** a claim that this installation completed an image request. Textual image paths are never used as visual transport.
+
+## Controlled verification, 2026-09-23/24
+
+The reproducible local command is `node scripts/f09-local-verification.js --e2e`. It creates a random three-digit number as pixels in a temporary PNG; neither the prompt nor the filename reveals the number. A direct local Ollama call recognized the number. A separate read-only AI Router task on a temporary Git workspace routed through the visual Ollama profile, resolved the attachment, returned the same digits in its structured summary, passed `git_inspected` validation and left Git clean. Only after that success, a write task used full exact `src/fixture.js` context and its hash, proposed a structured `modify_file` action, created a recovery snapshot, changed that one file, passed an allowlisted validator whose expected digits were **not** sent to the model, and reached `COMPLETED`. One earlier controlled write failed validation and the snapshot restored the original file; this exercised rollback. The successful fixture had no Git remote and was outside SND/YDB. No paid API or fallback was used.
+
+The script intentionally leaves its disposable temporary fixture for inspection and prints the path. It is not a production workspace or benchmark. Read-only and write verification are specific to the local `gemma4:26b` installation, not a blanket guarantee for all models. Claude's subscription-authenticated real request timed out without a usable result; treat its transport as implemented and contract-tested, not real-provider-verified. OpenAI login/auth repair, ARTP MVP B, and broad routing redesign are out of scope.

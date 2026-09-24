@@ -21,6 +21,7 @@ This repository currently provides:
 - model-aware deterministic routing with limits, cost policy, circuit state, and explainable acceptance/rejection;
 - optional Decision Engine Protocol 0.1 with deterministic-only, mocked Jev-assisted, and hybrid modes; hard policy remains authoritative;
 - a structured response protocol that treats model output as untrusted proposals;
+- F09 provider-neutral execution envelopes, native image transport eligibility, mandatory context fail-closed behavior, and a local vision/write verification fixture ([details](docs/f09-multimodal-execution.md));
 - safe paths, controlled text actions, exact stale-protected changesets, private backups, and independent validation;
 - persistent task states, attempt history, bounded executable escalation, audit events, project leases, and crash recovery;
 - Task Execution Descriptor 0.1, persistent execution plans, hash-chained recovery journals, workspace drift classification, and safe disk-only resume;
@@ -35,7 +36,7 @@ This repository currently provides:
 - a thin VS Code extension that connects only to the local AI Router control API and can select a router provider/profile/model;
 - an artificial continuity demo and isolated tests.
 
-OpenRouter execution and the metered Gemini auth-key path are implemented. Gemini stays off until explicit metered opt-in. OpenAI profiles use the official Codex App Server “Sign in with ChatGPT” flow in a separate runtime home per profile; the router never copies global login state or silently uses paid API billing. Claude Code uses the authenticated Claude subscription CLI with explicit model and effort selection, tool-free test inference, and official `/usage` observations; it does not enable Anthropic API billing. Automatic rollback and real TypeSafe/Jev connectivity are not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
+OpenRouter execution and the metered Gemini auth-key path are implemented. Gemini stays off until explicit metered opt-in. OpenAI profiles use the official Codex App Server “Sign in with ChatGPT” flow in a separate runtime home per profile; the router never copies global login state or silently uses paid API billing. Claude Code uses the authenticated Claude subscription CLI with explicit model and effort selection, tool-free test inference, and official `/usage` observations; it does not enable Anthropic API billing. Controlled failed writes have recovery snapshots; generalized Git rollback and real TypeSafe/Jev connectivity are not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
 
 ## Conceptual architecture
 
