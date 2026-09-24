@@ -8,6 +8,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
 .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+#newTask { grid-column: 1 / -1; }
 .status { padding: 8px; margin: 8px 0; background: var(--vscode-editor-background); white-space: pre-wrap; word-break: break-word; }
 .ok { color: var(--vscode-testing-iconPassed); }
 .bad { color: var(--vscode-testing-iconFailed); }

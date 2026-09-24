@@ -280,6 +280,7 @@ test('Focus Mode opens a central panel, closes noisy views, and shares sidebar t
     assert.match(side.webview.html, /id="taskStatus"/); assert.match(central.webview.html, /id="taskStatus"/); assert.equal(sidebarHandler, focusHandler);
     assert.deepEqual(builtins, ['workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel', 'workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel']);
     await api.refresh();
+    await sidebarHandler({ type: 'clearDraft' });
     assert.ok(sidebarMessages.some(item => item.type === 'taskStatus' && item.task.result === 'Fixture result.'));
     assert.ok(focusMessages.some(item => item.type === 'taskStatus' && item.task.result === 'Fixture result.'));
     assert.ok(focusMessages.some(item => item.type === 'workspace' && item.status === 'MATCH'));
@@ -292,6 +293,9 @@ test('Focus Mode opens a central panel, closes noisy views, and shares sidebar t
     assert.match(css, /\.focus-layout \{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
     assert.doesNotMatch(css, /\.focus-monitor/);
     assert.match(source, /workspaceMatched = message\.status === 'MATCH'/); assert.match(source, /task\.result/);
+    assert.match(source, /newTask\.textContent = 'New Task'/);
+    assert.match(source, /instruction\.value = ''; attachments = \[\]; fileInput\.value = ''/);
+    assert.match(source, /vscode\.postMessage\(\{ type: 'clearDraft' \}\)/);
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });
 

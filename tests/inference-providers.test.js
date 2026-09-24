@@ -137,6 +137,25 @@ test('Claude Test Chat pins supported effort, reports actual model, refreshes li
   const provider = new ClaudeCodeProvider({ worker }); const result = await provider.testChat({ profile_id: 'claude-personal', model: 'opus', inference: { reasoning_effort: 'low' }, message: 'Reply only with OK', max_output_tokens: 8, timeout_ms: 15_000 });
   assert.equal(result.response, 'OK'); assert.equal(result.model, 'claude-opus-5-5'); assert.equal(result.reasoning_effort, 'low'); assert.equal(result.limits.windows[0].remaining_percentage, 99);
   const inference = calls[0].args; assert.ok(inference.includes('--effort')); assert.ok(inference.includes('low')); assert.ok(inference.includes('--tools')); assert.ok(inference.includes('')); assert.ok(inference.includes('--safe-mode')); assert.equal(calls[0].options.purpose, 'test-chat');
+  assert.match(inference[1], /Reply only with OK/); assert.doesNotMatch(inference[1], /RESPONSE CONTRACT/);
+});
+
+test('Claude Code serializes CLI commands and reports OAuth refresh contention without leaking CLI output', async () => {
+  let active = 0; let peak = 0;
+  const worker = { run: async () => { active += 1; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 2)); active -= 1; return { stdout: '{}' }; }, runStreaming: async (_profile, _args, options) => {
+    options.onOutput({ stream: 'stdout', chunk: JSON.stringify({ type: 'result', is_error: true, result: 'Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh' }) });
+    throw new ProviderError('claude command failed.', 'PROVIDER_CLI_COMMAND_FAILED', { details: { exit_code: 1 } });
+  } };
+  const provider = new ClaudeCodeProvider({ worker });
+  await Promise.all([provider.runCommand('profile', ['--version'], {}), provider.runCommand('profile', ['auth', 'status'], {}), provider.runCommand('profile', ['-p', '/usage'], {})]);
+  assert.equal(peak, 1);
+  await assert.rejects(provider.testChat({ profile_id: 'profile', model: 'haiku', message: 'OK', max_output_tokens: 8 }), error => error.code === 'CLAUDE_OAUTH_REFRESH_LOCKED' && error.retryable === true && !JSON.stringify(error.details).includes('OAuth token'));
+});
+
+test('Claude Code reports the initialized model before unrelated model-usage entries', async () => {
+  const worker = { runStreaming: async () => ({ stdout: `${JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-haiku-4-5-20251001' })}\n${JSON.stringify({ type: 'result', subtype: 'success', result: 'OK', modelUsage: { 'claude-sonnet-5': {} } })}\n` }), run: async () => ({ stdout: '{}' }) };
+  const result = await new ClaudeCodeProvider({ worker }).testChat({ profile_id: 'claude', model: 'haiku', message: 'OK', max_output_tokens: 8 });
+  assert.equal(result.model, 'claude-haiku-4-5-20251001');
 });
 
 test('Claude project execution is noninteractive, streamed, context-aware, and structured', async () => {

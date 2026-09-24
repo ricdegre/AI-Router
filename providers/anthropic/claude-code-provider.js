@@ -80,6 +80,17 @@ function localCommandArgs(command) {
   return ['-p', command, '--output-format', 'json', '--tools', '', '--no-session-persistence', '--safe-mode', '--strict-mcp-config'];
 }
 
+function oauthRefreshLocked(output) {
+  return /Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh/i.test(output);
+}
+
+function executedModel(output, fallback) {
+  const events = String(output).split(/\r?\n/).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+  const assistant = events.findLast((event) => event.type === 'assistant' && typeof event.message?.model === 'string' && event.message.model !== '<synthetic>');
+  const initialized = events.find((event) => event.type === 'system' && event.subtype === 'init' && typeof event.model === 'string');
+  return assistant?.message.model ?? initialized?.model ?? fallback;
+}
+
 function modelDescriptor(providerId, model) {
   const efforts = claudeEffortsForModel(model.display_name);
   return createModelDescriptor({ providerId, modelId: model.id, discovered: {
@@ -97,14 +108,21 @@ export class ClaudeCodeProvider extends ProviderAdapter {
   constructor(options = {}) {
     super({ id: 'anthropic', name: 'Anthropic', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['claude-subscription-cli'], execution_channels: [{ id: 'claude-code-subscription', name: 'Claude Code Subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false, input_modalities: ['text', 'image'] }], inference_controls: ['reasoning_effort'] });
     this.worker = options.worker ?? new CliWorker({ providerId: 'anthropic', executable: options.executable ?? 'claude', dataRoot: options.dataRoot });
+    this.commandQueue = Promise.resolve();
   }
+  queueCommand(operation) {
+    const result = this.commandQueue.then(operation);
+    this.commandQueue = result.then(() => {}, () => {});
+    return result;
+  }
+  runCommand(profileId, args, options) { return this.queueCommand(() => this.worker.run(profileId, args, options)); }
   imageTransport(channelId) { return { implemented: channelId === 'claude-code-subscription', mechanism: 'claude-stream-json-image-block' }; }
   async inspectAuth(profileId, timeoutMs) {
     profileId ??= 'provider-health';
     const [cli, versionResult, authResult] = await Promise.all([
       typeof this.worker.diagnostics === 'function' ? this.worker.diagnostics() : Promise.resolve({ found: true, resolved_executable: null, resolution_source: 'provider-worker' }),
-      this.worker.run(profileId, ['--version'], { purpose: 'authentication', timeoutMs }),
-      this.worker.run(profileId, ['auth', 'status'], { purpose: 'authentication', timeoutMs })
+      this.runCommand(profileId, ['--version'], { purpose: 'authentication', timeoutMs }),
+      this.runCommand(profileId, ['auth', 'status'], { purpose: 'authentication', timeoutMs })
     ]);
     const auth = parseEnvelope(authResult.stdout) ?? {};
     return {
@@ -127,7 +145,7 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     }
   }
   async connectionStatus(options) { try { return await this.connect(options); } catch (error) { if (['PROVIDER_CLI_COMMAND_FAILED', 'PROVIDER_CLI_NOT_INSTALLED'].includes(error.code)) return { status: 'auth-pending', error_code: error.code }; throw error; } }
-  async disconnect({ profile_id }) { await this.worker.run(profile_id, ['auth', 'logout'], { purpose: 'logout' }); return { status: 'disconnected' }; }
+  async disconnect({ profile_id }) { await this.runCommand(profile_id, ['auth', 'logout'], { purpose: 'logout' }); return { status: 'disconnected' }; }
   async health({ profile_id = 'health', timeout_ms } = {}) {
     try { const auth = await this.inspectAuth(profile_id, timeout_ms); return { status: auth.authenticated ? 'healthy' : 'unavailable', reachable: auth.authenticated, authenticated: auth.authenticated, plan_type: auth.plan_type, cli: auth.cli, execution_channel: 'claude-code-subscription' }; }
     catch (error) { return { status: 'unavailable', reachable: false, error_code: error.code }; }
@@ -138,17 +156,17 @@ export class ClaudeCodeProvider extends ProviderAdapter {
       const auth = await this.inspectAuth(profile_id, timeout_ms);
       if (!auth.authenticated) throw new ProviderError('Claude subscription login is required.', 'CLAUDE_AUTH_REQUIRED', { providerId: this.descriptor.id, failureCategory: 'authentication' });
     }
-    const menu = await this.worker.run(profile_id, localCommandArgs('/model'), { purpose: 'discovery', timeoutMs: timeout_ms });
+    const menu = await this.runCommand(profile_id, localCommandArgs('/model'), { purpose: 'discovery', timeoutMs: timeout_ms });
     const aliases = parseClaudeModelMenu(menu.stdout).filter((id) => CORE_MODEL_ALIASES.includes(id));
     const selected = await Promise.all(aliases.map(async (id) => {
-      const result = await this.worker.run(profile_id, localCommandArgs('/model ' + id), { purpose: 'discovery', timeoutMs: timeout_ms });
+      const result = await this.runCommand(profile_id, localCommandArgs('/model ' + id), { purpose: 'discovery', timeoutMs: timeout_ms });
       return parseClaudeModelSelection(id, result.stdout);
     }));
     return selected.filter((model) => model.available).map((model) => modelDescriptor(this.descriptor.id, model));
   }
   async limits({ profile_id, timeout_ms } = {}) {
     profile_id ??= 'provider-usage';
-    const result = await this.worker.run(profile_id, localCommandArgs('/usage'), { purpose: 'usage', timeoutMs: timeout_ms });
+    const result = await this.runCommand(profile_id, localCommandArgs('/usage'), { purpose: 'usage', timeoutMs: timeout_ms });
     return parseClaudeUsage(result.stdout);
   }
   async usage(options) { return this.limits(options); }
@@ -166,7 +184,7 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     }
   }
   async execute(request) {
-    const prompt = request.structured_prompt ?? buildStructuredTaskPrompt(request);
+    const prompt = request.test_prompt ?? request.structured_prompt ?? buildStructuredTaskPrompt(request);
     const imageInput = (request.attachments ?? []).length > 0;
     const args = imageInput ? ['-p', '--input-format', 'stream-json'] : ['-p', prompt];
     args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'plan', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config');
@@ -178,17 +196,24 @@ export class ClaudeCodeProvider extends ProviderAdapter {
       stdin = `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
     }
     const execute = typeof this.worker.runStreaming === 'function' ? this.worker.runStreaming.bind(this.worker) : this.worker.run.bind(this.worker);
-    const result = await execute(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms, timeouts: request.execution_timeouts, signal: request.signal, ...(stdin ? { stdin } : {}) });
+    let recentOutput = '';
+    let result;
+    try {
+      result = await this.queueCommand(() => execute(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms, timeouts: request.execution_timeouts, signal: request.signal, ...(stdin ? { stdin } : {}), onOutput: ({ stream, chunk }) => { if (stream === 'stdout') recentOutput = `${recentOutput}${chunk}`.slice(-8192); } }));
+    } catch (error) {
+      if (error.code === 'PROVIDER_CLI_COMMAND_FAILED' && oauthRefreshLocked(recentOutput)) throw new ProviderError('Claude Code OAuth refresh is locked by another or interrupted CLI process. Retry after the other process exits; sign-in is not yet known to be required.', 'CLAUDE_OAUTH_REFRESH_LOCKED', { providerId: this.descriptor.id, retryable: true, failureCategory: 'provider_unavailable', details: { exit_code: error.details?.exit_code ?? null } });
+      throw error;
+    }
     const envelope = parseEnvelope(result.stdout);
     if (!envelope || envelope.is_error === true || envelope.subtype === 'error') throw new ProviderError('Claude Code did not complete the request.', 'CLAUDE_EXECUTION_FAILED', { providerId: this.descriptor.id, details: { subtype: envelope?.subtype ?? null } });
-    const actualModel = Object.keys(envelope.modelUsage ?? {})[0] ?? request.model;
+    const actualModel = executedModel(result.stdout, Object.keys(envelope.modelUsage ?? {})[0] ?? request.model);
     const limits = await this.limits({ profile_id: request.profile.profile_id, timeout_ms: request.timeout_ms }).catch(() => null);
     return { status: 'completed', model: actualModel, requested_model: request.model, reasoning_effort: request.inference?.reasoning_effort ?? 'auto', output: envelope.result ?? envelope.response ?? envelope.output ?? '', metrics: envelope.usage ?? envelope.modelUsage ?? null, limits };
   }
   async executeStructured(request) { const raw = await this.execute(request); const parsed = parseStructuredResponse(raw.output, { allowTextFallback: false }); return { ...raw, structured: parsed.response, structured_valid: parsed.valid }; }
   async testChat(request) {
     const started = performance.now();
-    const raw = await this.execute({ profile: { profile_id: request.profile_id }, model: request.model, inference: request.inference, prompt: 'Connection test only. Do not use tools or files. Reply in at most ' + request.max_output_tokens + ' tokens.\n' + request.message, timeout_ms: request.timeout_ms, purpose: 'test-chat' });
+    const raw = await this.execute({ profile: { profile_id: request.profile_id }, model: request.model, inference: request.inference, test_prompt: 'Connection test only. Do not use tools or files. Reply in at most ' + request.max_output_tokens + ' tokens.\n' + request.message, timeout_ms: request.timeout_ms, purpose: 'test-chat' });
     return { status: 'connected', response: raw.output, model: raw.model, requested_model: raw.requested_model, reasoning_effort: raw.reasoning_effort, latency_ms: Math.round(performance.now() - started), usage_delta: raw.metrics ?? null, limits: raw.limits };
   }
 }

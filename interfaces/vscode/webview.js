@@ -25,6 +25,14 @@
   }
   let data = []; let attachments = []; let workspaceMatched = false;
   let currentTask = null;
+  const newTask = document.createElement('button'); newTask.type = 'button'; newTask.id = 'newTask'; newTask.className = 'secondary'; newTask.textContent = 'New Task';
+  document.querySelector('#refresh').after(newTask);
+  newTask.addEventListener('click', () => {
+    instruction.value = ''; attachments = []; fileInput.value = ''; renderAttachments();
+    document.querySelector('#executeArtp').hidden = true;
+    result.textContent = currentTask?.taskId && !currentTask.terminal ? 'Draft cleared. The current task continues running.' : 'Ready for a new task.';
+    vscode.postMessage({ type: 'clearDraft' });
+  });
   function renderTask(task) {
     currentTask = task;
     const state = document.querySelector('#taskState');
