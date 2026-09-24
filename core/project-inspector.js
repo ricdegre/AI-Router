@@ -64,7 +64,7 @@ export async function inspectProject(workspacePath, task = {}, options = {}) {
   const { excludedDirectories, excludedFiles } = found;
   const files = found.files.filter((file) => contextPathAllowed(file, options.scope));
   const terms = termsFor(task);
-  const ranked = files.map((file) => ({ file, score: scoreFile(file, terms) })).sort((a, b) => b.score - a.score || a.file.localeCompare(b.file));
+  const ranked = files.filter((file) => !(options.excludeFiles ?? []).includes(file)).map((file) => ({ file, score: scoreFile(file, terms) })).sort((a, b) => b.score - a.score || a.file.localeCompare(b.file));
   const selected = ranked.slice(0, options.maxInspectedFiles ?? 24);
   const treeLimit = Math.min(3_500, Math.floor(budgetChars * 0.3));
   const tree = files.slice(0, 300).join('\n').slice(0, treeLimit);

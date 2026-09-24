@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRuntimeServices } from '../core/runtime-services.js';
 import { ControlApi } from '../interfaces/control/control-api.js';
+import { inspectGit, createCheckpointMetadata } from '../checkpoints/git-checkpoint.js';
 
 const BASELINE = 'STATE=PENDING\n';
 const EXPECTED = 'STATE=READY\n';
@@ -61,6 +62,7 @@ async function main() {
   const traditionalDiff = git(workspace, 'diff', '--', 'status.txt');
   await writeFile(target, BASELINE);
   if (git(workspace, 'status', '--porcelain')) throw new Error('Fixture baseline did not restore between A and B.');
+  await services.memoryManager.addCheckpoint(project.projectId, createCheckpointMetadata(inspectGit(workspace), { label: 'A/B fixture baseline restored before ARTP', stage: 'benchmark-reset' }));
   await services.artpAliasStore.publish({ scope: 'project', project_id: project.projectId, alias_id: 'STATUS_FILE', type: 'SCOPE', content: { paths: ['status.txt'] } });
   await services.artpAliasStore.publish({ scope: 'project', project_id: project.projectId, alias_id: 'KEEP_NEWLINE', type: 'CONSTRAINT', content: { preserve: ['Preserve the trailing newline'], advisory: [], denied_paths: [], denied_operations: ['create_file', 'append_file'] } });
   const artpText = ['ARTP/1', `P: "${project.projectId}"`, 'DO: "Modify status.txt to STATE=READY"', 'F: ["@STATUS_FILE"]', 'KEEP: ["@KEEP_NEWLINE"]', 'TEST: ["validation:status-ready"]', 'DONE: ["status.txt equals STATE=READY followed by one newline"]'].join('\n');

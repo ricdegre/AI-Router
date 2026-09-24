@@ -58,7 +58,7 @@ export class ContextBuilder {
       requiredSources.push(`FILE: ${name}\nSHA-256: ${sha256(content)}\nEXACT CONTENT:\n${content}`);
       fileManifest.push({ path: name, sha256: sha256(content), chars: content.length, mode: 'full', mandatory: true, reason: plan.reasons?.[`file:${name}`] ?? 'required file' });
     }
-    const projectInspection = options.workspacePath ? await inspectProject(options.workspacePath, task, { budgetChars: Math.min(10_000, Math.max(3_000, Math.floor(budgetChars * 0.65))), scope: plan.scope }) : null;
+    const projectInspection = options.workspacePath ? await inspectProject(options.workspacePath, task, { budgetChars: Math.min(10_000, Math.max(3_000, Math.floor(budgetChars * 0.65))), scope: plan.scope, excludeFiles: plan.required_files }) : null;
     const latestCheckpoint = memory.checkpoints.at(-1) ?? null;
     const candidates = [
       ['task', JSON.stringify({ task_id: task.task_id, objective: task.objective, instruction: task.prompt ?? '', acceptance_criteria: task.acceptance_criteria ?? [], requested_action_type: task.requested_action_type ?? null }, null, 2)],
