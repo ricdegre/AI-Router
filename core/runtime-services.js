@@ -37,6 +37,10 @@ import { VsCodeIntegration } from './vscode-integration.js';
 import { AttachmentStore } from './attachment-store.js';
 import { ArtpAliasStore } from '../artp/alias-store.js';
 import { ArtpCompiler } from '../artp/compiler.js';
+import { ArtpTaskService } from '../artp/task-service.js';
+import { ValidationCommandRegistry } from '../validation/validation-engine.js';
+import { sha256 } from '../artp/contracts.js';
+import { AiRouterError } from './errors.js';
 
 export function createRuntimeServices(config, options = {}) {
   const dataRoot = config.dataRoot;
@@ -46,7 +50,8 @@ export function createRuntimeServices(config, options = {}) {
   const taskStore = new TaskStore(dataRoot, { descriptorStore, recoveryJournal });
   const projectRegistry = new ProjectRegistry(dataRoot);
   const artpAliasStore = new ArtpAliasStore(dataRoot, projectRegistry);
-  const artpCompiler = new ArtpCompiler({ projectRegistry, aliasStore: artpAliasStore, attachmentStore, validationRegistry: options.artpValidationRegistry ?? new Map(), globalPolicy: options.artpGlobalPolicy ?? {}, projectPolicy: options.artpProjectPolicy ?? {}, workspacePolicy: options.artpWorkspacePolicy ?? {}, taskPermissions: options.artpTaskPermissions ?? {} });
+  const artpValidationRegistry = options.artpValidationRegistry ?? new Map();
+  const artpCompiler = new ArtpCompiler({ projectRegistry, aliasStore: artpAliasStore, attachmentStore, validationRegistry: artpValidationRegistry, globalPolicy: options.artpGlobalPolicy ?? {}, projectPolicy: options.artpProjectPolicy ?? {}, workspacePolicy: options.artpWorkspacePolicy ?? {}, taskPermissions: options.artpTaskPermissions ?? {} });
   const profileRegistry = new ProfileRegistry(dataRoot);
   const secretStore = options.secretStore ?? new SecretStore(dataRoot, options.secretStoreOptions);
   const providerRegistry = new ProviderRegistry({ profileRegistry });
@@ -88,9 +93,17 @@ export function createRuntimeServices(config, options = {}) {
       maxFileBytes: task.execution_limits?.max_file_bytes, actionPolicy: task.action_policy, filesystemScope: task.filesystem_scope,
       faultInjector: options.actionFaultInjector
     }),
-    validationEngineFactory: ({ project }) => new ValidationEngine({ workspaceRoot: project.workspacePath })
+    validationEngineFactory: ({ project, task }) => {
+      const commands = new ValidationCommandRegistry();
+      for (const binding of task?.artp?.validation_bindings ?? []) {
+        const definition = artpValidationRegistry instanceof Map ? artpValidationRegistry.get(binding.validation_id) : artpValidationRegistry[binding.validation_id];
+        if (!definition || sha256(definition) !== binding.hash) throw new AiRouterError(`Registered validator '${binding.validation_id}' changed since task creation.`, 'ARTP_VALIDATION_BINDING_CHANGED');
+        if (definition?.type === 'command' && definition.command_id) commands.register(definition.command_id, { command: definition.command, args: definition.args ?? [], timeout_ms: definition.timeout_ms ?? 30_000, cwd: 'workspace' });
+      }
+      return new ValidationEngine({ workspaceRoot: project.workspacePath, commandRegistry: commands });
+    }
   };
   const orchestrator = new ResilientOrchestrator(dependencies);
   const resumeManager = new ResumeManager({ ...dependencies, orchestrator });
-  return { ...dependencies, orchestrator, resumeManager };
+  return { ...dependencies, orchestrator, resumeManager, artpTaskService: new ArtpTaskService(dependencies) };
 }

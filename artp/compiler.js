@@ -38,7 +38,7 @@ export class ArtpCompiler {
     Object.assign(this, { projectRegistry, aliasStore, attachmentStore, validationRegistry, globalPolicy, projectPolicy, workspacePolicy, taskPermissions });
   }
 
-  async preview({ descriptor, draft_id = null, attachment_ids = [] }) {
+  async preview({ descriptor, draft_id = null, attachment_ids = [], write_authorized = false }) {
     const parsed = parseArtp(descriptor);
     if (SECRET_PATTERN.test(descriptor)) throw new AiRouterError('ARTP must not contain credentials or private keys.', 'ARTP_SECRET_REJECTED');
     if (!Array.isArray(attachment_ids) || attachment_ids.length > 4) throw new AiRouterError('Attachment references are invalid.', 'ARTP_ATTACHMENT_INVALID');
@@ -120,7 +120,7 @@ export class ArtpCompiler {
     }
     // No caller-supplied ARTP field can grant write permission. The API uses
     // the default task permission; a trusted host can inject a narrower policy.
-    const taskAllowed = policyList(this.taskPermissions.allowed_operations, 'task allowed_operations') ?? READ_ONLY_ACTIONS;
+    const taskAllowed = policyList(this.taskPermissions.allowed_operations, 'task allowed_operations') ?? (write_authorized ? ACTION_TYPES.filter((type) => type !== 'run_validation_command') : READ_ONLY_ACTIONS);
     allowedOps = allowedOps.filter((item) => taskAllowed.includes(item));
     const uniqueDeniedOps = [...new Set(forbiddenOps)];
     if (uniqueDeniedOps.some((item) => !KNOWN_DENIALS.has(item))) throw new AiRouterError('Policy contains unsupported operation.', 'ARTP_POLICY_CONFLICT');
@@ -131,12 +131,24 @@ export class ArtpCompiler {
     for (const target of [...scope, ...deniedPaths, ...references.filter((item) => item.startsWith('path:')).map((item) => item.slice(5))]) await resolveSafePath(project.workspacePath, target, { mustExist: false });
 
     const refs = [...new Set(references)];
-    const ids = [...new Set(validatorIds)]; const validations = [];
+    for (const ref of refs.filter((item) => item.startsWith('path:'))) {
+      const target = ref.slice(5);
+      if (!scope.some((allowed) => allowed === '.' || target === allowed || target.startsWith(`${allowed}/`)) || deniedPaths.some((denied) => denied === '.' || target === denied || target.startsWith(`${denied}/`))) throw new AiRouterError(`Reference '${target}' is outside task scope.`, 'ARTP_REFERENCE_OUTSIDE_SCOPE');
+    }
+    const ids = [...new Set(validatorIds)]; const validations = []; const validationBindings = [];
     for (const id of ids) {
       if (!/^[a-z0-9][a-z0-9._-]{1,79}$/.test(id)) throw new AiRouterError('Invalid validation reference.', 'ARTP_VALIDATION_INVALID');
       const definition = this.validationRegistry instanceof Map ? this.validationRegistry.get(id) : this.validationRegistry[id];
       if (!definition) throw new AiRouterError(`Unknown validation '${id}'.`, 'ARTP_VALIDATION_UNKNOWN');
-      validations.push({ validation_id: id, type: definition.type, ...(definition.target ? { target: definition.target } : {}), source: 'registered' });
+      // Historical MVP A registries may expose preview-only validators. Durable
+      // execution rejects these later through descriptor validation.
+      if (definition.target) {
+        const target = safeArtpPath(definition.target);
+        if (!scope.some((allowed) => allowed === '.' || target === allowed || target.startsWith(`${allowed}/`)) || deniedPaths.some((denied) => denied === '.' || target === denied || target.startsWith(`${denied}/`))) throw new AiRouterError(`Validation '${id}' is outside task scope.`, 'ARTP_VALIDATION_OUTSIDE_SCOPE');
+      }
+      if (definition.type === 'command' && (!definition.command_id || !definition.command || !Array.isArray(definition.args ?? []))) throw new AiRouterError(`Registered command '${id}' is incomplete.`, 'ARTP_VALIDATION_INVALID');
+      validations.push({ validation_id: id, type: definition.type, ...(definition.target ? { target: definition.target } : {}), ...(definition.expected !== undefined ? { expected: definition.expected } : {}), ...(definition.command_id ? { command_id: definition.command_id } : {}) });
+      validationBindings.push({ validation_id: id, hash: sha256(definition) });
     }
 
     const slots = fields.IMG ?? [];
@@ -160,8 +172,9 @@ export class ArtpCompiler {
     const semanticData = {
       protocol_version: ARTP_VERSION, project_id: project.projectId, objective: fields.DO,
       scope: { allowed_paths: scope, denied_paths: deniedPaths }, preserve: [...new Set(preserve)], forbidden_operations: uniqueDeniedOps,
-      additional_context: fields.CTX ?? null, references: refs, attachments,
-      validation_references: ids, completion_criteria: fields.DONE ?? [], alias_bindings: aliasBindings
+      additional_context: fields.CTX ?? null, advisory: [...new Set(advisory)], references: refs, attachments,
+      validation_references: ids, validation_bindings: validationBindings, completion_criteria: fields.DONE ?? [], alias_bindings: aliasBindings,
+      project_registration_hash: sha256({ projectId: project.projectId, workspacePath: project.workspacePath, fingerprint: project.fingerprint ?? null, displayName: project.displayName, createdAt: project.createdAt, status: project.status })
     };
     const semanticHash = sha256(semanticData);
     const semantic = { ...semanticData, artp_provenance: { descriptor_hash: parsed.descriptor_hash } };
@@ -178,7 +191,7 @@ export class ArtpCompiler {
       conflicts: [], warnings: []
     };
     return {
-      preview_version: '0.1', execution_enabled: false, descriptor_version: '0.1',
+      preview_version: '0.2', execution_enabled: false, descriptor_version: '0.2',
       compact_view: { protocol_version: ARTP_VERSION, descriptor: parsed.original, parse_valid: true },
       canonical_task: semantic, semantic_hash: semanticHash, task_analysis: analysis, effective_policy: effectivePolicy,
       context_manifest: manifest, expanded_view: expanded,

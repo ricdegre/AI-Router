@@ -22,6 +22,8 @@ export function createExecutionEnvelope({ task, analysis, context, attachments, 
   const envelope = {
     envelope_version: EXECUTION_ENVELOPE_VERSION,
     semantics, task_analysis: analysis, effective_permissions: policy, scope,
+    constraint_classes: { hard: { action_policy: task.action_policy ?? {}, filesystem_scope: scope, validation_requirements: task.validation_requirements ?? [] }, advisory: task.artp ? [...(task.artp.semantic?.preserve ?? []), ...(task.artp.semantic?.advisory ?? [])] : [] },
+    artp_provenance: task.artp ? { protocol_version: task.artp.protocol_version, semantic_hash: task.artp.semantic_hash, policy_hash: task.artp.policy_hash, base_manifest_hash: task.artp.base_manifest_hash, alias_bindings: task.artp.alias_bindings } : null,
     context_sections: context.sections, context_manifest: contextManifest,
     references: { required_files: task.context_policy?.required_files ?? [], attachment_ids: attachmentBindings.map((item) => item.attachment_id) },
     attachments, validation_requirements: task.validation_requirements ?? [],

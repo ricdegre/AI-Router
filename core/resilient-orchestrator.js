@@ -10,6 +10,7 @@ import { resolveSafePath } from './safe-path.js';
 import { readFile } from 'node:fs/promises';
 import { contentHash } from '../actions/changeset.js';
 import { createExecutionEnvelope, executionEnvelopeAudit } from './execution-envelope.js';
+import { createAttemptContextManifest } from './attempt-context-manifest.js';
 import { visionExecutionStatus } from '../providers/core/vision-transport.js';
 
 function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}:${candidate.reasoning_effort ?? '-'}`; }
@@ -184,6 +185,8 @@ export class ResilientOrchestrator {
           const context = await this.contextBuilder.build(project.projectId, { ...task, task_analysis: taskAnalysis }, { workspacePath: project.workspacePath, providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
           if (task.attachments?.length && !this.attachmentStore) throw new AiRouterError('Attachment store is unavailable.', 'ATTACHMENT_NOT_FOUND');
           const attachments = await this.attachmentStore?.resolve(task.project_id, task.task_id, task.attachments ?? []) ?? [];
+          const attemptManifest = createAttemptContextManifest({ task, attempt, candidate, context, attachments });
+          await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { context_manifest: attemptManifest });
           const provider = this.providerRegistry.get(candidate.provider_id);
           const profile = profiles.find((item) => item.profile_id === candidate.profile_id);
           const modelDescriptor = profile?.models?.find((item) => item.model_id === candidate.model_id) ?? null;
@@ -195,9 +198,12 @@ export class ResilientOrchestrator {
           const timeoutMs = resolveProviderTimeout('inference', { global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
           const executionTimeouts = resolveExecutionTimeouts({ global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
           const request = createExecutionEnvelope({ task, analysis: taskAnalysis, context, attachments, candidate, timeoutMs, executionTimeouts, signal: options.signal });
-          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, ...executionEnvelopeAudit(request), context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0, vision_required: taskAnalysis?.vision_required === true });
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, ...executionEnvelopeAudit(request), attempt_context_manifest_hash: attemptManifest.hash, context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0, vision_required: taskAnalysis?.vision_required === true });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
+          const inputTokens = providerResult.usage?.input_tokens ?? providerResult.metrics?.prompt_eval_count ?? null;
+          const outputTokens = providerResult.usage?.output_tokens ?? providerResult.metrics?.eval_count ?? null;
+          await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { token_metrics: { input_tokens: inputTokens, output_tokens: outputTokens, source: inputTokens == null && outputTokens == null ? 'UNAVAILABLE' : 'PROVIDER_ACTUAL', context_tokens_estimate: context.approximate_tokens, user_instruction_tokens_estimate: task.artp?.metrics?.artp_tokens_estimate ?? Math.ceil((task.prompt ?? '').length / 4), persistent_context_reused_items: task.artp?.alias_bindings?.length ?? 0 } });
           if (providerResult.limits) await this.profileRegistry.updateLimits(candidate.profile_id, providerResult.limits);
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_response', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, response_received: true });
           await options.faultInjector?.('after-provider-response', { attempt, candidate });

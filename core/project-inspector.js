@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 const EXCLUDED_DIRECTORIES = new Set([
   '.git', '.agents', '.codex', '.codex-remote-attachments', '.openai', '.wrangler', '.next', '.nuxt',
@@ -68,20 +69,20 @@ export async function inspectProject(workspacePath, task = {}, options = {}) {
   const treeLimit = Math.min(3_500, Math.floor(budgetChars * 0.3));
   const tree = files.slice(0, 300).join('\n').slice(0, treeLimit);
   const sections = [`PROJECT FILE INVENTORY (${files.length} text files; generated/vendor/binary/secret paths excluded)\n${tree}`];
-  let used = sections[0].length; const includedFiles = [];
+  let used = sections[0].length; const includedFiles = []; const includedFileMetadata = [];
   for (const { file } of selected) {
     const available = budgetChars - used - file.length - 12; if (available < 160) break;
     try {
       const content = await readFile(path.join(root, file), 'utf8');
       if (content.includes('\0')) { continue; }
       const excerpt = content.slice(0, Math.min(1_600, available));
-      sections.push(`FILE: ${file}\n${excerpt}`); includedFiles.push(file); used += file.length + excerpt.length + 8;
+      sections.push(`FILE: ${file}\n${excerpt}`); includedFiles.push(file); includedFileMetadata.push({ path: file, sha256: createHash('sha256').update(content).digest('hex'), mode: excerpt.length === content.length ? 'full' : 'extract', range: { start_char: 0, end_char: excerpt.length }, chars: excerpt.length, mandatory: false, reason: 'project inspection relevance' }); used += file.length + excerpt.length + 8;
     } catch {}
   }
   const rendered = sections.join('\n\n');
   return {
     inspection_version: '0.1', files_discovered: files.length, files_inspected: selected.length,
-    files_included: includedFiles.length, included_files: includedFiles,
+    files_included: includedFiles.length, included_files: includedFiles, included_file_metadata: includedFileMetadata,
     excluded_directories: excludedDirectories, excluded_files: excludedFiles,
     context_chars: rendered.length, approximate_tokens: Math.ceil(rendered.length / 4), rendered
   };

@@ -28,9 +28,12 @@ export class ContextBuilder {
 
   plan(task, options = {}) {
     const requiredFiles = task.context_policy?.required_files ?? [];
-    if (!Array.isArray(requiredFiles) || requiredFiles.length > 4 || requiredFiles.some((item) => typeof item !== 'string' || !item.trim()) || new Set(requiredFiles).size !== requiredFiles.length) throw new AiRouterError('Required context files must be one to four unique paths.', 'INVALID_CONTEXT_PLAN');
+    if (!Array.isArray(requiredFiles) || requiredFiles.length > (task.artp ? 32 : 4) || requiredFiles.some((item) => typeof item !== 'string' || !item.trim()) || new Set(requiredFiles).size !== requiredFiles.length) throw new AiRouterError('Required context files must be unique paths.', 'INVALID_CONTEXT_PLAN');
     if (requiredFiles.length && !options.workspacePath) throw new AiRouterError('Required source files need a workspace.', 'MANDATORY_CONTEXT_UNAVAILABLE');
-    return { plan_version: '0.1', required_files: requiredFiles, scope: task.filesystem_scope ?? { allowed_paths: ['.'], denied_paths: [] }, workspace_path: options.workspacePath ?? null };
+    return { plan_version: '0.2', required_files: requiredFiles, scope: task.filesystem_scope ?? { allowed_paths: ['.'], denied_paths: [] }, workspace_path: options.workspacePath ?? null,
+      mandatory: ['task', 'attachments', 'constraints', 'effective_policy', ...requiredFiles.map((file) => `file:${file}`)],
+      optional: task.artp ? ['project_inspection', 'relevant_decisions', 'project_context'] : ['project_inspection', 'handoff', 'current_task', 'changed_files', 'relevant_decisions', 'project_context', 'recent_changelog'],
+      reasons: Object.fromEntries(requiredFiles.map((file) => [`file:${file}`, 'explicit ARTP scope or reference'])) };
   }
 
   async render(projectId, task, plan, options = {}) {
@@ -46,13 +49,14 @@ export class ContextBuilder {
       changelog: await this.safeRead(projectId, 'ai-changelog.md')
     };
     if (plan.workspace_path && plan.scope.workspace_path && plan.scope.workspace_path !== plan.workspace_path) throw new AiRouterError('Context workspace does not match task scope.', 'CONTEXT_SCOPE_MISMATCH');
-    const requiredSources = [];
+    const requiredSources = []; const fileManifest = [];
     for (const name of plan.required_files) {
       if (!contextPathAllowed(name, plan.scope)) throw new AiRouterError('Required context file is outside authorized scope.', 'CONTEXT_FILE_UNSAFE');
       const safe = await resolveSafePath(plan.workspace_path, name, { mustExist: true });
       const content = await readFile(safe.path, 'utf8');
       if (content.includes('\0')) throw new AiRouterError('Required context file is not text.', 'CONTEXT_FILE_UNSAFE');
       requiredSources.push(`FILE: ${name}\nSHA-256: ${sha256(content)}\nEXACT CONTENT:\n${content}`);
+      fileManifest.push({ path: name, sha256: sha256(content), chars: content.length, mode: 'full', mandatory: true, reason: plan.reasons?.[`file:${name}`] ?? 'required file' });
     }
     const projectInspection = options.workspacePath ? await inspectProject(options.workspacePath, task, { budgetChars: Math.min(10_000, Math.max(3_000, Math.floor(budgetChars * 0.65))), scope: plan.scope }) : null;
     const latestCheckpoint = memory.checkpoints.at(-1) ?? null;
@@ -81,7 +85,7 @@ export class ContextBuilder {
     };
     const sections = [...mandatory];
     let used = mandatoryChars;
-    const optional = candidates.filter(([name]) => !mandatoryNames.has(name));
+    const optional = candidates.filter(([name]) => !mandatoryNames.has(name) && (!task.artp || plan.optional.includes(name)));
     for (let index = 0; index < optional.length; index += 1) {
       const [name, content] = optional[index];
       if (!content) continue;
@@ -91,7 +95,7 @@ export class ContextBuilder {
         return total + Math.min(futureContent.length, minimumAllocation[futureName] ?? 0) + `## ${futureName}\n`.length + 2;
       }, 0);
       const available = Math.max(0, budgetChars - used - header.length - 2 - future);
-      if (available <= 0) break;
+      if (available <= 0) continue;
       const selected = content.slice(0, available);
       sections.push({ name, content: selected, truncated: selected.length < content.length });
       used += header.length + selected.length + 2;
@@ -100,7 +104,9 @@ export class ContextBuilder {
     return {
       context_protocol_version: '0.1', project_id: projectId, task_id: task.task_id, plan,
       budget_chars: budgetChars, used_chars: rendered.length, approximate_tokens: approximateTokens(rendered),
-      sections, project_inspection: projectInspection ? { ...projectInspection, rendered: undefined } : null, rendered
+      sections, file_manifest: [...fileManifest, ...(projectInspection?.included_file_metadata ?? []).filter((item) => sections.find((section) => section.name === 'project_inspection')?.content.includes(`FILE: ${item.path}\n`))],
+      omitted: optional.filter(([name, content]) => content && !sections.some((section) => section.name === name)).map(([name]) => ({ name, reason: 'context budget' })),
+      project_inspection: projectInspection ? { ...projectInspection, rendered: undefined } : null, rendered
     };
   }
 

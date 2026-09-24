@@ -6,7 +6,8 @@ import { DEFAULT_PROVIDER_TIMEOUTS } from './provider-timeout-policy.js';
 import { REASONING_EFFORTS } from '../providers/core/inference-profile.js';
 import { IMAGE_MIME_TYPES, MAX_IMAGE_BYTES, MAX_TASK_IMAGES, MAX_TASK_IMAGE_BYTES } from './attachment-store.js';
 
-export const TASK_EXECUTION_DESCRIPTOR_VERSION = '0.1';
+export const TASK_EXECUTION_DESCRIPTOR_VERSION = '0.2';
+const READABLE_VERSIONS = ['0.1', TASK_EXECUTION_DESCRIPTOR_VERSION];
 const RISKS = new Set(['low', 'medium', 'high', 'critical']);
 const VALIDATORS = new Set(['file_exists', 'file_absent', 'exact_content', 'contains_text', 'json_parses', 'git_inspected', 'command']);
 const PROVIDER_KEYS = new Set(['allowed_provider_ids', 'denied_provider_ids', 'allowed_profile_ids', 'denied_profile_ids', 'require_local', 'allow_metered']);
@@ -122,7 +123,8 @@ function optionalModelId(value) {
 export function validateTaskExecutionDescriptor(input, options = {}) {
   rejectSensitive(input);
   object(input, 'descriptor');
-  if (input.schema_version !== TASK_EXECUTION_DESCRIPTOR_VERSION) throw new AiRouterError(`Unsupported Task Execution Descriptor version '${input.schema_version ?? 'missing'}'.`, 'UNSUPPORTED_TASK_DESCRIPTOR_VERSION', { supported: [TASK_EXECUTION_DESCRIPTOR_VERSION] });
+  if (!READABLE_VERSIONS.includes(input.schema_version)) throw new AiRouterError(`Unsupported Task Execution Descriptor version '${input.schema_version ?? 'missing'}'.`, 'UNSUPPORTED_TASK_DESCRIPTOR_VERSION', { supported: READABLE_VERSIONS });
+  if (input.artp != null && input.schema_version !== '0.2') throw new AiRouterError('ARTP provenance requires descriptor v0.2.', 'INVALID_TASK_DESCRIPTOR');
   const provider = constrainedObject(input.provider_constraints, PROVIDER_KEYS, 'provider constraints');
   const model = constrainedObject(input.model_constraints, MODEL_KEYS, 'model constraints');
   const limits = object(input.execution_limits ?? {}, 'execution_limits');
@@ -139,11 +141,11 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
   const deniedPaths = strings(input.filesystem_scope?.denied_paths, 'filesystem_scope.denied_paths', []).map((entry) => safeRelative(entry, 'denied path'));
   const cost = constrainedObject(input.preferred_cost_policy, COST_KEYS, 'cost policy');
   const requiredFiles = strings(input.context_policy?.required_files, 'context_policy.required_files');
-  if (requiredFiles.length > 4) throw new AiRouterError('At most four required context files are supported.', 'INVALID_TASK_DESCRIPTOR');
+  if (requiredFiles.length > (input.artp ? 32 : 4)) throw new AiRouterError('Too many required context files.', 'INVALID_TASK_DESCRIPTOR');
   if (cost.allow_metered !== true && provider.allow_metered === true) throw new AiRouterError('Provider constraints cannot implicitly activate metered APIs.', 'IMPLICIT_PAID_API_ACTIVATION');
   const now = new Date().toISOString();
   return {
-    schema_version: TASK_EXECUTION_DESCRIPTOR_VERSION,
+    schema_version: input.schema_version,
     task_id: safeId(input.task_id, 'task_id'), project_id: safeId(input.project_id, 'project_id'),
     created_at: timestamp(input.created_at, 'created_at', now), updated_at: timestamp(input.updated_at, 'updated_at', now),
     objective: typeof input.objective === 'string' && input.objective.trim() ? input.objective.trim() : (() => { throw new AiRouterError('objective is required.', 'INVALID_TASK_DESCRIPTOR'); })(),
@@ -170,15 +172,16 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
     checkpoint_policy: { pre_task: input.checkpoint_policy?.pre_task ?? true, pre_attempt: input.checkpoint_policy?.pre_attempt ?? true, post_attempt: input.checkpoint_policy?.post_attempt ?? true, final_validated: input.checkpoint_policy?.final_validated ?? true, require_clean_workspace: input.checkpoint_policy?.require_clean_workspace ?? false },
     resume_policy: { automatic_states: strings(input.resume_policy?.automatic_states, 'automatic_states', ['CREATED', 'READY', 'ROUTING', 'ESCALATING', 'WAITING_VALIDATION']), failed: ['escalate', 'review'].includes(input.resume_policy?.failed ?? 'escalate') ? input.resume_policy?.failed ?? 'escalate' : (() => { throw new AiRouterError('failed resume policy is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(), workspace_drift: ['block', 'review'].includes(input.resume_policy?.workspace_drift ?? 'block') ? input.resume_policy?.workspace_drift ?? 'block' : (() => { throw new AiRouterError('workspace drift policy is invalid.', 'INVALID_TASK_DESCRIPTOR'); })() },
     execution_input: { instruction: typeof input.execution_input?.instruction === 'string' ? input.execution_input.instruction.slice(0, 64 * 1024) : '' },
+    ...(input.schema_version === '0.2' ? { acceptance_criteria: strings(input.acceptance_criteria, 'acceptance_criteria', []), artp: input.artp == null ? null : validateArtpProvenance(input.artp) } : {}),
     current_state: state, last_successful_step: input.last_successful_step ?? null, next_safe_action: input.next_safe_action ?? null,
     memory_version: input.memory_version ?? '0.1', descriptor_revision: Number.isInteger(input.descriptor_revision) ? input.descriptor_revision : 1,
-    compatibility: { status: options.compatibilityStatus ?? 'current', supported_version: TASK_EXECUTION_DESCRIPTOR_VERSION }
+    compatibility: { status: options.compatibilityStatus ?? (input.schema_version === '0.1' ? 'historical' : 'current'), supported_version: TASK_EXECUTION_DESCRIPTOR_VERSION }
   };
 }
 
 export function descriptorFromTask(task, project) {
   return validateTaskExecutionDescriptor({
-    schema_version: TASK_EXECUTION_DESCRIPTOR_VERSION, task_id: task.task_id, project_id: task.project_id,
+    schema_version: task.artp ? TASK_EXECUTION_DESCRIPTOR_VERSION : (task.schema_version ?? '0.1'), task_id: task.task_id, project_id: task.project_id,
     objective: task.objective, task_type: task.task_type, risk: task.risk, required_capabilities: task.required_capabilities, attachments: task.attachments ?? [],
     preferred_cost_policy: task.cost_policy ?? { allow_metered: task.allow_metered ?? false },
     provider_constraints: task.provider_constraints ?? { allow_metered: task.allow_metered ?? false }, model_constraints: task.model_constraints ?? {},
@@ -187,7 +190,7 @@ export function descriptorFromTask(task, project) {
     filesystem_scope: task.filesystem_scope ?? { workspace_path: project.workspacePath, allowed_paths: ['.'], denied_paths: [] },
     execution_limits: { max_attempts: task.max_attempts ?? 3, ...(task.execution_limits ?? {}) }, timeout_policy: task.timeout_policy,
     escalation_policy: task.escalation_policy, context_policy: task.context_policy, checkpoint_policy: { require_clean_workspace: task.require_clean_workspace ?? false, ...(task.checkpoint_policy ?? {}) },
-    resume_policy: task.resume_policy, execution_input: { instruction: task.prompt ?? '' }, current_state: task.current_state ?? 'CREATED',
+    resume_policy: task.resume_policy, execution_input: { instruction: task.prompt ?? '' }, acceptance_criteria: task.acceptance_criteria ?? [], artp: task.artp ?? null, current_state: task.current_state ?? 'CREATED',
     last_successful_step: task.last_successful_step, next_safe_action: task.next_safe_action, memory_version: task.memory_version ?? '0.1'
   });
 }
@@ -204,6 +207,15 @@ export function descriptorToTask(descriptor) {
     timeout_policy: value.timeout_policy, escalation_policy: value.escalation_policy, context_policy: value.context_policy,
     checkpoint_policy: value.checkpoint_policy, require_clean_workspace: value.checkpoint_policy.require_clean_workspace,
     resume_policy: value.resume_policy, prompt: value.execution_input.instruction, memory_version: value.memory_version,
-    provider_constraints: value.provider_constraints, model_constraints: value.model_constraints
+    provider_constraints: value.provider_constraints, model_constraints: value.model_constraints,
+    acceptance_criteria: value.acceptance_criteria ?? [], artp: value.artp ?? null
   };
+}
+
+function validateArtpProvenance(value) {
+  object(value, 'artp');
+  if (value.protocol_version !== 'ARTP/1' || typeof value.original !== 'string' || Buffer.byteLength(value.original, 'utf8') > 16 * 1024) throw new AiRouterError('ARTP source is invalid.', 'INVALID_TASK_DESCRIPTOR');
+  for (const field of ['descriptor_hash', 'semantic_hash', 'policy_hash', 'base_manifest_hash']) if (!/^[a-f0-9]{64}$/.test(value[field] ?? '')) throw new AiRouterError(`ARTP ${field} is invalid.`, 'INVALID_TASK_DESCRIPTOR');
+  if (!Array.isArray(value.alias_bindings) || !Array.isArray(value.validation_bindings) || !value.semantic || !value.expanded_view || !value.base_manifest) throw new AiRouterError('ARTP frozen bindings are incomplete.', 'INVALID_TASK_DESCRIPTOR');
+  return structuredClone(value);
 }

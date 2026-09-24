@@ -7,11 +7,13 @@ export function registerDescriptorMigration(from, to, migrate) {
   migrations.set(key, migrate);
 }
 
-export function inspectDescriptorVersion(descriptor, supported = '0.1') {
+export function inspectDescriptorVersion(descriptor, supported = '0.2') {
   if (descriptor?.schema_version === supported) return { status: 'current', version: supported, supported };
   const available = [...migrations.keys()].filter((key) => key.startsWith(`${descriptor?.schema_version}->`));
   return { status: available.length ? 'migration-available' : 'unsupported', version: descriptor?.schema_version ?? null, supported, available };
 }
+
+registerDescriptorMigration('0.1', '0.2', (descriptor) => ({ ...descriptor, acceptance_criteria: [], artp: null }));
 
 export async function migrateDescriptorExplicit(store, projectId, taskId, targetVersion) {
   const raw = await import('./json-store.js').then(({ readJson }) => readJson(store.path(projectId, taskId)));

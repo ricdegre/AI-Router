@@ -176,7 +176,7 @@ export class ControlApi {
       this.services.recoveryJournal.list(projectId, taskId), this.services.resumeManager.explain(taskId, { projectId }), this.services.projectRegistry.get(projectId)
     ]);
     const git = inspectGit(project.workspacePath);
-    return { descriptor, state, attempts, execution_plan: plan, recovery_journal: journal, resume, workspace_changes: git.isRepository ? createCheckpointMetadata(git, { label: 'Current workspace state' }) : { isRepository: false, changedFiles: [] } };
+    return { descriptor, state, attempts, execution_plan: plan, recovery_journal: journal, resume, artp_view: descriptor.artp ? { compact: descriptor.artp.original, expanded: descriptor.artp.expanded_view, semantic_hash: descriptor.artp.semantic_hash, alias_bindings: descriptor.artp.alias_bindings } : null, workspace_changes: git.isRepository ? createCheckpointMetadata(git, { label: 'Current workspace state' }) : { isRepository: false, changedFiles: [] } };
   }
 
   async routing(query) {
@@ -245,8 +245,9 @@ export class ControlApi {
   async handlePost(pathname, body) {
     if (pathname === '/api/artp/preview') {
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !['descriptor', 'draft_id', 'attachment_ids'].includes(key))) throw new AiRouterError('ARTP preview accepts only descriptor and draft attachment references.', 'ARTP_PREVIEW_INVALID');
-      return this.services.artpCompiler.preview(body);
+      return this.services.artpTaskService.preview(body);
     }
+    if (pathname === '/api/artp/tasks') return this.services.artpTaskService.create(body);
     if (pathname === '/api/readiness/vscode-heartbeat') return this.services.readinessStore.heartbeat(body);
     if (pathname === '/api/attachments') {
       const attachment = await this.services.attachmentStore.stage(body);

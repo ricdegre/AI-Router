@@ -34,6 +34,7 @@ export class TaskDescriptorStore {
   async update(projectId, id, changes) {
     let result;
     await updateJsonAtomic(this.path(projectId, id), undefined, (current) => {
+      if (current.artp && Object.keys(changes).some((key) => !['current_state', 'last_successful_step', 'next_safe_action'].includes(key))) throw new AiRouterError('Frozen ARTP task semantics cannot be changed.', 'ARTP_BINDINGS_FROZEN');
       result = validateTaskExecutionDescriptor({ ...current, ...changes, updated_at: new Date().toISOString(), descriptor_revision: (current.descriptor_revision ?? 0) + 1 });
       return result;
     });
