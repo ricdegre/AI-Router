@@ -35,6 +35,8 @@ import { validateProviderTimeouts } from './provider-timeout-policy.js';
 import { ReadinessStore } from './readiness-store.js';
 import { VsCodeIntegration } from './vscode-integration.js';
 import { AttachmentStore } from './attachment-store.js';
+import { ArtpAliasStore } from '../artp/alias-store.js';
+import { ArtpCompiler } from '../artp/compiler.js';
 
 export function createRuntimeServices(config, options = {}) {
   const dataRoot = config.dataRoot;
@@ -43,6 +45,8 @@ export function createRuntimeServices(config, options = {}) {
   const recoveryJournal = new RecoveryJournal(dataRoot);
   const taskStore = new TaskStore(dataRoot, { descriptorStore, recoveryJournal });
   const projectRegistry = new ProjectRegistry(dataRoot);
+  const artpAliasStore = new ArtpAliasStore(dataRoot, projectRegistry);
+  const artpCompiler = new ArtpCompiler({ projectRegistry, aliasStore: artpAliasStore, attachmentStore, validationRegistry: options.artpValidationRegistry ?? new Map(), globalPolicy: options.artpGlobalPolicy ?? {}, projectPolicy: options.artpProjectPolicy ?? {}, workspacePolicy: options.artpWorkspacePolicy ?? {}, taskPermissions: options.artpTaskPermissions ?? {} });
   const profileRegistry = new ProfileRegistry(dataRoot);
   const secretStore = options.secretStore ?? new SecretStore(dataRoot, options.secretStoreOptions);
   const providerRegistry = new ProviderRegistry({ profileRegistry });
@@ -75,7 +79,7 @@ export function createRuntimeServices(config, options = {}) {
   const readinessStore = new ReadinessStore(dataRoot);
   const vscodeIntegration = options.vscodeIntegration ?? new VsCodeIntegration({ sourceRoot: config.sourceRoot, readinessStore });
   const dependencies = {
-    projectRegistry, profileRegistry, providerRegistry, secretStore, memoryManager, descriptorStore, attachmentStore,
+    projectRegistry, profileRegistry, providerRegistry, secretStore, memoryManager, descriptorStore, attachmentStore, artpAliasStore, artpCompiler,
     taskStore, attemptStore, executionPlanStore, recoveryJournal,
     auditLog, projectCoordinator, contextBuilder: new ContextBuilder(memoryManager),
     circuitBreaker, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, jevEngine, profileTestService, readinessStore, vscodeIntegration, providerTimeouts,

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AiRouterError } from './errors.js';
@@ -87,6 +87,7 @@ export class AttachmentStore {
   taskDirectory(projectId, taskId) { return resolveWithin(this.root, 'tasks', projectId, taskId); }
 
   async stage(input = {}) {
+    if (input.draft_id !== undefined && (typeof input.draft_id !== 'string' || !/^[0-9a-f-]{36}$/.test(input.draft_id))) throw new AiRouterError('Attachment draft ID is invalid.', 'ARTP_ATTACHMENT_INVALID');
     await this.cleanup();
     if (!IMAGE_MIME_TYPES.includes(input.mime_type)) throw new AiRouterError('Only PNG, JPEG, and WebP image attachments are supported.', 'ATTACHMENT_UNSUPPORTED_TYPE', { supported: IMAGE_MIME_TYPES });
     const buffer = decodeBase64(input.data_base64);
@@ -97,13 +98,32 @@ export class AttachmentStore {
     const metadata = {
       attachment_id: attachmentId, type: 'image', mime_type: inspected.mime_type,
       filename: safeFilename(input.filename, inspected.mime_type), width: inspected.width, height: inspected.height,
-      size_bytes: buffer.length, purpose: input.purpose === 'visual_reference' ? input.purpose : 'visual_reference',
+      size_bytes: buffer.length, sha256: createHash('sha256').update(buffer).digest('hex'),
+      draft_id: input.draft_id ?? null,
+      purpose: input.purpose === 'visual_reference' ? input.purpose : 'visual_reference',
       source: { kind: 'attachment_store', attachment_id: attachmentId }, created_at: createdAt, raw_retained: true
     };
     await mkdir(path.dirname(this.stagedPath(attachmentId)), { recursive: true });
     await writeFile(this.stagedPath(attachmentId, extension), buffer, { mode: 0o600 });
     await writeFile(this.stagedPath(attachmentId, '.json'), `${JSON.stringify({ ...metadata, extension }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     return metadata;
+  }
+
+  async inspectDraft(ids, draftId) {
+    if (typeof draftId !== 'string' || !/^[0-9a-f-]{36}$/.test(draftId) || !Array.isArray(ids) || ids.length > MAX_TASK_IMAGES || new Set(ids).size !== ids.length) throw new AiRouterError('Attachment draft references are invalid.', 'ARTP_ATTACHMENT_INVALID');
+    const records = [];
+    for (const id of ids) {
+      if (typeof id !== 'string' || !/^att-[0-9a-f-]{36}$/.test(id)) throw new AiRouterError('Attachment reference is invalid.', 'ARTP_ATTACHMENT_NOT_FOUND');
+      let record; try { record = JSON.parse(await readFile(this.stagedPath(id, '.json'), 'utf8')); }
+      catch { throw new AiRouterError('Attachment draft is missing.', 'ARTP_ATTACHMENT_NOT_FOUND'); }
+      if (record.draft_id !== draftId) throw new AiRouterError('Attachment belongs to another draft.', 'ARTP_ATTACHMENT_OWNERSHIP');
+      if (!IMAGE_MIME_TYPES.includes(record.mime_type)) throw new AiRouterError('Attachment MIME is unsupported.', 'ARTP_ATTACHMENT_INVALID');
+      if (this.now() - Date.parse(record.created_at) > this.stagedTtlMs) throw new AiRouterError('Attachment draft expired.', 'ARTP_ATTACHMENT_NOT_FOUND');
+      const content = await readFile(this.stagedPath(id, EXTENSIONS[record.mime_type])).catch(() => { throw new AiRouterError('Attachment bytes are missing.', 'ARTP_ATTACHMENT_NOT_FOUND'); });
+      if (content.length !== record.size_bytes || createHash('sha256').update(content).digest('hex') !== record.sha256) throw new AiRouterError('Attachment draft integrity failed.', 'ARTP_ATTACHMENT_INVALID');
+      records.push({ attachment_id: record.attachment_id, type: record.type, mime_type: record.mime_type, size_bytes: record.size_bytes, sha256: record.sha256, width: record.width, height: record.height, filename: record.filename });
+    }
+    return records;
   }
 
   async claim(ids, projectId, taskId) {
