@@ -6,7 +6,7 @@ import { CliWorker } from '../providers/core/cli-worker.js';
 import { temporaryDirectory } from './helpers.js';
 
 function childProcess(schedule, capture = {}) {
-  const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.killed = false;
+  const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.killed = false;
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   child.kill = () => { child.killed = true; schedule.stop?.(); return true; };
   queueMicrotask(() => { child.emit('spawn'); schedule.start(child); }); capture.child = child;
@@ -23,6 +23,13 @@ test('streaming CLI execution is noninteractive and activity prevents inactivity
   const timers = []; const schedule = { start(child) { for (const [delay, text] of [[10, 'one'], [30, 'two'], [50, 'three']]) timers.push(setTimeout(() => child.stdout.write(text), delay)); timers.push(setTimeout(() => child.emit('exit', 0, null), 65)); }, stop() { timers.forEach(clearTimeout); } }; const capture = {};
   const result = await (await worker(t, schedule, capture)).runStreaming('profile', ['-p', 'prompt'], { timeouts: { startup_ms: 20, first_token_ms: 25, inactivity_ms: 28, overall_ms: 100 } });
   assert.equal(result.stdout, 'onetwothree'); assert.equal(capture.options.stdio[0], 'ignore');
+});
+
+test('streaming CLI writes private structured input only to stdin', async (t) => {
+  const capture = {}; let received = '';
+  const runner = await worker(t, { start(child) { child.stdin.on('data', (chunk) => { received += chunk.toString(); }); child.stdin.on('end', () => { child.stdout.write('ok'); child.emit('exit', 0, null); }); } }, capture);
+  const result = await runner.runStreaming('profile', ['-p', '--input-format', 'stream-json'], { stdin: '{"type":"user"}\n', timeouts: { startup_ms: 100, first_token_ms: 100, inactivity_ms: 100, overall_ms: 500 } });
+  assert.equal(result.stdout, 'ok'); assert.equal(received, '{"type":"user"}\n'); assert.equal(capture.options.stdio[0], 'pipe');
 });
 
 test('streaming CLI distinguishes first-token, inactivity, and overall timeout', async (t) => {

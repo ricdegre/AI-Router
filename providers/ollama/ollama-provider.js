@@ -3,7 +3,7 @@ import { ProviderAdapter, ProviderError, safeProviderError } from '../core/proto
 import { createModelDescriptor } from '../core/model-descriptor.js';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
 import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
-import { readFile } from 'node:fs/promises';
+import { readVerifiedImage } from '../core/image-payload.js';
 
 export class OllamaProvider extends ProviderAdapter {
   constructor(options = {}) {
@@ -14,7 +14,7 @@ export class OllamaProvider extends ProviderAdapter {
       strength_class: options.strengthClass ?? 'standard',
       capabilities: ['chat', 'coding', 'local', 'streaming'],
       authentication_modes: ['none'],
-      execution_channels: [{ id: 'ollama-local', name: 'Ollama Local', cost_category: 'LOCAL', metered: false }],
+      execution_channels: [{ id: 'ollama-local', name: 'Ollama Local', cost_category: 'LOCAL', metered: false, input_modalities: ['text', 'image'] }],
       inference_controls: []
     });
     this.baseUrl = new URL(options.baseUrl ?? 'http://127.0.0.1:11434');
@@ -23,6 +23,8 @@ export class OllamaProvider extends ProviderAdapter {
     this.legacyTimeoutMs = options.timeoutMs;
     this.activeRequests = new Map();
   }
+
+  imageTransport(channelId) { return { implemented: channelId === 'ollama-local', mechanism: 'ollama-chat-images-base64' }; }
 
   async request(pathname, options = {}) {
     const controller = new AbortController();
@@ -160,10 +162,10 @@ export class OllamaProvider extends ProviderAdapter {
         failureCategory: 'insufficient_capability'
       });
     }
-    let messages = request.messages ?? [{ role: 'user', content: request.prompt ?? request.objective ?? '' }];
+    let messages = request.messages ?? [{ role: 'user', content: request.structured_prompt ?? request.prompt ?? request.objective ?? '' }];
     if (request.attachments?.length) {
-      const images = await Promise.all(request.attachments.map(async (attachment) => (await readFile(attachment.path)).toString('base64')));
-      messages = [{ role: 'user', content: request.prompt ?? request.objective ?? '', images }];
+      const images = await Promise.all(request.attachments.map(async (attachment) => (await readVerifiedImage(attachment, this.descriptor.id)).toString('base64')));
+      messages = [{ role: 'user', content: request.structured_prompt ?? request.prompt ?? request.objective ?? '', images }];
     }
     if (!Array.isArray(messages) || !messages.length) {
       throw new ProviderError('Ollama execution requires at least one message.', 'OLLAMA_MESSAGES_REQUIRED', { providerId: this.descriptor.id });

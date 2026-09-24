@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/p
 import path from 'node:path';
 import { AiRouterError } from './errors.js';
 import { resolveWithin } from './paths.js';
+import { resolveSafePath } from './safe-path.js';
 
 export const IMAGE_MIME_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/webp']);
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -147,13 +148,23 @@ export class AttachmentStore {
   }
 
   async resolve(projectId, taskId, attachments = []) {
-    const directory = this.taskDirectory(projectId, taskId); const resolved = [];
-    for (const attachment of attachments) {
-      let record; try { record = JSON.parse(await readFile(resolveWithin(directory, `${attachment.attachment_id}.json`), 'utf8')); }
+    if (!Array.isArray(attachments) || attachments.length > MAX_TASK_IMAGES || new Set(attachments.map((item) => item?.attachment_id)).size !== attachments.length) throw new AiRouterError('Task attachment references are invalid.', 'ATTACHMENT_INVALID');
+    const directory = this.taskDirectory(projectId, taskId); const resolved = []; let totalBytes = 0;
+    for (const [index, attachment] of attachments.entries()) {
+      if (typeof attachment?.attachment_id !== 'string' || !/^att-[0-9a-f-]{36}$/.test(attachment.attachment_id)) throw new AiRouterError('Task attachment reference is invalid.', 'ATTACHMENT_INVALID');
+      let record; try { const metadata = await resolveSafePath(this.root, path.relative(this.root, resolveWithin(directory, `${attachment.attachment_id}.json`)), { mustExist: true }); record = JSON.parse(await readFile(metadata.path, 'utf8')); }
       catch { throw new AiRouterError(`Attachment '${attachment.attachment_id}' is missing.`, 'ATTACHMENT_NOT_FOUND'); }
+      if (record.attachment_id !== attachment.attachment_id || record.type !== 'image' || !IMAGE_MIME_TYPES.includes(record.mime_type) || record.extension !== EXTENSIONS[record.mime_type] || !Number.isInteger(record.size_bytes) || record.size_bytes > MAX_IMAGE_BYTES || record.size_bytes < 1 || !/^[a-f0-9]{64}$/.test(record.sha256 ?? '') || !Number.isInteger(record.width) || !Number.isInteger(record.height)) throw new AiRouterError('Attachment metadata is invalid.', 'ATTACHMENT_INVALID');
+      if (attachment.mime_type !== record.mime_type || attachment.size_bytes !== record.size_bytes || attachment.sha256 !== record.sha256 || attachment.width !== record.width || attachment.height !== record.height || attachment.filename !== record.filename || attachment.source?.attachment_id !== record.attachment_id) throw new AiRouterError('Task attachment metadata does not match stored bytes.', 'ATTACHMENT_INVALID');
+      totalBytes += record.size_bytes;
+      if (totalBytes > MAX_TASK_IMAGE_BYTES) throw new AiRouterError('Combined image attachments exceed the task limit.', 'ATTACHMENT_TOO_LARGE');
       const localPath = resolveWithin(directory, `${attachment.attachment_id}${record.extension}`);
       if (!record.raw_retained || !(await exists(localPath))) throw new AiRouterError(`Attachment '${attachment.attachment_id}' is no longer retained. Attach the image again.`, 'ATTACHMENT_RAW_EXPIRED');
-      resolved.push({ ...attachment, path: localPath });
+      await resolveSafePath(this.root, path.relative(this.root, localPath), { mustExist: true });
+      const bytes = await readFile(localPath);
+      let inspected; try { inspected = inspectImage(bytes); } catch { throw new AiRouterError('Attachment image encoding is invalid.', 'ATTACHMENT_INVALID'); }
+      if (bytes.length !== record.size_bytes || createHash('sha256').update(bytes).digest('hex') !== record.sha256 || inspected.mime_type !== record.mime_type || inspected.width !== record.width || inspected.height !== record.height) throw new AiRouterError('Attachment integrity or MIME verification failed.', 'ATTACHMENT_INVALID');
+      resolved.push({ attachment_id: record.attachment_id, slot: index + 1, modality: 'image', type: 'image', mime_type: record.mime_type, size_bytes: record.size_bytes, sha256: record.sha256, width: record.width, height: record.height, path: localPath });
     }
     return resolved;
   }

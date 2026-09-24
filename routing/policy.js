@@ -5,6 +5,7 @@ import { evaluateCost, normalizeCostCategory } from './cost-policy.js';
 import { inferenceVariants } from '../providers/core/inference-profile.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 import { analyzeTask } from './task-analysis.js';
+import { visionExecutionStatus } from '../providers/core/vision-transport.js';
 
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 const STRENGTH = { basic: 0, standard: 1, strong: 2 };
@@ -86,8 +87,6 @@ function effectiveCapabilities(provider, profile, model) {
   for (const capability of profile.capabilities_override?.remove ?? []) capabilities.delete(capability);
   for (const capability of profile.capabilities_override?.add ?? []) capabilities.add(capability);
   if (model) {
-    if (resolvedModelValue(model, 'vision') === true) capabilities.add('vision');
-    if (resolvedModelValue(model, 'vision') === false) capabilities.delete('vision');
     if (resolvedModelValue(model, 'tool_support') === true) capabilities.add('tool_use');
     if (resolvedModelValue(model, 'tool_support') === false) capabilities.delete('tool_use');
     if ([false, 'unsuitable'].includes(resolvedModelValue(model, 'coding_suitability'))) capabilities.delete('coding');
@@ -159,6 +158,7 @@ export class RoutingPolicy {
         if (modelConstraints.denied_model_ids?.includes(modelId)) rejected.push('model-denied');
 
         const channelDescriptor = provider.execution_channels?.find((item) => item.id === inference.execution_channel);
+        const visionStatus = visionExecutionStatus(model, channelDescriptor, providerRegistry.get(provider.id));
         if (!channelDescriptor) rejected.push('unknown-execution-channel');
         const declaredCost = normalizeCostCategory(profile.cost_category);
         const channelCost = channelDescriptor ? normalizeCostCategory(channelDescriptor.cost_category) : 'UNKNOWN';
@@ -173,6 +173,8 @@ export class RoutingPolicy {
         if (!limit.allowed) rejected.push(limit.reason); else reasons.push(limit.reason);
 
         const capabilities = effectiveCapabilities(provider, profile, model);
+        if (visionStatus.eligible) capabilities.add('vision'); else capabilities.delete('vision');
+        if (task.task_analysis.vision_required && visionStatus.reason) rejected.push(visionStatus.reason);
         const missing = task.required_capabilities.filter((item) => !capabilities.has(item));
         if (missing.length) rejected.push(`missing-capabilities:${missing.join(',')}`); else reasons.push('all-required-capabilities-available');
         if (task.task_analysis.vision_required) {
@@ -211,7 +213,7 @@ export class RoutingPolicy {
           eligible: rejected.length === 0,
           score: cost.score + preference + (profile.default_reasoning_effort && inference.reasoning_effort !== profile.default_reasoning_effort ? 1 : 0),
           cost_score: cost.score, preference_score: preference, quota_remaining: quota,
-          reasons, rejected, warnings, health: health.status, capabilities: [...capabilities],
+          reasons, rejected, warnings, health: health.status, capabilities: [...capabilities], vision_execution: visionStatus,
           strength_class: strength, context_size: contextSize, cost_category: cost.category
         });
         }

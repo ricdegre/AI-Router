@@ -3,6 +3,7 @@ import { createModelDescriptor } from '../core/model-descriptor.js';
 import { parseStructuredResponse } from '../core/structured-response.js';
 import { CliWorker } from '../core/cli-worker.js';
 import { buildStructuredTaskPrompt } from '../core/task-prompt.js';
+import { readVerifiedImage } from '../core/image-payload.js';
 
 const CORE_MODEL_ALIASES = Object.freeze(['sonnet', 'opus', 'haiku', 'fable']);
 const ALL_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -94,9 +95,10 @@ function modelDescriptor(providerId, model) {
 
 export class ClaudeCodeProvider extends ProviderAdapter {
   constructor(options = {}) {
-    super({ id: 'anthropic', name: 'Anthropic', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['claude-subscription-cli'], execution_channels: [{ id: 'claude-code-subscription', name: 'Claude Code Subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false }], inference_controls: ['reasoning_effort'] });
+    super({ id: 'anthropic', name: 'Anthropic', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['claude-subscription-cli'], execution_channels: [{ id: 'claude-code-subscription', name: 'Claude Code Subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false, input_modalities: ['text', 'image'] }], inference_controls: ['reasoning_effort'] });
     this.worker = options.worker ?? new CliWorker({ providerId: 'anthropic', executable: options.executable ?? 'claude', dataRoot: options.dataRoot });
   }
+  imageTransport(channelId) { return { implemented: channelId === 'claude-code-subscription', mechanism: 'claude-stream-json-image-block' }; }
   async inspectAuth(profileId, timeoutMs) {
     profileId ??= 'provider-health';
     const [cli, versionResult, authResult] = await Promise.all([
@@ -164,12 +166,19 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     }
   }
   async execute(request) {
-    const imagePaths = (request.attachments ?? []).map((attachment, index) => `Image ${index + 1}: ${attachment.path}`).join('\n');
-    const prompt = `${buildStructuredTaskPrompt(request)}${imagePaths ? `\n\nNATIVE IMAGE INPUT PATHS\n${imagePaths}\nOpen and analyze these images using Claude Code's native image-path support.` : ''}`;
-    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'plan', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config'];
+    const prompt = request.structured_prompt ?? buildStructuredTaskPrompt(request);
+    const imageInput = (request.attachments ?? []).length > 0;
+    const args = imageInput ? ['-p', '--input-format', 'stream-json'] : ['-p', prompt];
+    args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'plan', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config');
     if (request.inference?.reasoning_effort) args.push('--effort', request.inference.reasoning_effort);
+    let stdin;
+    if (imageInput) {
+      const content = [{ type: 'text', text: prompt }];
+      for (const attachment of request.attachments) content.push({ type: 'image', source: { type: 'base64', media_type: attachment.mime_type, data: (await readVerifiedImage(attachment, this.descriptor.id)).toString('base64') } });
+      stdin = `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
+    }
     const execute = typeof this.worker.runStreaming === 'function' ? this.worker.runStreaming.bind(this.worker) : this.worker.run.bind(this.worker);
-    const result = await execute(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms, timeouts: request.execution_timeouts, signal: request.signal });
+    const result = await execute(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms, timeouts: request.execution_timeouts, signal: request.signal, ...(stdin ? { stdin } : {}) });
     const envelope = parseEnvelope(result.stdout);
     if (!envelope || envelope.is_error === true || envelope.subtype === 'error') throw new ProviderError('Claude Code did not complete the request.', 'CLAUDE_EXECUTION_FAILED', { providerId: this.descriptor.id, details: { subtype: envelope?.subtype ?? null } });
     const actualModel = Object.keys(envelope.modelUsage ?? {})[0] ?? request.model;

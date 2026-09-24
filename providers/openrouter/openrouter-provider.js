@@ -3,7 +3,7 @@ import { ProviderAdapter, ProviderError, safeProviderError } from '../core/proto
 import { createModelDescriptor } from '../core/model-descriptor.js';
 import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../core/structured-response.js';
 import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
-import { readFile } from 'node:fs/promises';
+import { readVerifiedImage } from '../core/image-payload.js';
 
 const SECRET_NAME = 'openrouter-api-key';
 
@@ -18,11 +18,12 @@ function normalizeCredential(value) {
 
 export class OpenRouterProvider extends ProviderAdapter {
   constructor(options = {}) {
-    super({ id: 'openrouter', name: 'OpenRouter', type: 'gateway', strength_class: 'strong', capabilities: ['chat', 'coding', 'vision', 'long_context', 'metered_api', 'streaming', 'tool_use'], authentication_modes: ['api-key'], execution_channels: [{ id: 'openrouter-cloud', name: 'OpenRouter Cloud', cost_category: 'UNKNOWN', metered: true }], inference_controls: [] });
+    super({ id: 'openrouter', name: 'OpenRouter', type: 'gateway', strength_class: 'strong', capabilities: ['chat', 'coding', 'vision', 'long_context', 'metered_api', 'streaming', 'tool_use'], authentication_modes: ['api-key'], execution_channels: [{ id: 'openrouter-cloud', name: 'OpenRouter Cloud', cost_category: 'UNKNOWN', metered: true, input_modalities: ['text', 'image'] }], inference_controls: [] });
     this.baseUrl = new URL(options.baseUrl ?? 'https://openrouter.ai/api/v1/');
     this.fetch = options.fetch ?? globalThis.fetch; this.secretStore = options.secretStore;
     this.timeoutPolicy = validateProviderTimeouts(options.timeoutPolicy ?? {});
   }
+  imageTransport(channelId) { return { implemented: channelId === 'openrouter-cloud', mechanism: 'chat-completions-image-data-url' }; }
 
   async key(profileId) {
     if (!profileId) throw new ProviderError('Connect a profile before discovering OpenRouter models.', 'PROFILE_CREDENTIAL_MISSING', { providerId: 'openrouter', failureCategory: 'authentication' });
@@ -93,10 +94,10 @@ export class OpenRouterProvider extends ProviderAdapter {
     return { status: 'connected', response: result.choices?.[0]?.message?.content ?? '', model: result.model ?? model, latency_ms: Math.round(performance.now() - started), usage_delta: result.usage ?? null };
   }
   async execute(request) {
-    let messages = request.messages ?? [{ role: 'user', content: request.prompt ?? request.objective ?? '' }];
+    let messages = request.messages ?? [{ role: 'user', content: request.structured_prompt ?? request.prompt ?? request.objective ?? '' }];
     if (request.attachments?.length) {
-      const content = [{ type: 'text', text: request.prompt ?? request.objective ?? '' }];
-      for (const attachment of request.attachments) content.push({ type: 'image_url', image_url: { url: `data:${attachment.mime_type};base64,${(await readFile(attachment.path)).toString('base64')}` } });
+      const content = [{ type: 'text', text: request.structured_prompt ?? request.prompt ?? request.objective ?? '' }];
+      for (const attachment of request.attachments) content.push({ type: 'image_url', image_url: { url: `data:${attachment.mime_type};base64,${(await readVerifiedImage(attachment, this.descriptor.id)).toString('base64')}` } });
       messages = [{ role: 'user', content }];
     }
     const result = await this.request('chat/completions', { profile_id: request.profile_id ?? request.profile?.profile_id, method: 'POST', timeout_ms: request.timeout_ms, operation: 'inference', body: { model: request.model, messages, response_format: request.format ? { type: 'json_schema', json_schema: { name: 'ai_router_response', strict: true, schema: request.format } } : undefined } });

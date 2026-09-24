@@ -126,7 +126,7 @@ export class AntigravityProvider extends ProviderAdapter {
   async execute(request) {
     const effort = request.inference?.reasoning_effort;
     const timeoutSeconds = Math.max(1, Math.ceil((request.timeout_ms ?? 180_000) / 1_000));
-    const args = ['-p', request.prompt, '--output-format', 'json', '--sandbox', '--disable-slash-commands', '--mode', 'plan', '--print-timeout', `${timeoutSeconds}s`, '--model', request.model];
+    const args = ['-p', request.structured_prompt ?? request.prompt, '--output-format', 'json', '--sandbox', '--disable-slash-commands', '--mode', 'plan', '--print-timeout', `${timeoutSeconds}s`, '--model', request.model];
     if (effort) args.push('--effort', effort);
     const result = await this.worker.run(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms });
     let envelope; try { envelope = JSON.parse(result.stdout); } catch { throw new ProviderError('Antigravity returned malformed JSON.', 'ANTIGRAVITY_MALFORMED_RESPONSE', { providerId: this.descriptor.id, failureCategory: 'malformed_output' }); }

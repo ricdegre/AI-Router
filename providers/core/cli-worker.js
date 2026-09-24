@@ -67,7 +67,7 @@ export class CliWorker {
     const policy = options.timeouts ?? { startup_ms: 30_000, first_token_ms: options.timeoutMs ?? 90_000, inactivity_ms: 60_000, overall_ms: options.timeoutMs ?? 180_000 };
     return new Promise((resolve, reject) => {
       let stdout = ''; let stderr = ''; let settled = false; let sawOutput = false; let inactivityTimer = null;
-      const child = this.spawnProcess(diagnostics.resolved_executable, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = this.spawnProcess(diagnostics.resolved_executable, args, { cwd, env, windowsHide: true, stdio: [typeof options.stdin === 'string' ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
       const timers = new Set();
       const timer = (milliseconds, kind) => {
         const handle = setTimeout(() => fail(new ProviderError(`${this.executable} ${kind.replaceAll('_', ' ')} timed out.`, `PROVIDER_${kind.toUpperCase()}_TIMEOUT`, { providerId: this.providerId, retryable: true, failureCategory: 'timeout', details: { timeout_type: kind, timeout_ms: milliseconds } })), milliseconds);
@@ -87,6 +87,10 @@ export class CliWorker {
       const onAbort = () => fail(new ProviderError(`${this.executable} command was cancelled.`, 'PROVIDER_CANCELLED', { providerId: this.providerId, failureCategory: 'user_cancelled' }));
       options.signal?.addEventListener('abort', onAbort, { once: true });
       child.once('spawn', () => { clear(startupTimer); startupTimer = null; firstTokenTimer = timer(policy.first_token_ms, 'first_token'); });
+      if (typeof options.stdin === 'string') {
+        child.stdin?.on('error', (error) => fail(safeProviderError(error, this.providerId)));
+        child.stdin?.end(options.stdin);
+      }
       child.stdout?.setEncoding('utf8'); child.stderr?.setEncoding('utf8');
       child.stdout?.on('data', (chunk) => { stdout = append(stdout, chunk); activity(true); options.onOutput?.({ stream: 'stdout', chunk }); });
       child.stderr?.on('data', (chunk) => { stderr = append(stderr, chunk); activity(false); options.onOutput?.({ stream: 'stderr', chunk }); });

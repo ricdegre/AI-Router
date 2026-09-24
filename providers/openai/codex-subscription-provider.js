@@ -4,6 +4,7 @@ import { parseStructuredResponse, READ_ONLY_STRUCTURED_RESPONSE_JSON_SCHEMA } fr
 import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
 import { CodexAppServerClient } from './codex-app-server-client.js';
 import { buildStructuredTaskPrompt } from '../core/task-prompt.js';
+import { readVerifiedImage } from '../core/image-payload.js';
 
 function authenticated(account) { return account?.account?.type === 'chatgpt'; }
 function modelRows(result) { return result?.data ?? result?.models ?? []; }
@@ -38,11 +39,12 @@ function isReadOnlyAnalysis(request) {
 
 export class CodexSubscriptionProvider extends ProviderAdapter {
   constructor(options = {}) {
-    super({ id: 'openai', name: 'OpenAI', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['chatgpt-oauth'], execution_channels: [{ id: 'codex-subscription', name: 'Codex subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false }], inference_controls: ['reasoning_effort'] });
+    super({ id: 'openai', name: 'OpenAI', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['chatgpt-oauth'], execution_channels: [{ id: 'codex-subscription', name: 'Codex subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false, input_modalities: ['text', 'image'] }], inference_controls: ['reasoning_effort'] });
     this.secretStore = options.secretStore;
     this.timeoutPolicy = validateProviderTimeouts(options.timeoutPolicy ?? {});
     this.appServer = options.appServer ?? new CodexAppServerClient({ dataRoot: options.dataRoot });
   }
+  imageTransport(channelId) { return { implemented: channelId === 'codex-subscription', mechanism: 'codex-app-server-localImage' }; }
 
   async inspect(profileId) {
     const timeoutMs = resolveProviderTimeout('connection_test', { provider: this.timeoutPolicy });
@@ -99,7 +101,8 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
 
   async execute(request) {
     const profileId = request.profile_id ?? request.profile?.profile_id;
-    const prompt = buildStructuredTaskPrompt(request);
+    const prompt = request.structured_prompt ?? buildStructuredTaskPrompt(request);
+    for (const attachment of request.attachments ?? []) await readVerifiedImage(attachment, this.descriptor.id);
     return this.appServer.runTurn({ profileId, model: request.model, effort: request.inference?.reasoning_effort, prompt, attachments: request.attachments ?? [], outputSchema: request.format, timeoutMs: request.timeout_ms, timeoutPolicy: request.execution_timeouts, purpose: 'router-task' });
   }
 

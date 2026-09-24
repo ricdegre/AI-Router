@@ -61,6 +61,8 @@ export class ProviderAdapter {
     return [...this.descriptor.capabilities];
   }
 
+  imageTransport() { return { implemented: false, mechanism: null }; }
+
   authenticationModes() {
     return [...this.descriptor.authentication_modes];
   }

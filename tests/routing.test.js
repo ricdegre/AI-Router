@@ -165,7 +165,7 @@ test('manual selection reports exact disabled, unsupported-effort, and capabilit
   const effort = await new RoutingPolicy().explain({ routing_mode: 'manual', manual_profile: 'manual-profile', manual_model: 'manual-model', manual_reasoning_effort: 'xhigh' }, registry, [ready]);
   assert.equal(effort.error.reason, 'unsupported-reasoning-effort:xhigh');
   const capability = await new RoutingPolicy().explain({ routing_mode: 'manual', manual_profile: 'manual-profile', manual_model: 'manual-model', manual_reasoning_effort: 'low', required_capabilities: ['vision'] }, registry, [ready]);
-  assert.match(capability.error.reason, /^missing-capabilities:/);
+  assert.equal(capability.error.reason, 'VISION_MODEL_UNSUPPORTED');
 });
 
 test('image routing selects only a REAL vision model and reports precise automatic and manual failures', async () => {
@@ -177,7 +177,25 @@ test('image routing selects only a REAL vision model and reports precise automat
   const task = { objective: 'Describe what is visible', attachments: [{ type: 'image' }], read_only: true };
   const route = await new RoutingPolicy().explain(task, registry, [text, visual]); assert.equal(route.selected.profile_id, 'visual-real'); assert.ok(route.selected.reasons.includes('selected-model-supports-vision'));
   const unavailable = await new RoutingPolicy().explain(task, registry, [text]); assert.equal(unavailable.error.code, 'NO_VISION_CAPABLE_RESOURCE');
-  const manual = await new RoutingPolicy().explain({ ...task, routing_mode: 'manual', manual_profile: 'text-real', manual_model: 'text-model' }, registry, [text, visual]); assert.equal(manual.error.code, 'MANUAL_RESOURCE_REJECTED'); assert.match(manual.error.reason, /^missing-capabilities:vision/);
+  const manual = await new RoutingPolicy().explain({ ...task, routing_mode: 'manual', manual_profile: 'text-real', manual_model: 'text-model' }, registry, [text, visual]); assert.equal(manual.error.code, 'MANUAL_RESOURCE_REJECTED'); assert.equal(manual.error.reason, 'VISION_MODEL_UNSUPPORTED');
+});
+
+test('vision routing rejects unsupported channel and adapter even when model metadata says vision', async () => {
+  const registry = new ProviderRegistry();
+  const channelOnly = new MockProvider('channel-only', { capabilities: ['chat', 'coding'], executionChannels: [{ id: 'channel-only-local', cost_category: 'LOCAL', metered: false, input_modalities: ['text'] }] });
+  const adapterOnly = new MockProvider('adapter-only', { capabilities: ['chat', 'coding'] }); adapterOnly.imageTransport = () => ({ implemented: false, mechanism: null });
+  const eligible = new MockProvider('native-vision', { capabilities: ['chat', 'coding'] });
+  for (const provider of [channelOnly, adapterOnly, eligible]) registry.register(provider);
+  const make = (id) => profile(`${id}-real`, id, 'local', { routing_classification: 'REAL', models: [createModelDescriptor({ providerId: id, modelId: 'visual', discovered: { vision: true, local: true } })], selected_model_id: 'visual', capabilities_override: { add: ['vision'], remove: [] } });
+  const profiles = [make('channel-only'), make('adapter-only'), make('native-vision')];
+  const task = { objective: 'Describe attached image', attachments: [{ type: 'image' }], read_only: true };
+  const automatic = await new RoutingPolicy().explain(task, registry, profiles);
+  assert.equal(automatic.selected.provider_id, 'native-vision');
+  assert.ok(automatic.rejected_candidates.find((item) => item.provider_id === 'channel-only').rejected.includes('VISION_CHANNEL_UNSUPPORTED'));
+  assert.ok(automatic.rejected_candidates.find((item) => item.provider_id === 'adapter-only').rejected.includes('VISION_ADAPTER_UNSUPPORTED'));
+  const manual = await new RoutingPolicy().explain({ ...task, manual_profile: 'adapter-only-real', manual_provider: 'adapter-only', manual_model: 'visual' }, registry, profiles);
+  assert.equal(manual.error.reason, 'VISION_ADAPTER_UNSUPPORTED');
+  assert.equal(manual.selected, null);
 });
 
 test('manual routing resolves a provider execution channel when legacy profile state omitted it', async () => {

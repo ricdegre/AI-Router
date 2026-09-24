@@ -21,8 +21,15 @@ test('OpenRouter serializes attached images as provider-native image_url content
   assert.equal(result.output, 'green button'); assert.equal(request.messages[0].content[0].type, 'text'); assert.match(request.messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
 });
 
-test('Claude Code receives absolute image paths without enabling tools', async (t) => {
+test('Claude Code sends native image blocks over stream-json stdin without exposing local paths', async (t) => {
   const file = await image(t); let call; const worker = { runStreaming: async (_profile, args, options) => { call = { args, options }; const response = JSON.stringify({ schema_version: '0.1', status: 'ok', summary: 'I see the image.', observations: [], proposed_actions: [], validation_requested: [], remaining_work: [], uncertainty: [], handoff_notes: [] }); return { stdout: `${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: response })}\n` }; } };
   const provider = new ClaudeCodeProvider({ worker }); const result = await provider.executeStructured({ profile: { profile_id: 'claude' }, model: 'sonnet', prompt: 'Describe it', context: '', task_analysis: { write_mode: 'read_only' }, attachments: [{ path: file, mime_type: 'image/png' }] });
-  assert.equal(result.structured.summary, 'I see the image.'); assert.match(call.args[1], new RegExp(file.replaceAll('\\', '\\\\'))); assert.ok(call.args.includes('--tools')); assert.equal(call.args[call.args.indexOf('--tools') + 1], '');
+  assert.equal(result.structured.summary, 'I see the image.');
+  assert.equal(call.args[call.args.indexOf('--input-format') + 1], 'stream-json');
+  assert.ok(!call.args.join(' ').includes(file));
+  const input = JSON.parse(call.options.stdin.trim());
+  assert.equal(input.message.content[1].type, 'image');
+  assert.equal(input.message.content[1].source.media_type, 'image/png');
+  assert.equal(input.message.content[1].source.data, Buffer.from('private-image-bytes').toString('base64'));
+  assert.ok(call.args.includes('--tools')); assert.equal(call.args[call.args.indexOf('--tools') + 1], '');
 });
