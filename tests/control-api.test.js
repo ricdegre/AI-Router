@@ -65,6 +65,20 @@ test('task creation persists a descriptor without executing it', async (t) => {
   assert.deepEqual(await api.handleGet(`/api/projects/${project.projectId}/tasks/dashboard-task/attempts`, new URLSearchParams()), []);
 });
 
+test('ARTP preview returns canonical semantics without creating a task, routing, or auditing content', async (t) => {
+  const { api, project, services } = await fixture(t);
+  const descriptor = `ARTP/1\nP: "${project.projectId}"\nDO: "Diagnose this issue"`;
+  const result = await api.handlePost('/api/artp/preview', { descriptor });
+  assert.equal(result.execution_enabled, false); assert.equal(result.compact_view.descriptor, descriptor);
+  assert.equal(result.expanded_view.project.project_id, project.projectId);
+  assert.ok(result.context_manifest.hash); assert.equal(result.expanded_view.effective_write_mode, 'read_only');
+  assert.deepEqual(await services.descriptorStore.list(), []);
+  assert.deepEqual(await services.taskStore.list(), []);
+  assert.deepEqual(await services.auditLog.list(), []);
+  await assert.rejects(() => api.handlePost('/api/artp/preview', { descriptor, allow_metered: true }), { code: 'ARTP_PREVIEW_INVALID' });
+  await assert.rejects(() => api.handlePost('/api/artp/preview', { descriptor: 'ARTP/1\nP: "missing"\nDO: "Inspect"' }), { code: 'PROJECT_NOT_REGISTERED' });
+});
+
 test('control API stages image bytes privately and audits only bounded metadata', async (t) => {
   const { api, project, services } = await fixture(t); const bytes = Buffer.alloc(24); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes); bytes.write('IHDR', 12, 'ascii'); bytes.writeUInt32BE(8, 16); bytes.writeUInt32BE(9, 20); const base64 = bytes.toString('base64');
   const staged = await api.handlePost('/api/attachments', { filename: 'private-screen.png', mime_type: 'image/png', data_base64: base64 });

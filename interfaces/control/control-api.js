@@ -243,6 +243,10 @@ export class ControlApi {
   }
 
   async handlePost(pathname, body) {
+    if (pathname === '/api/artp/preview') {
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !['descriptor', 'draft_id', 'attachment_ids'].includes(key))) throw new AiRouterError('ARTP preview accepts only descriptor and draft attachment references.', 'ARTP_PREVIEW_INVALID');
+      return this.services.artpCompiler.preview(body);
+    }
     if (pathname === '/api/readiness/vscode-heartbeat') return this.services.readinessStore.heartbeat(body);
     if (pathname === '/api/attachments') {
       const attachment = await this.services.attachmentStore.stage(body);

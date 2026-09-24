@@ -32,6 +32,22 @@ test('VS Code client reports router errors and never falls back to a provider en
   await assert.rejects(() => client.explain('work'), { code: 'NO_ELIGIBLE_PROVIDER' });
 });
 
+test('VS Code ARTP client sends only preview and draft references to local Core', async () => {
+  const calls = []; const fetch = async (url, options = {}) => { calls.push({ url, options });
+    if (url.endsWith('/api/health')) return new Response('{}', { headers: { 'x-ai-router-control': 'nonce' } });
+    return new Response(JSON.stringify({ execution_enabled: false }), { headers: { 'content-type': 'application/json' } }); };
+  const client = new RouterClient('http://127.0.0.1:43127', fetch);
+  await client.previewArtp('ARTP/1\nP: "demo"\nDO: "Inspect"', { draftId: 'draft-one', attachmentIds: ['att-one'] });
+  assert.equal(calls.at(-1).url, 'http://127.0.0.1:43127/api/artp/preview');
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body).attachment_ids, ['att-one']);
+  assert.equal(calls.some((item) => item.url.includes('/api/tasks')), false);
+});
+
+test('VS Code ARTP preview preserves authoritative parse location for display', async () => {
+  const client = new RouterClient('http://127.0.0.1:43127', async () => new Response(JSON.stringify({ error: 'ARTP_UNKNOWN_FIELD', message: 'Unknown field.', details: { line: 4, column: 1, field: 'BUG' } }), { status: 400, headers: { 'content-type': 'application/json' } }));
+  await assert.rejects(() => client.previewArtp('ARTP/1\nP: "x"\nDO: "x"\nBUG: "x"'), (error) => error.code === 'ARTP_UNKNOWN_FIELD' && error.details.line === 4 && error.details.field === 'BUG');
+});
+
 test('VS Code client reports offline and malformed router responses safely', async () => {
   const offline = new RouterClient('http://127.0.0.1:43127', async () => { throw new TypeError('fetch failed'); });
   await assert.rejects(() => offline.get('/api/readiness'), /fetch failed/);
@@ -111,6 +127,7 @@ test('extension activates, registers every command, and handles every webview ac
     async explain() { return { selected: { provider_id: 'ollama', model_id: 'qwen' } }; }
     async ensureProject(workspacePath) { ensuredWorkspace = workspacePath; return { projectId: 'snd-ydb' }; }
     async createTask(_project, _objective, _instruction, _selection, options) { createOptions = options; return { descriptor: { task_id: 'read-only-task' } }; }
+    async previewArtp() { return { compact_view: { descriptor: 'ARTP/1' }, expanded_view: { vision_required: false }, semantic_hash: 'semantic', context_manifest: { hash: 'manifest' }, canonical_task: { alias_bindings: [] } }; }
     async resume() { throw Object.assign(new Error('resume response was interrupted'), { code: 'NETWORK_ERROR' }); }
     async task() { return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Read-only inspection complete.' }], workspace_changes: { changedFiles: [] } }; }
   }
@@ -125,8 +142,11 @@ test('extension activates, registers every command, and handles every webview ac
   provider.resolveWebviewView({ webview }); await new Promise(resolve => setImmediate(resolve));
   assert.equal(webview.options.enableScripts, true); assert.match(webview.html, /Content-Security-Policy/); assert.match(webview.html, /webview\.js/); assert.match(webview.html, /readOnly/);
   await messageHandler({ type: 'dashboard' }); await messageHandler({ type: 'refresh' }); await messageHandler({ type: 'explain', instruction: 'Inspect only', selection: {} }); await messageHandler({ type: 'run', instruction: 'Inspect only', selection: {}, readOnly: true });
+  await messageHandler({ type: 'preview', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
+  await messageHandler({ type: 'run', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
   assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, 'D:\\Workspace\\PROJECTOS\\SND-YDB'); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'task'));
   assert.ok(messages.some(item => item.type === 'task' && item.state === 'COMPLETED')); assert.ok(logs.some(line => line.includes('task.resume.response_lost')));
+  assert.equal(messages.filter(item => item.type === 'artpPreview').length, 2); assert.equal(createOptions.readOnly, true);
   assert.ok(logs.some(line => line.includes('extension.activated'))); assert.ok(logs.some(line => line.includes('webview.message'))); assert.ok(logs.every(line => !line.includes('Inspect only')));
   for (const item of context.subscriptions) item.dispose?.(); void api;
 });
