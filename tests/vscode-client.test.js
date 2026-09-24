@@ -102,6 +102,7 @@ test('packaged VS Code extension contributes a local-only activity panel and hea
   assert.match(extension, /\/api\/readiness\/vscode-heartbeat/); assert.match(extension, /extension_id/); assert.match(extension, /endpoint: baseUrl\(\)/); assert.match(extension, /registerWebviewViewProvider/);
   assert.equal(manifest.activationEvents, undefined); assert.ok(manifest.contributes.commands.some(item => item.command === 'aiRouter.refresh'));
   assert.ok(manifest.files.includes('webview.js')); assert.ok(manifest.files.includes('webview.css'));
+  assert.ok(manifest.files.includes('workspace-context.js'), 'VSIX must include extension.js runtime dependency');
   assert.match(extension, /Content-Security-Policy/); assert.match(extension, /asWebviewUri/); assert.doesNotMatch(extension, /<script>const vscode=acquireVsCodeApi/);
   assert.match(extension, /Attach image/); assert.match(extension, /img-src/); assert.doesNotMatch(extension, /log\([^\n]*data_base64/);
   const webview = await fs.readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8'); assert.match(webview, /addEventListener\('paste'/); assert.match(webview, /addEventListener\('drop'/); assert.match(webview, /attachments = attachments\.filter/); assert.match(webview, /Not compatible with attached image/);
