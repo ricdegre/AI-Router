@@ -125,3 +125,19 @@ test('persisted ARTP task resumes through the common orchestrator with write and
   assert.equal(attempt.validation.passed, true); assert.equal(attempt.context_manifest.semantic_hash, preview.semantic_hash); assert.equal(attempt.token_metrics.input_tokens, 100);
   assert.equal((await services.taskStore.get(project.projectId, created.descriptor.task_id)).state, 'COMPLETED');
 });
+
+test('persisted read-only ARTP task completes without file actions', async (t) => {
+  const provider = new MockProvider('fixture-reader', { execute: async () => ({ structured: { schema_version: '0.1', status: 'ok', summary: 'The fixture is pending.', observations: ['status.txt contains STATE=PENDING'], proposed_actions: [], validation_requested: [], remaining_work: [], uncertainty: [], handoff_notes: [] } }) });
+  const { services, project } = await fixture(t, { providers: [provider] });
+  await services.memoryManager.initialize(project);
+  await services.profileRegistry.register({ profile_id: 'reader-real', provider_id: 'fixture-reader', display_name: 'Reader fixture', auth_mode: 'none', location: 'local', cost_category: 'LOCAL', status: 'ready', routing_classification: 'REAL', models: [createModelDescriptor({ providerId: 'fixture-reader', modelId: 'reader-model', discovered: { local: true } })], selected_model_id: 'reader-model', execution_channel: 'fixture-reader-local' });
+  const descriptor = ['ARTP/1', `P: "${project.projectId}"`, 'DO: "Diagnose current status without editing"', 'F: ["path:target.txt"]'].join('\n');
+  const preview = await services.artpTaskService.preview({ descriptor });
+  assert.equal(preview.task_analysis.write_mode, 'read_only');
+  const created = await services.artpTaskService.create({ descriptor, expected_semantic_hash: preview.semantic_hash, expected_manifest_hash: preview.context_manifest.hash, idempotency_key: randomUUID(), routing: { provider_id: 'fixture-reader', profile_id: 'reader-real', model_id: 'reader-model', execution_channel: 'fixture-reader-local' } });
+  assert.ok(!created.descriptor.action_policy.allowed.includes('modify_file'));
+  const result = await services.resumeManager.resume(created.descriptor.task_id, { projectId: project.projectId });
+  assert.equal(result.status, 'completed'); assert.equal(await readFile(path.join(project.workspacePath, 'target.txt'), 'utf8'), 'before\n');
+  const attempt = (await services.attemptStore.list(project.projectId, created.descriptor.task_id))[0];
+  assert.deepEqual(attempt.execution_results, []);
+});
