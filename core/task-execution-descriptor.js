@@ -79,7 +79,8 @@ function attachments(input = []) {
     const sizeBytes = boundedInteger(attachment.size_bytes, null, 1, MAX_IMAGE_BYTES, 'attachment size'); totalBytes += sizeBytes;
     if (attachment.purpose !== 'visual_reference') throw new AiRouterError('Attachment purpose is unsupported.', 'INVALID_TASK_DESCRIPTOR');
     if (attachment.source?.kind !== 'attachment_store' || attachment.source?.attachment_id !== attachmentId) throw new AiRouterError('Attachment source is invalid.', 'INVALID_TASK_DESCRIPTOR');
-    return { attachment_id: attachmentId, type: 'image', mime_type: attachment.mime_type, filename: attachment.filename, width, height, size_bytes: sizeBytes, purpose: 'visual_reference', source: { kind: 'attachment_store', attachment_id: attachmentId }, created_at: timestamp(attachment.created_at, 'attachment created_at', new Date().toISOString()), raw_retained: attachment.raw_retained !== false };
+    if (attachment.sha256 != null && !/^[a-f0-9]{64}$/.test(attachment.sha256)) throw new AiRouterError('Attachment hash is invalid.', 'INVALID_TASK_DESCRIPTOR');
+    return { attachment_id: attachmentId, type: 'image', mime_type: attachment.mime_type, filename: attachment.filename, width, height, size_bytes: sizeBytes, ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}), purpose: 'visual_reference', source: { kind: 'attachment_store', attachment_id: attachmentId }, created_at: timestamp(attachment.created_at, 'attachment created_at', new Date().toISOString()), raw_retained: attachment.raw_retained !== false };
   });
   if (totalBytes > MAX_TASK_IMAGE_BYTES) throw new AiRouterError(`Combined attachments may not exceed ${MAX_TASK_IMAGE_BYTES} bytes.`, 'ATTACHMENT_TOTAL_TOO_LARGE');
   return normalized;
@@ -137,6 +138,8 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
   const allowedPaths = strings(input.filesystem_scope?.allowed_paths, 'filesystem_scope.allowed_paths', ['.']).map((entry) => safeRelative(entry, 'allowed path'));
   const deniedPaths = strings(input.filesystem_scope?.denied_paths, 'filesystem_scope.denied_paths', []).map((entry) => safeRelative(entry, 'denied path'));
   const cost = constrainedObject(input.preferred_cost_policy, COST_KEYS, 'cost policy');
+  const requiredFiles = strings(input.context_policy?.required_files, 'context_policy.required_files');
+  if (requiredFiles.length > 4) throw new AiRouterError('At most four required context files are supported.', 'INVALID_TASK_DESCRIPTOR');
   if (cost.allow_metered !== true && provider.allow_metered === true) throw new AiRouterError('Provider constraints cannot implicitly activate metered APIs.', 'IMPLICIT_PAID_API_ACTIVATION');
   const now = new Date().toISOString();
   return {
@@ -163,7 +166,7 @@ export function validateTaskExecutionDescriptor(input, options = {}) {
     execution_limits: { max_attempts: maxAttempts, max_actions_per_attempt: boundedInteger(limits.max_actions_per_attempt, 20, 0, 100, 'max_actions_per_attempt'), max_file_bytes: boundedInteger(limits.max_file_bytes, 1_048_576, 1, 10_485_760, 'max_file_bytes'), provider_timeout_ms: timeoutMs },
     timeout_policy: { on_timeout: ['escalate', 'block'].includes(input.timeout_policy?.on_timeout ?? 'escalate') ? input.timeout_policy?.on_timeout ?? 'escalate' : (() => { throw new AiRouterError('timeout policy is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(), max_timeouts: boundedInteger(input.timeout_policy?.max_timeouts, Math.min(2, maxAttempts), 0, maxAttempts, 'max_timeouts') },
     escalation_policy: { enabled: input.escalation_policy?.enabled ?? true, categories: strings(input.escalation_policy?.categories, 'escalation categories', ['timeout', 'execution_failure', 'malformed_output', 'validation_failure', 'action_rejected']) },
-    context_policy: { budget_chars: boundedInteger(input.context_policy?.budget_chars, 16_000, 1_000, 200_000, 'context budget'), include_handoff: input.context_policy?.include_handoff ?? true, include_decisions: input.context_policy?.include_decisions ?? true },
+    context_policy: { budget_chars: boundedInteger(input.context_policy?.budget_chars, 16_000, 1_000, 200_000, 'context budget'), include_handoff: input.context_policy?.include_handoff ?? true, include_decisions: input.context_policy?.include_decisions ?? true, required_files: requiredFiles.map((entry) => safeRelative(entry, 'required context file')) },
     checkpoint_policy: { pre_task: input.checkpoint_policy?.pre_task ?? true, pre_attempt: input.checkpoint_policy?.pre_attempt ?? true, post_attempt: input.checkpoint_policy?.post_attempt ?? true, final_validated: input.checkpoint_policy?.final_validated ?? true, require_clean_workspace: input.checkpoint_policy?.require_clean_workspace ?? false },
     resume_policy: { automatic_states: strings(input.resume_policy?.automatic_states, 'automatic_states', ['CREATED', 'READY', 'ROUTING', 'ESCALATING', 'WAITING_VALIDATION']), failed: ['escalate', 'review'].includes(input.resume_policy?.failed ?? 'escalate') ? input.resume_policy?.failed ?? 'escalate' : (() => { throw new AiRouterError('failed resume policy is invalid.', 'INVALID_TASK_DESCRIPTOR'); })(), workspace_drift: ['block', 'review'].includes(input.resume_policy?.workspace_drift ?? 'block') ? input.resume_policy?.workspace_drift ?? 'block' : (() => { throw new AiRouterError('workspace drift policy is invalid.', 'INVALID_TASK_DESCRIPTOR'); })() },
     execution_input: { instruction: typeof input.execution_input?.instruction === 'string' ? input.execution_input.instruction.slice(0, 64 * 1024) : '' },

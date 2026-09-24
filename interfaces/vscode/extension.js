@@ -79,7 +79,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
         notifyPanel({ type: 'progress', value: attachments.length ? 'Uploading attached images securely…' : 'Creating task…' });
         const uploaded = [];
         for (const attachment of attachments) uploaded.push(await router.uploadAttachment(attachment));
-        const created = await router.createTask(project.projectId, objective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id) }); taskId = created.descriptor.task_id; notifyPanel({ type: 'progress', value: `Running ${taskId}…` });
+        const created = await router.createTask(project.projectId, objective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id), requiredFiles: activeFile ? [activeFile] : [] }); taskId = created.descriptor.task_id; notifyPanel({ type: 'progress', value: `Running ${taskId}…` });
         let resumeError = null; const resumePromise = router.resume(project.projectId, taskId).catch(error => { resumeError = error; log('task.resume.response_lost', { task_id: taskId, ...safeError(error) }); });
         const deadline = Date.now() + 10 * 60_000; let detail = null;
         while (Date.now() < deadline) {

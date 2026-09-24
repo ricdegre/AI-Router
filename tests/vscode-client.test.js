@@ -76,9 +76,9 @@ test('VS Code client sends selected provider, channel, profile, model, and effor
 test('VS Code client uploads images only to AI Router and marks visual tasks', async () => {
   const calls = []; const fetch = async (url, options = {}) => { calls.push({ url, options }); return new Response(JSON.stringify(url.endsWith('/api/attachments') ? { attachment_id: 'att-one' } : { selected: { profile_id: 'vision' }, descriptor: { task_id: 'task-one' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce' } }); };
   const client = new RouterClient('http://127.0.0.1:43127', fetch); const attachment = { filename: 'screen.png', mime_type: 'image/png', data_base64: 'cG5n' };
-  await client.explain('Describe it', {}, [attachment]); await client.uploadAttachment(attachment); await client.createTask('project', 'Describe it', 'Read only', {}, { readOnly: true, attachmentIds: ['att-one'] });
+  await client.explain('Describe it', {}, [attachment]); await client.uploadAttachment(attachment); await client.createTask('project', 'Describe it', 'Read only', {}, { readOnly: true, attachmentIds: ['att-one'], requiredFiles: ['src/view.js'] });
   assert.match(calls[0].url, /capability=vision/); assert.match(calls[0].url, /attachment_count=1/); assert.equal(calls[1].url, 'http://127.0.0.1:43127/api/attachments');
-  const body = JSON.parse(calls.at(-1).options.body); assert.deepEqual(body.required_capabilities, ['coding', 'vision']); assert.deepEqual(body.attachment_ids, ['att-one']); assert.ok(calls.every(call => call.url.startsWith('http://127.0.0.1:43127/api/')));
+  const body = JSON.parse(calls.at(-1).options.body); assert.deepEqual(body.required_capabilities, ['coding', 'vision']); assert.deepEqual(body.attachment_ids, ['att-one']); assert.deepEqual(body.context_policy.required_files, ['src/view.js']); assert.ok(calls.every(call => call.url.startsWith('http://127.0.0.1:43127/api/')));
 });
 
 test('packaged VS Code extension contributes a local-only activity panel and heartbeat', async () => {

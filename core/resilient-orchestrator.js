@@ -9,6 +9,8 @@ import { createRecoverySnapshot, restoreRecoverySnapshot } from '../checkpoints/
 import { resolveSafePath } from './safe-path.js';
 import { readFile } from 'node:fs/promises';
 import { contentHash } from '../actions/changeset.js';
+import { createExecutionEnvelope, executionEnvelopeAudit } from './execution-envelope.js';
+import { visionExecutionStatus } from '../providers/core/vision-transport.js';
 
 function candidateKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}:${candidate.reasoning_effort ?? '-'}`; }
 function resourceKey(candidate) { return `${candidate.provider_id}:${candidate.profile_id}:${candidate.model_id ?? '-'}`; }
@@ -180,14 +182,20 @@ export class ResilientOrchestrator {
         try {
           const taskAnalysis = route.task_analysis ?? route.task?.task_analysis ?? null;
           const context = await this.contextBuilder.build(project.projectId, { ...task, task_analysis: taskAnalysis }, { workspacePath: project.workspacePath, providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
+          if (task.attachments?.length && !this.attachmentStore) throw new AiRouterError('Attachment store is unavailable.', 'ATTACHMENT_NOT_FOUND');
           const attachments = await this.attachmentStore?.resolve(task.project_id, task.task_id, task.attachments ?? []) ?? [];
           const provider = this.providerRegistry.get(candidate.provider_id);
           const profile = profiles.find((item) => item.profile_id === candidate.profile_id);
           const modelDescriptor = profile?.models?.find((item) => item.model_id === candidate.model_id) ?? null;
+          if (taskAnalysis?.vision_required || attachments.length) {
+            const channel = provider.descriptor.execution_channels?.find((item) => item.id === candidate.execution_channel);
+            const vision = visionExecutionStatus(modelDescriptor, channel, provider);
+            if (!vision.eligible) throw new AiRouterError(`Selected resource cannot receive image input: ${vision.reason}.`, vision.reason);
+          }
           const timeoutMs = resolveProviderTimeout('inference', { global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
           const executionTimeouts = resolveExecutionTimeouts({ global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
-          const request = { task, task_analysis: taskAnalysis, project, profile, model: candidate.model_id ?? task.model, inference: candidate.inference, context: context.rendered, context_metadata: context.project_inspection, attachments, prompt: task.prompt ?? context.rendered, signal: options.signal, timeout_ms: candidate.inference?.timeout_ms ?? timeoutMs, execution_timeouts: executionTimeouts };
-          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id, context_chars: context.used_chars, context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0, attachment_count: attachments.length, attachment_types: attachments.map((item) => item.mime_type), vision_required: taskAnalysis?.vision_required === true });
+          const request = createExecutionEnvelope({ task, analysis: taskAnalysis, context, attachments, candidate, timeoutMs, executionTimeouts, signal: options.signal });
+          await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, ...executionEnvelopeAudit(request), context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0, vision_required: taskAnalysis?.vision_required === true });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
           if (providerResult.limits) await this.profileRegistry.updateLimits(candidate.profile_id, providerResult.limits);

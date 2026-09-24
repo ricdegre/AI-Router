@@ -1,5 +1,8 @@
 import { readFile } from 'node:fs/promises';
-import { inspectProject } from './project-inspector.js';
+import { inspectProject, contextPathAllowed } from './project-inspector.js';
+import { resolveSafePath } from './safe-path.js';
+import { AiRouterError } from './errors.js';
+import { sha256 } from '../artp/contracts.js';
 
 function approximateTokens(text) { return Math.ceil(text.length / 4); }
 
@@ -23,7 +26,14 @@ export class ContextBuilder {
     try { return await readFile(this.memoryManager.file(projectId, name), 'utf8'); } catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
   }
 
-  async build(projectId, task, options = {}) {
+  plan(task, options = {}) {
+    const requiredFiles = task.context_policy?.required_files ?? [];
+    if (!Array.isArray(requiredFiles) || requiredFiles.length > 4 || requiredFiles.some((item) => typeof item !== 'string' || !item.trim()) || new Set(requiredFiles).size !== requiredFiles.length) throw new AiRouterError('Required context files must be one to four unique paths.', 'INVALID_CONTEXT_PLAN');
+    if (requiredFiles.length && !options.workspacePath) throw new AiRouterError('Required source files need a workspace.', 'MANDATORY_CONTEXT_UNAVAILABLE');
+    return { plan_version: '0.1', required_files: requiredFiles, scope: task.filesystem_scope ?? { allowed_paths: ['.'], denied_paths: [] }, workspace_path: options.workspacePath ?? null };
+  }
+
+  async render(projectId, task, plan, options = {}) {
     const memory = await this.memoryManager.summary(projectId);
     const tokenLimit = options.providerContextTokens ?? null;
     const requestedChars = options.budgetChars ?? this.defaultBudgetChars;
@@ -35,12 +45,23 @@ export class ContextBuilder {
       decisions: await this.safeRead(projectId, 'decisions.md'),
       changelog: await this.safeRead(projectId, 'ai-changelog.md')
     };
-    const projectInspection = options.workspacePath ? await inspectProject(options.workspacePath, task, { budgetChars: Math.min(10_000, Math.max(3_000, Math.floor(budgetChars * 0.65))) }) : null;
+    if (plan.workspace_path && plan.scope.workspace_path && plan.scope.workspace_path !== plan.workspace_path) throw new AiRouterError('Context workspace does not match task scope.', 'CONTEXT_SCOPE_MISMATCH');
+    const requiredSources = [];
+    for (const name of plan.required_files) {
+      if (!contextPathAllowed(name, plan.scope)) throw new AiRouterError('Required context file is outside authorized scope.', 'CONTEXT_FILE_UNSAFE');
+      const safe = await resolveSafePath(plan.workspace_path, name, { mustExist: true });
+      const content = await readFile(safe.path, 'utf8');
+      if (content.includes('\0')) throw new AiRouterError('Required context file is not text.', 'CONTEXT_FILE_UNSAFE');
+      requiredSources.push(`FILE: ${name}\nSHA-256: ${sha256(content)}\nEXACT CONTENT:\n${content}`);
+    }
+    const projectInspection = options.workspacePath ? await inspectProject(options.workspacePath, task, { budgetChars: Math.min(10_000, Math.max(3_000, Math.floor(budgetChars * 0.65))), scope: plan.scope }) : null;
     const latestCheckpoint = memory.checkpoints.at(-1) ?? null;
     const candidates = [
-      ['task', JSON.stringify({ task_id: task.task_id, objective: task.objective, acceptance_criteria: task.acceptance_criteria ?? [], requested_action_type: task.requested_action_type ?? null }, null, 2)],
-      ['attachments', task.attachments?.length ? JSON.stringify(task.attachments.map(({ source: _source, ...attachment }) => attachment), null, 2) : ''],
-      ['constraints', JSON.stringify({ protocol_constraints: memory.currentTask?.constraints ?? [], do_not_modify: memory.currentTask?.do_not_modify ?? [], durable_constraints: relevantExcerpt(raw.constraints, terms, 3_000) }, null, 2)],
+      ['task', JSON.stringify({ task_id: task.task_id, objective: task.objective, instruction: task.prompt ?? '', acceptance_criteria: task.acceptance_criteria ?? [], requested_action_type: task.requested_action_type ?? null }, null, 2)],
+      ['attachments', task.attachments?.length ? JSON.stringify(task.attachments.map(({ source: _source, filename: _filename, ...attachment }) => attachment), null, 2) : ''],
+      ['constraints', JSON.stringify({ protocol_constraints: memory.currentTask?.constraints ?? [], do_not_modify: memory.currentTask?.do_not_modify ?? [], durable_constraints: raw.constraints }, null, 2)],
+      ['effective_policy', JSON.stringify({ action_policy: task.action_policy ?? {}, filesystem_scope: { allowed_paths: plan.scope.allowed_paths ?? ['.'], denied_paths: plan.scope.denied_paths ?? [] }, validation_requirements: task.validation_requirements ?? [] }, null, 2)],
+      ['required_sources', requiredSources.join('\n\n')],
       ['project_inspection', projectInspection?.rendered ?? ''],
       ['handoff', JSON.stringify(memory.handoff ?? {}, null, 2)],
       ['current_task', JSON.stringify(memory.currentTask ?? {}, null, 2)],
@@ -49,22 +70,27 @@ export class ContextBuilder {
       ['project_context', relevantExcerpt(raw.context, terms, 3_000)],
       ['recent_changelog', raw.changelog.slice(-3_000)]
     ];
+    const mandatoryNames = new Set(['task', 'attachments', 'constraints', 'effective_policy', 'required_sources']);
+    const mandatory = candidates.filter(([name, content]) => mandatoryNames.has(name) && content).map(([name, content]) => ({ name, content, truncated: false }));
+    const mandatoryChars = mandatory.map(({ name, content }) => `## ${name}\n${content}`).join('\n\n').length;
+    if (mandatoryChars > budgetChars) throw new AiRouterError('Required task, policy, image references or source text exceeds candidate context budget.', 'MANDATORY_CONTEXT_TOO_LARGE', { required_chars: mandatoryChars, budget_chars: budgetChars });
     const minimumAllocation = {
-      task: 120, attachments: 100, constraints: 180, handoff: 100, current_task: 120,
+      handoff: 100, current_task: 120,
       project_inspection: 1_000, changed_files: 40, relevant_decisions: 160, project_context: 100,
       recent_changelog: 60
     };
-    const sections = [];
-    let used = 0;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const [name, content] = candidates[index];
+    const sections = [...mandatory];
+    let used = mandatoryChars;
+    const optional = candidates.filter(([name]) => !mandatoryNames.has(name));
+    for (let index = 0; index < optional.length; index += 1) {
+      const [name, content] = optional[index];
       if (!content) continue;
       const header = `## ${name}\n`;
-      const future = candidates.slice(index + 1).reduce((total, [futureName, futureContent]) => {
+      const future = optional.slice(index + 1).reduce((total, [futureName, futureContent]) => {
         if (!futureContent) return total;
         return total + Math.min(futureContent.length, minimumAllocation[futureName] ?? 0) + `## ${futureName}\n`.length + 2;
       }, 0);
-      const available = Math.max(0, budgetChars - used - header.length - future);
+      const available = Math.max(0, budgetChars - used - header.length - 2 - future);
       if (available <= 0) break;
       const selected = content.slice(0, available);
       sections.push({ name, content: selected, truncated: selected.length < content.length });
@@ -72,9 +98,11 @@ export class ContextBuilder {
     }
     const rendered = sections.map((section) => `## ${section.name}\n${section.content}`).join('\n\n');
     return {
-      context_protocol_version: '0.1', project_id: projectId, task_id: task.task_id,
+      context_protocol_version: '0.1', project_id: projectId, task_id: task.task_id, plan,
       budget_chars: budgetChars, used_chars: rendered.length, approximate_tokens: approximateTokens(rendered),
       sections, project_inspection: projectInspection ? { ...projectInspection, rendered: undefined } : null, rendered
     };
   }
+
+  async build(projectId, task, options = {}) { return this.render(projectId, task, this.plan(task, options), options); }
 }

@@ -82,8 +82,9 @@ test('ARTP preview returns canonical semantics without creating a task, routing,
 test('control API stages image bytes privately and audits only bounded metadata', async (t) => {
   const { api, project, services } = await fixture(t); const bytes = Buffer.alloc(24); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes); bytes.write('IHDR', 12, 'ascii'); bytes.writeUInt32BE(8, 16); bytes.writeUInt32BE(9, 20); const base64 = bytes.toString('base64');
   const staged = await api.handlePost('/api/attachments', { filename: 'private-screen.png', mime_type: 'image/png', data_base64: base64 });
-  const created = await api.handlePost('/api/tasks', { project_id: project.projectId, task_id: 'visual-task', objective: 'Describe visible UI', required_capabilities: ['vision'], attachment_ids: [staged.attachment_id] });
+  const created = await api.handlePost('/api/tasks', { project_id: project.projectId, task_id: 'visual-task', objective: 'Describe visible UI', required_capabilities: ['vision'], attachment_ids: [staged.attachment_id], context_policy: { required_files: ['README.md'] } });
   assert.equal(created.descriptor.attachments[0].width, 8); assert.equal(created.descriptor.attachments[0].height, 9); assert.equal('data_base64' in created.descriptor.attachments[0], false);
+  assert.deepEqual(created.descriptor.context_policy.required_files, ['README.md']);
   const events = await services.auditLog.list({ task_id: 'visual-task' }); const serialized = JSON.stringify(events); assert.doesNotMatch(serialized, new RegExp(base64)); assert.doesNotMatch(serialized, /private-screen\.png/); assert.equal(events[0].attachment_count, 1);
 });
 

@@ -375,7 +375,7 @@ export class ControlApi {
           task_type: body?.task_type ?? 'general', risk: body?.risk ?? 'low', required_capabilities: Array.isArray(body?.required_capabilities) ? body.required_capabilities : [], attachments: claimedAttachments,
           max_attempts: body?.max_attempts ?? settings.max_attempts, allow_metered: body?.allow_metered === true && settings.allow_metered,
           manual_provider: body?.provider_id ?? null, manual_profile: body?.profile_id ?? null, manual_model: body?.model_id ?? null, manual_execution_channel: body?.execution_channel ?? null, manual_reasoning_effort: body?.reasoning_effort ?? null,
-          action_policy: body?.action_policy ?? {}, validation_requirements: body?.validation_requirements ?? [],
+          action_policy: body?.action_policy ?? {}, validation_requirements: body?.validation_requirements ?? [], context_policy: body?.context_policy ?? {},
           provider_constraints: body?.provider_constraints ?? {}, model_constraints: body?.model_constraints ?? {}
         }, project);
         await this.services.descriptorStore.create(descriptor); const state = await this.services.taskStore.create(descriptor); await this.services.executionPlanStore.create(descriptor);
