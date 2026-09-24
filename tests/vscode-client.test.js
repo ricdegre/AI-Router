@@ -6,6 +6,19 @@ const require = createRequire(import.meta.url);
 const { RouterClient } = require('../interfaces/vscode/router-client.js');
 const { workspaceRelativeFile, sameWorkspacePath, workspaceBinding } = require('../interfaces/vscode/workspace-context.js');
 const { taskSnapshot, trackTask } = require('../interfaces/vscode/task-tracking.js');
+const { selectCurrentTask } = require('../interfaces/vscode/current-task-selection.js');
+
+test('current task selects an active task, then the latest workspace task, never an older blocked task', () => {
+  const workspacePath = 'D:\\Workspace\\fixture';
+  const item = (taskId, state, updated, path = workspacePath) => ({ descriptor: { task_id: taskId, project_id: 'fixture', created_at: updated, filesystem_scope: { workspace_path: path } }, state: { state, updated_at: updated } });
+  const blocked = item('blocked-old', 'CREATED', '2026-09-24T08:00:00Z');
+  const completed = item('completed-new', 'COMPLETED', '2026-09-24T09:00:00Z');
+  assert.equal(selectCurrentTask([blocked, completed], 'fixture', workspacePath).descriptor.task_id, 'completed-new');
+  const running = item('running-old', 'RUNNING', '2026-09-24T07:00:00Z');
+  assert.equal(selectCurrentTask([blocked, completed, running], 'fixture', workspacePath).descriptor.task_id, 'running-old');
+  assert.equal(selectCurrentTask([blocked, completed, item('other-path', 'RUNNING', '2026-09-24T10:00:00Z', 'D:\\Workspace\\other')], 'fixture', workspacePath).descriptor.task_id, 'completed-new');
+  assert.equal(selectCurrentTask([], 'fixture', workspacePath), null);
+});
 
 test('task status reflects persisted progress and terminal outcomes', () => {
   const base = { state: { state: 'RUNNING', created_at: '2026-09-24T00:00:00Z' }, execution_plan: { current_step: 'PROVIDER' }, attempts: [{ provider_id: 'ollama', model_id: 'gemma4:26b' }], workspace_changes: { changedFiles: [] } };
@@ -247,7 +260,7 @@ test('Focus Mode opens a central panel, closes noisy views, and shares sidebar t
   };
   class FakeClient {
     async post() { return {}; }
-    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/projects') return [{ projectId: 'fixture', workspacePath }]; return { status: 'READY' }; }
+    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/projects') return [{ projectId: 'fixture', workspacePath }]; if (path.startsWith('/api/tasks?')) return [{ descriptor: { project_id: 'fixture', task_id: 'task-focus', filesystem_scope: { workspace_path: workspacePath }, action_policy: { allowed: [] } }, state: { state: 'COMPLETED' } }]; return { status: 'READY' }; }
     async task() { return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Fixture result.', provider_id: 'ollama', model_id: 'qwen3.5:9b' }], workspace_changes: { changedFiles: [] } }; }
   }
   const Module = require('node:module'); const originalLoad = Module._load;
@@ -356,8 +369,8 @@ test('a different registered workspace blocks writes but permits a read-only tas
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });
 
-test('webview reload restores the current persisted task without resuming it again', async () => {
-  const messages = []; let provider; let handler; let resumes = 0; let reads = 0;
+test('webview reload replaces stale blocked task with latest completed result and returns READY when empty', async () => {
+  const messages = []; let provider; let handler; let resumes = 0; let reads = 0; let tasks = []; const persisted = new Map();
   const disposable = () => ({ dispose() {} });
   const folderPath = 'D:\\Workspace\\fixture';
   const vscode = {
@@ -368,7 +381,7 @@ test('webview reload restores the current persisted task without resuming it aga
   };
   class FakeClient {
     async post() { return {}; }
-    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/projects') return [{ projectId: 'fixture', workspacePath: folderPath }]; return { status: 'READY' }; }
+    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/projects') return [{ projectId: 'fixture', workspacePath: folderPath }]; if (path.startsWith('/api/tasks?')) return tasks; return { status: 'READY' }; }
     async task() { reads += 1; return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Recovered result.', provider_id: 'ollama', model_id: 'gemma4:26b' }], workspace_changes: { changedFiles: [] } }; }
     async resume() { resumes += 1; }
   }
@@ -376,15 +389,26 @@ test('webview reload restores the current persisted task without resuming it aga
   Module._load = function (request, parent, isMain) { if (request === 'vscode') return vscode; return originalLoad.call(this, request, parent, isMain); };
   let createExtension;
   try { ({ createExtension } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
-  const saved = { projectId: 'fixture', taskId: 'task-recover', workspacePath: folderPath, readOnly: true, status: 'RUNNING' };
-  const context = { subscriptions: [], extension: { packageJSON: { version: '0.6.0' }, id: 'ai-router-local.ai-router-vscode' }, extensionUri: 'extension-root', workspaceState: { get(key) { return key === 'aiRouter.currentTask' ? saved : 'fixture'; }, update() {} } };
+  const saved = { projectId: 'fixture', taskId: 'task-blocked-old', workspacePath: folderPath, readOnly: true, status: 'BLOCKED' };
+  persisted.set('aiRouter.currentTask', saved);
+  tasks = [
+    { descriptor: { project_id: 'fixture', task_id: 'task-blocked-old', created_at: '2026-09-24T08:00:00Z', filesystem_scope: { workspace_path: folderPath }, action_policy: { allowed: [] } }, state: { state: 'CREATED', updated_at: '2026-09-24T08:00:00Z' } },
+    { descriptor: { project_id: 'fixture', task_id: 'task-recover', created_at: '2026-09-24T09:00:00Z', filesystem_scope: { workspace_path: folderPath }, action_policy: { allowed: [] } }, state: { state: 'COMPLETED', updated_at: '2026-09-24T09:01:00Z' } }
+  ];
+  const context = { subscriptions: [], extension: { packageJSON: { version: '0.6.0' }, id: 'ai-router-local.ai-router-vscode' }, extensionUri: 'extension-root', workspaceState: { get(key) { return persisted.get(key) ?? (key === 'aiRouter.projectId' ? 'fixture' : null); }, update(key, value) { persisted.set(key, value); } } };
   try {
-    createExtension(vscode, FakeClient)(context);
+    const api = createExtension(vscode, FakeClient)(context);
     provider.resolveWebviewView({ webview: { cspSource: 'vscode-webview:', asWebviewUri: value => value, postMessage(message) { messages.push(message); }, onDidReceiveMessage(value) { handler = value; return disposable(); } } });
     await handler({ type: 'ready' });
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(reads >= 1); assert.equal(resumes, 0);
     assert.ok(messages.some(item => item.type === 'taskStatus' && item.task.status === 'COMPLETED' && item.task.result === 'Recovered result.' && item.task.taskId === 'task-recover'));
+    assert.ok(!messages.some(item => item.type === 'taskStatus' && item.task.taskId === 'task-blocked-old'));
+    assert.equal(persisted.get('aiRouter.currentTask').taskId, 'task-recover');
+    tasks = [];
+    await api.refresh();
+    assert.equal(messages.at(-1).task?.status, 'READY');
+    assert.equal(persisted.get('aiRouter.currentTask'), null);
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });
 
