@@ -16,6 +16,7 @@
       { "command": "aiRouter.runTask", "title": "AI Router: Run Task" },
       { "command": "aiRouter.explainRoute", "title": "AI Router: Explain Route" },
       { "command": "aiRouter.openDashboard", "title": "AI Router: Open Dashboard" },
+      { "command": "aiRouter.focusMode", "title": "AI Router: Focus Mode" },
       { "command": "aiRouter.refresh", "title": "AI Router: Refresh" }
     ],
     "configuration": {

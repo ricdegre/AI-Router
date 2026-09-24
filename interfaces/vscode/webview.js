@@ -2,6 +2,25 @@
 (() => {
   const vscode = acquireVsCodeApi();
   const profiles = document.querySelector('#profile'); const models = document.querySelector('#model'); const result = document.querySelector('#result'); const instruction = document.querySelector('#instruction'); const effort = document.querySelector('#effort'); const readOnly = document.querySelector('#readOnly'); const routingMode = document.querySelector('#routingMode'); const fileInput = document.querySelector('#fileInput'); const attachmentList = document.querySelector('#attachmentList'); const dropZone = document.querySelector('#dropZone');
+  const focusMode = document.body.classList.contains('focus-mode');
+  if (focusMode) {
+    const layout = document.createElement('main'); layout.className = 'focus-layout';
+    const compose = document.createElement('section'); compose.className = 'focus-compose';
+    const monitor = document.createElement('section'); monitor.className = 'focus-monitor';
+    const advanced = document.createElement('details'); advanced.id = 'advanced';
+    const summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
+    const taskId = document.createElement('div'); taskId.id = 'advancedTaskId'; advanced.append(taskId);
+    for (const id of ['profile', 'model', 'effort']) advanced.append(document.querySelector(`#${id}`).closest('label'));
+    const advancedActions = document.createElement('div'); advancedActions.className = 'row';
+    for (const id of ['explain', 'preview', 'executeArtp']) advancedActions.append(document.querySelector(`#${id}`));
+    advanced.append(advancedActions);
+    const technicalOutput = document.createElement('button'); technicalOutput.type = 'button'; technicalOutput.className = 'secondary'; technicalOutput.textContent = 'Show Technical Output'; technicalOutput.addEventListener('click', () => vscode.postMessage({ type: 'output' })); advanced.append(technicalOutput);
+    compose.append(instruction.closest('label'), dropZone, readOnly.closest('label'), routingMode.closest('label'), document.querySelector('#run').parentElement, document.querySelector('#dashboard').parentElement, advanced);
+    const taskSection = document.querySelector('#taskStatus'); taskSection.querySelector('h4').textContent = 'Current Task'; monitor.append(taskSection, result.previousElementSibling, result);
+    layout.append(compose, monitor); document.body.append(layout);
+  } else {
+    const launch = document.createElement('button'); launch.type = 'button'; launch.className = 'focus-launch'; launch.textContent = 'Open Focus Mode'; launch.addEventListener('click', () => vscode.postMessage({ type: 'focus' })); document.querySelector('#workspaceStatus').after(launch);
+  }
   let data = []; let attachments = []; let workspaceMatched = false;
   let currentTask = null;
   function renderTask(task) {
@@ -10,8 +29,9 @@
     state.textContent = task.status || 'READY';
     state.className = ['COMPLETED'].includes(task.status) ? 'ok' : ['FAILED', 'BLOCKED', 'VALIDATION_FAILED', 'TRACKING_LOST'].includes(task.status) ? 'bad' : '';
     const details = document.querySelector('#taskDetails'); details.replaceChildren();
-    const row = (label, value) => { if (value === null || value === undefined || value === '') return; const item = document.createElement('div'); const name = document.createElement('strong'); name.textContent = `${label}: `; item.append(name, document.createTextNode(String(value))); details.append(item); };
-    row('Task', task.taskId); if (task.persistedState && task.persistedState !== task.status) row('Recorded state', task.persistedState); row('Stage', task.stage); row('Provider', task.provider); row('Model', task.model);
+    const row = (label, value, technical = false) => { if (value === null || value === undefined || value === '') return; const item = document.createElement('div'); if (technical) item.className = 'technical-detail'; const name = document.createElement('strong'); name.textContent = `${label}: `; item.append(name, document.createTextNode(String(value))); details.append(item); };
+    row('Task', task.taskId, true); if (task.persistedState && task.persistedState !== task.status) row('Recorded state', task.persistedState, true); row('Stage', task.stage); row('Provider', task.provider); row('Model', task.model);
+    if (focusMode) document.querySelector('#advancedTaskId').textContent = task.taskId ? `Task ID: ${task.taskId}` : 'No task yet';
     row('Elapsed', Number.isFinite(task.durationMs) ? `${Math.floor(task.durationMs / 60000)}m ${Math.floor((task.durationMs % 60000) / 1000)}s` : null);
     row('Validation', task.validation ? (task.validation.passed === true ? 'Passed' : task.validation.passed === false ? 'Failed' : JSON.stringify(task.validation)) : task.terminal ? 'Not reported' : null);
     row('Changed Files', task.terminal ? (task.changedFiles?.length ? task.changedFiles.join(', ') : 'none') : null);

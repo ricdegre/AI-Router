@@ -210,7 +210,7 @@ test('extension activates, registers every command, and handles every webview ac
   try { ({ createExtension } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
   const context = { subscriptions: [], extension: { packageJSON: { version: '0.5.3' }, id: 'ai-router-local.ai-router-vscode' }, extensionUri: 'extension-root' };
   const api = createExtension(vscode, FakeClient)(context);
-  assert.deepEqual([...commands.keys()].sort(), ['aiRouter.explainRoute', 'aiRouter.openDashboard', 'aiRouter.refresh', 'aiRouter.runTask']);
+  assert.deepEqual([...commands.keys()].sort(), ['aiRouter.explainRoute', 'aiRouter.focusMode', 'aiRouter.openDashboard', 'aiRouter.refresh', 'aiRouter.runTask']);
   const webview = { cspSource: 'vscode-webview:', options: null, html: '', asWebviewUri: value => `webview:${value}`, postMessage(message) { messages.push(message); }, onDidReceiveMessage(handler) { messageHandler = handler; return disposable(); } };
   provider.resolveWebviewView({ webview }); await new Promise(resolve => setImmediate(resolve));
   assert.equal(webview.options.enableScripts, true); assert.match(webview.html, /Content-Security-Policy/); assert.match(webview.html, /webview\.js/); assert.match(webview.html, /readOnly/);
@@ -226,6 +226,51 @@ test('extension activates, registers every command, and handles every webview ac
   assert.equal(messages.filter(item => item.type === 'artpPreview').length, 2); assert.equal(createOptions.readOnly, true);
   assert.ok(logs.some(line => line.includes('extension.activated'))); assert.ok(logs.some(line => line.includes('webview.message'))); assert.ok(logs.every(line => !line.includes('Inspect only')));
   for (const item of context.subscriptions) item.dispose?.(); void api;
+});
+
+test('Focus Mode opens a central panel, closes noisy views, and shares sidebar task state', async () => {
+  const commands = new Map(); const builtins = []; const sidebarMessages = []; const focusMessages = []; let sidebar; let central; let sidebarHandler; let focusHandler;
+  const disposable = () => ({ dispose() {} });
+  const workspacePath = 'D:\\Workspace\\fixture';
+  const makeWebview = (messages, onHandler) => ({ cspSource: 'vscode-webview:', asWebviewUri: value => value, postMessage(message) { messages.push(message); }, onDidReceiveMessage(handler) { onHandler(handler); return disposable(); }, html: '' });
+  const vscode = {
+    StatusBarAlignment: { Left: 1 }, ViewColumn: { Active: 1, One: 1 }, Uri: { parse: value => value, joinPath: (...values) => values.join('/') },
+    env: { async openExternal() { return true; } },
+    commands: { registerCommand(id, handler) { commands.set(id, handler); return disposable(); }, executeCommand(id, ...args) { if (commands.has(id)) return commands.get(id)(...args); builtins.push(id); return Promise.resolve(); } },
+    workspace: { workspaceFolders: [{ name: 'fixture', uri: { fsPath: workspacePath } }], getConfiguration() { return { get(_name, fallback) { return fallback; } }; } },
+    window: {
+      createOutputChannel() { return { appendLine() {}, clear() {}, show() {}, dispose() {} }; }, createStatusBarItem() { return { text: '', show() {}, dispose() {} }; },
+      registerWebviewViewProvider(_id, value) { sidebar = value; return disposable(); },
+      createWebviewPanel(id, title, column, options) { central = { id, title, column, options, webview: makeWebview(focusMessages, handler => { focusHandler = handler; }), reveal() {}, onDidDispose() { return disposable(); } }; return central; }
+    }
+  };
+  class FakeClient {
+    async post() { return {}; }
+    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/projects') return [{ projectId: 'fixture', workspacePath }]; return { status: 'READY' }; }
+    async task() { return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Fixture result.', provider_id: 'ollama', model_id: 'qwen3.5:9b' }], workspace_changes: { changedFiles: [] } }; }
+  }
+  const Module = require('node:module'); const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) { if (request === 'vscode') return vscode; return originalLoad.call(this, request, parent, isMain); };
+  let createExtension;
+  try { ({ createExtension } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
+  const saved = { projectId: 'fixture', taskId: 'task-focus', workspacePath, readOnly: true, status: 'COMPLETED' };
+  const context = { subscriptions: [], extension: { packageJSON: { version: '0.6.0' }, id: 'ai-router-local.ai-router-vscode' }, extensionUri: 'extension-root', workspaceState: { get(key) { return key === 'aiRouter.currentTask' ? saved : 'fixture'; }, update() {} } };
+  try {
+    const api = createExtension(vscode, FakeClient)(context);
+    const side = { webview: makeWebview(sidebarMessages, handler => { sidebarHandler = handler; }) };
+    sidebar.resolveWebviewView(side);
+    await commands.get('aiRouter.focusMode')();
+    assert.equal(central.id, 'aiRouter.focus'); assert.equal(central.column, vscode.ViewColumn.Active); assert.match(central.webview.html, /<body class="focus-mode">/);
+    assert.match(side.webview.html, /id="taskStatus"/); assert.match(central.webview.html, /id="taskStatus"/); assert.equal(sidebarHandler, focusHandler);
+    assert.deepEqual(builtins, ['workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel']);
+    await api.refresh();
+    assert.ok(sidebarMessages.some(item => item.type === 'taskStatus' && item.task.result === 'Fixture result.'));
+    assert.ok(focusMessages.some(item => item.type === 'taskStatus' && item.task.result === 'Fixture result.'));
+    assert.ok(focusMessages.some(item => item.type === 'workspace' && item.status === 'MATCH'));
+    const source = await (await import('node:fs/promises')).readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8');
+    assert.match(source, /document\.createElement\('details'\)/); assert.doesNotMatch(source, /advanced\.open\s*=/);
+    assert.match(source, /workspaceMatched = message\.status === 'MATCH'/); assert.match(source, /task\.result/);
+  } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });
 
 test('a different registered workspace blocks writes but permits a read-only task with a warning', async () => {
