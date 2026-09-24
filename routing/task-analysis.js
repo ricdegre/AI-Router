@@ -10,6 +10,9 @@ const ROUTABLE_CAPABILITIES = new Set(['coding', 'long_context', 'vision', 'web'
 
 function textOf(input) { return `${input.objective ?? ''}\n${input.instruction ?? ''}`.toLowerCase(); }
 function contains(text, patterns) { return patterns.some((pattern) => pattern.test(text)); }
+function affirmativeScopeText(text) {
+  return text.replace(/(?:^|[.;!?\n])[^\S\r\n]*(?:no|nunca|do not|don't|never|without|sin)[^\S\r\n]+(?:[^\s.;!?\n]+[^\S\r\n]+){0,3}(?:anali[zc]\w*|analy[sz]\w*|revis\w*|review\w*|inspect\w*|inspeccion\w*)[^.;!?\n]*/giu, ' ');
+}
 
 function inferIntent(input, text) {
   const declared = String(input.intent ?? input.task_type ?? '').toLowerCase();
@@ -85,10 +88,11 @@ function deriveCapabilities(input, intent, scope, writeMode, text) {
 export function analyzeTask(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AiRouterError('Task input is required for analysis.', 'INVALID_TASK_ANALYSIS_INPUT');
   const text = textOf(input);
-  const intent = inferIntent(input, text);
-  const scope = inferScope(input, text);
+  const scopeText = affirmativeScopeText(text);
+  const intent = inferIntent(input, scopeText);
+  const scope = inferScope(input, scopeText);
   const writeMode = inferWriteMode(input, intent, text);
-  const complexity = inferComplexity(input, intent, scope, text);
+  const complexity = inferComplexity(input, intent, scope, scopeText);
   const requiredCapabilities = deriveCapabilities(input, intent, scope, writeMode, text);
   const routingCapabilities = [...new Set(requiredCapabilities.flatMap((capability) => {
     if (ROUTABLE_CAPABILITIES.has(capability)) return [capability];

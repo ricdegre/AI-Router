@@ -13,6 +13,20 @@ test('task analysis classifies project analysis before resource routing', () => 
   assert.equal(analysis.parallelizable, true);
 });
 
+test('a minimal read-only Git-status request does not inherit denied project-wide analysis', () => {
+  const objective = 'SMOKE TEST — READ ONLY\n\nTrabaja únicamente con el workspace actualmente registrado.\n\nNO analices el proyecto completo.\nNO modifiques ningún archivo.\n\nConfirma solamente:\n- ruta del workspace;\n- branch Git actual;\n- si Git está clean o dirty.\n\nNo hagas commits.\nNo hagas push.\nNo escribas archivos.\n\nTermina en COMPLETED después de devolver esos tres datos.';
+  const analysis = analyzeTask({ objective, task_type: 'coding' });
+  assert.notEqual(analysis.intent, 'project_analysis');
+  assert.notEqual(analysis.scope, 'project');
+  assert.equal(analysis.write_mode, 'read_only');
+  assert.notEqual(analysis.context_requirement, 'high');
+  assert.equal(analysis.required_capabilities.includes('long_context'), false);
+  assert.deepEqual(analysis.routing_capabilities, ['coding']);
+  assert.equal(analyzeTask({ objective: 'Do not analyze the entire project. Report the current Git branch.' }).required_capabilities.includes('long_context'), false);
+  assert.equal(analyzeTask({ objective: 'Do not analyze the entire project. Then analyze the whole project.' }).required_capabilities.includes('long_context'), true);
+  assert.equal(analyzeTask({ objective: 'No hagas commits. Analiza todo el proyecto.' }).required_capabilities.includes('long_context'), true);
+});
+
 test('task analysis distinguishes a small writable selection from project work', () => {
   const analysis = analyzeTask({ objective: 'Change this selected CSS color', has_selection: true, task_type: 'coding' });
   assert.equal(analysis.intent, 'edit');

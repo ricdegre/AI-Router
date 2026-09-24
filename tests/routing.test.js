@@ -140,6 +140,21 @@ test('whole-project analysis requires strength before local cost preference', as
   assert.ok(result.evaluations.find((item) => item.profile_id === 'cheap').rejected.includes('strength-below-strong'));
 });
 
+test('manual Ollama route accepts a minimal read-only workspace status request without long context', async () => {
+  const registry = new ProviderRegistry(); registry.register(new MockProvider('ollama', { capabilities: ['chat', 'coding', 'local'] }));
+  const model = createModelDescriptor({ providerId: 'ollama', modelId: 'gemma4:26b', discovered: { local: true, execution_channel: 'ollama-local' } });
+  const selectedProfile = profile('gemma4', 'ollama', 'local', { routing_classification: 'REAL', models: [model], selected_model_id: 'gemma4:26b' });
+  const result = await new RoutingPolicy().explain({
+    objective: 'SMOKE TEST — READ ONLY. Trabaja únicamente con el workspace actualmente registrado. NO analices el proyecto completo. NO modifiques ningún archivo. Confirma solamente la ruta del workspace, branch Git actual y si Git está clean o dirty. No hagas commits, push ni escribas archivos.',
+    task_type: 'coding', read_only: true, required_capabilities: ['coding'], routing_mode: 'manual',
+    manual_provider: 'ollama', manual_profile: 'gemma4', manual_model: 'gemma4:26b'
+  }, registry, [selectedProfile]);
+  assert.equal(result.error, null);
+  assert.equal(result.selected.profile_id, 'gemma4');
+  assert.equal(result.selected.model_id, 'gemma4:26b');
+  assert.deepEqual(result.task.required_capabilities, ['coding']);
+});
+
 test('automatic routing considers remaining quota before cost among equally capable resources', async () => {
   const registry = new ProviderRegistry(); registry.register(new MockProvider('local-equal')); registry.register(new MockProvider('subscription-equal'));
   const lowQuota = profile('local-low-quota', 'local-equal', 'local', { limits: { availability: 'available', remaining_percentage: 10, windows: [] } });
