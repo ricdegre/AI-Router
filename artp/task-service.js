@@ -39,9 +39,11 @@ export class ArtpTaskService {
     }
     const route = input.routing ?? {};
     if (route && (typeof route !== 'object' || Array.isArray(route) || Object.keys(route).some((key) => !['provider_id', 'profile_id', 'model_id', 'execution_channel', 'reasoning_effort'].includes(key)))) throw new AiRouterError('ARTP routing preference is invalid.', 'ARTP_CREATE_INVALID');
-    const attachments = await this.services.attachmentStore.claim(input.attachment_ids ?? [], project.projectId, taskId);
+    const claimed = await this.services.attachmentStore.claim(input.attachment_ids ?? [], project.projectId, taskId);
     try {
-      if (sha256(attachments.map(({ filename: _filename, ...metadata }) => metadata)) !== sha256(semantic.attachments.map(({ filename: _filename, ...metadata }) => metadata))) throw new AiRouterError('ARTP attachment changed since preview.', 'ARTP_STALE_PREVIEW');
+      const metadata = (item) => ({ attachment_id: item.attachment_id, type: item.type, mime_type: item.mime_type, filename: item.filename, width: item.width, height: item.height, size_bytes: item.size_bytes, sha256: item.sha256 });
+      const attachments = semantic.attachments.map((item) => claimed.find((record) => record.attachment_id === item.attachment_id));
+      if (attachments.some((item) => !item) || attachments.length !== claimed.length || sha256(attachments.map(metadata)) !== sha256(semantic.attachments.map(metadata))) throw new AiRouterError('ARTP attachment changed since preview.', 'ARTP_STALE_PREVIEW');
       const artp = {
         protocol_version: 'ARTP/1', compiler_version: '0.2', original: preview.compact_view.descriptor,
         descriptor_hash: preview.audit_metadata.descriptor_hash, semantic_hash: preview.semantic_hash,

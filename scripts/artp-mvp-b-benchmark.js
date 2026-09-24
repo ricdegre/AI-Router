@@ -27,7 +27,7 @@ function outcome(detail, result) {
     context_tokens_estimate: attempt.token_metrics?.context_tokens_estimate ?? null,
     persistent_context_reused_items: attempt.token_metrics?.persistent_context_reused_items ?? 0,
     files_included: attempt.context_manifest?.files ?? [], context_manifest_hash: attempt.context_manifest?.hash ?? null,
-    duration_ms: attempt.started_at && attempt.completed_at ? Date.parse(attempt.completed_at) - Date.parse(attempt.started_at) : null,
+    duration_ms: attempt.started_at && attempt.ended_at ? Date.parse(attempt.ended_at) - Date.parse(attempt.started_at) : null,
     actions_proposed: attempt.proposed_actions?.length ?? 0,
     changed_files: (attempt.execution_results ?? []).filter((item) => item.status === 'completed' && item.target).map((item) => item.target),
     validation: attempt.validation?.status ?? null, attempts: detail.attempts?.length ?? 0,

@@ -50,6 +50,18 @@ test('control API preview persists nothing and create persists without execution
   assert.equal(created.state.state, 'CREATED'); assert.deepEqual(await services.attemptStore.list(created.descriptor.project_id, created.descriptor.task_id), []);
 });
 
+test('ARTP image slot persists the same verified image binding for later attempts', async (t) => {
+  const { services, text } = await fixture(t, { artpValidationRegistry: new Map([['target-check', { type: 'contains_text', target: 'target.txt', expected: 'after' }]]) });
+  const bytes = Buffer.alloc(28); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes); bytes.write('IHDR', 12, 'ascii'); bytes.writeUInt32BE(2, 16); bytes.writeUInt32BE(2, 20);
+  const draftId = randomUUID(); const staged = await services.attachmentStore.stage({ filename: 'reference.png', mime_type: 'image/png', data_base64: bytes.toString('base64'), draft_id: draftId });
+  const descriptor = text(['IMG: ["slot:1"]']); const attachmentIds = [staged.attachment_id];
+  const preview = await services.artpTaskService.preview({ descriptor, draft_id: draftId, attachment_ids: attachmentIds });
+  const created = await services.artpTaskService.create({ descriptor, draft_id: draftId, attachment_ids: attachmentIds, expected_semantic_hash: preview.semantic_hash, expected_manifest_hash: preview.context_manifest.hash, idempotency_key: randomUUID() });
+  assert.equal(created.descriptor.attachments[0].sha256, staged.sha256);
+  const resolved = await services.attachmentStore.resolve(created.descriptor.project_id, created.descriptor.task_id, created.descriptor.attachments);
+  assert.equal(resolved[0].sha256, staged.sha256); assert.equal(created.descriptor.artp.semantic.attachments[0].sha256, staged.sha256);
+});
+
 test('ARTP rejects unknown and outside-scope validators and raw commands', async (t) => {
   const { services, text } = await fixture(t, { artpValidationRegistry: new Map([['target-check', { type: 'file_exists', target: 'other.txt' }]]) });
   await assert.rejects(() => services.artpTaskService.preview({ descriptor: text() }), { code: 'ARTP_VALIDATION_OUTSIDE_SCOPE' });
