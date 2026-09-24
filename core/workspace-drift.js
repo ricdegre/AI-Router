@@ -12,6 +12,14 @@ function gitPath(statusLine) {
   return value.includes(' -> ') ? value.split(' -> ').at(-1) : value;
 }
 
+function checkpointForTask(descriptor, checkpoints = []) {
+  const own = checkpoints.filter((item) => item.task_id === descriptor.task_id);
+  if (own.length) return own.at(-1);
+  const createdAt = Date.parse(descriptor.created_at);
+  if (!Number.isFinite(createdAt)) return checkpoints.at(-1) ?? null;
+  return checkpoints.filter((item) => !item.task_id && Number.isFinite(Date.parse(item.recordedAt)) && Date.parse(item.recordedAt) <= createdAt).at(-1) ?? null;
+}
+
 export async function detectWorkspaceDrift({ descriptor, project, memory, attempts = [], pendingActions = [] }) {
   const findings = [];
   const add = (classification, code, details = {}) => findings.push({ classification, code, ...details });
@@ -32,8 +40,9 @@ export async function detectWorkspaceDrift({ descriptor, project, memory, attemp
     } catch (error) { add('BLOCKING', 'touched-file-unavailable', { target, error: error.code ?? 'READ_FAILED' }); }
   }
 
-  const checkpoint = memory?.checkpoints?.at(-1) ?? null;
+  const checkpoint = checkpointForTask(descriptor, memory?.checkpoints);
   const git = inspectGit(project.workspacePath);
+  if (!checkpoint && memory?.checkpoints?.length) add('BLOCKING', 'checkpoint-reference-unavailable');
   if (checkpoint && git.isRepository) {
     if (checkpoint.commit && git.commit !== checkpoint.commit) add('BLOCKING', 'git-commit-changed', { expected: checkpoint.commit, actual: git.commit });
     const before = [...(checkpoint.changedFiles ?? [])].sort();
