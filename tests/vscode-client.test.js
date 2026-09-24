@@ -48,6 +48,18 @@ test('VS Code ARTP preview preserves authoritative parse location for display', 
   await assert.rejects(() => client.previewArtp('ARTP/1\nP: "x"\nDO: "x"\nBUG: "x"'), (error) => error.code === 'ARTP_UNKNOWN_FIELD' && error.details.line === 4 && error.details.field === 'BUG');
 });
 
+test('VS Code ARTP create is explicit, hash-bound and uses only AI Router', async () => {
+  const calls = []; const fetchImpl = async (url, options = {}) => { calls.push({ url, options }); return new Response('{}', { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce' } }); };
+  const client = new RouterClient('http://127.0.0.1:43127', fetchImpl);
+  const preview = { semantic_hash: 'a'.repeat(64), context_manifest: { hash: 'b'.repeat(64) } };
+  await client.createArtpTask('ARTP/1\nP: "fixture"\nDO: "Edit"', preview, { idempotencyKey: 'fixed-key-1234', selection: { routing_mode: 'manual', provider_id: 'ollama', profile_id: 'local', model_id: 'gemma4:26b' } });
+  assert.equal(calls.at(-1).url, 'http://127.0.0.1:43127/api/artp/tasks');
+  const body = JSON.parse(calls.at(-1).options.body);
+  assert.equal(body.expected_semantic_hash, preview.semantic_hash); assert.equal(body.expected_manifest_hash, preview.context_manifest.hash);
+  assert.equal(body.routing.model_id, 'gemma4:26b'); assert.equal(body.idempotency_key, 'fixed-key-1234');
+  assert.ok(calls.every((item) => item.url.startsWith('http://127.0.0.1:43127/api/')));
+});
+
 test('VS Code client reports offline and malformed router responses safely', async () => {
   const offline = new RouterClient('http://127.0.0.1:43127', async () => { throw new TypeError('fetch failed'); });
   await assert.rejects(() => offline.get('/api/readiness'), /fetch failed/);

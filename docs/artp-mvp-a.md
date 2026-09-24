@@ -1,6 +1,6 @@
 # ARTP/1 MVP A (experimental)
 
-ARTP is a compact, structured way to describe a task. MVP A **only previews** its meaning. It does not create a task, select a provider, execute a validator, read project files, write a workspace, or spend provider credits. Traditional text tasks remain unchanged. Do not treat an ARTP preview as authorization to execute.
+ARTP is a compact, structured way to describe a task. This page documents the historical MVP A preview contract. MVP B adds explicit task creation and execution; see [ARTP MVP B](artp-mvp-b.md). A preview alone still does not authorize execution.
 
 ```text
 ARTP/1
@@ -26,4 +26,4 @@ Aliases are structured `PROJECT`, `SCOPE`, `CONSTRAINT`, `REFERENCE`, or `VALIDA
 
 Policy precedence is core → project → workspace → task permissions → ARTP restrictions. Permissions intersect; denials and mandatory validations accumulate. The default ARTP preview task permission is read-only, with metered use false. A trusted host may supply narrower or explicitly authorized task permissions; descriptor text itself can never grant access. `DO` is a request, not permission. The Expanded View labels typed enforceable rules `HARD` and natural-language `KEEP`/`CTX` rules `ADVISORY`; advisory text is not a security guarantee. The semantic hash excludes provider/model/effort selection. Costs and provider-token counts are **not measured**; `chars/4` is explicitly an estimate.
 
-Existing `TaskExecutionDescriptor` remains v0.1 for traditional tasks. No ARTP task is persisted in MVP A, so no migration or second durable task IR was introduced. MVP B must explicitly version/migrate that descriptor when storing ARTP semantics, pinned aliases, attachment bindings, and provenance. F09 now provides an attempt-specific plan/render split and a provider-neutral envelope for traditional tasks, with mandatory policy/evidence failing if unavailable or truncated. This does **not** make ARTP preview executable or establish token savings; see [F09 multimodal execution](f09-multimodal-execution.md).
+MVP A did not persist ARTP tasks. MVP B introduces descriptor v0.2 for them while historical v0.1 descriptors remain readable. No token-savings claim follows from a compact descriptor alone; see [ARTP MVP B](artp-mvp-b.md) and [F09 multimodal execution](f09-multimodal-execution.md).
