@@ -2,7 +2,7 @@
 const vscode = require('vscode');
 const { randomUUID, createHash } = require('node:crypto');
 const { RouterClient } = require('./router-client');
-const { workspaceRelativeFile } = require('./workspace-context');
+const { workspaceRelativeFile, sameWorkspacePath, workspaceBinding } = require('./workspace-context');
 
 function outputLine(channel, label, value) { channel.appendLine(`${label}: ${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}`); }
 function safeError(error) { return { code: error?.code || 'ERROR', status: error?.status ?? null, message: error?.message || 'Unknown error' }; }
@@ -19,6 +19,21 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     let pendingArtp = null;
     const notifyPanel = (message) => panel?.webview.postMessage(message);
 
+    function publishWorkspace(folder, projects) {
+      const binding = workspaceBinding(folder?.uri?.fsPath, projects, context.workspaceState?.get('aiRouter.projectId'));
+      notifyPanel({ type: 'workspace', ...binding });
+      if (binding.status === 'MATCH' && context.workspaceState?.update) {
+        const saved = context.workspaceState.update('aiRouter.projectId', binding.projectId);
+        if (saved?.catch) void saved.catch(error => log('workspace.binding.persist.failed', safeError(error)));
+      }
+      return { binding, project: projects.find(item => item.projectId === binding.projectId) ?? null };
+    }
+
+    async function inspectWorkspace(router, folder) { return publishWorkspace(folder, await router.get('/api/projects')); }
+    function requireWorkspaceMatch(binding) {
+      if (binding.status !== 'MATCH') throw Object.assign(new Error(`VS Code folder ${binding.vscodePath ?? '(none)'} does not match AI Router registered workspace ${binding.registeredPath ?? '(not registered)'}. Register or open the intended workspace before writing.`), { code: 'WORKSPACE_MISMATCH' });
+    }
+
     async function heartbeat() {
       try {
         const router = client(); await router.post('/api/readiness/vscode-heartbeat', { version: context.extension.packageJSON.version, extension_id: context.extension.id, endpoint: baseUrl(), workspace: Boolean(vscodeApi.workspace.workspaceFolders?.length) });
@@ -29,9 +44,10 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     async function loadResources() {
       log('resources.refresh.started', { endpoint: baseUrl() });
       try {
-        const router = client(); const [profiles, readiness] = await Promise.all([router.get('/api/profiles'), router.get('/api/readiness')]);
-        notifyPanel({ type: 'resources', profiles, readiness, selection: configuredSelection() }); log('resources.refresh.completed', { profile_count: profiles.length, readiness: readiness.status }); return { profiles, readiness };
-      } catch (error) { notifyPanel({ type: 'error', error: `${error.code || 'ERROR'} — ${error.message}` }); log('resources.refresh.failed', safeError(error)); return null; }
+        const router = client(); const [profiles, readiness, projects] = await Promise.all([router.get('/api/profiles'), router.get('/api/readiness'), router.get('/api/projects')]);
+        const { binding } = publishWorkspace(vscodeApi.workspace.workspaceFolders?.[0], projects);
+        notifyPanel({ type: 'resources', profiles, readiness, selection: configuredSelection() }); log('resources.refresh.completed', { profile_count: profiles.length, readiness: readiness.status, workspace_status: binding.status }); return { profiles, readiness, binding };
+      } catch (error) { publishWorkspace(vscodeApi.workspace.workspaceFolders?.[0], []); notifyPanel({ type: 'error', error: `${error.code || 'ERROR'} — ${error.message}` }); log('resources.refresh.failed', safeError(error)); return null; }
     }
 
     async function refresh() { log('command.refresh'); return Promise.all([heartbeat(), loadResources()]); }
@@ -63,7 +79,8 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
       if (!folder || !pending || pending.descriptor !== instruction || pending.attachmentFingerprint !== attachmentFingerprint(attachments)) { notifyPanel({ type: 'error', error: 'Preview the current ARTP descriptor and attachments before executing.' }); return null; }
       let taskId = null;
       try {
-        const router = client(); const project = await router.ensureProject(folder.uri.fsPath, folder.name);
+        const router = client(); const { binding, project } = await inspectWorkspace(router, folder);
+        requireWorkspaceMatch(binding);
         if (project.projectId !== pending.preview.canonical_task.project_id) throw Object.assign(new Error('ARTP project does not match the active workspace.'), { code: 'ARTP_WORKSPACE_MISMATCH' });
         await router.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
         const created = await router.createArtpTask(pending.descriptor, pending.preview, { draftId: pending.draftId, attachmentIds: pending.attachmentIds, idempotencyKey: pending.idempotencyKey, selection });
@@ -103,7 +120,11 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
       const taskInstruction = [objective, readOnly ? 'Read-only mode: do not create, modify, move, or delete files.' : '', activeFile ? `Active file: ${activeFile}` : '', selectedText ? `Selected text (user supplied):\n${selectedText}` : ''].filter(Boolean).join('\n\n');
       channel.clear(); channel.show(true); status.text = '$(sync~spin) AI Router: running'; notifyPanel({ type: 'progress', value: 'Routing task…' }); outputLine(channel, 'Workspace', folder.uri.fsPath); outputLine(channel, 'Mode', readOnly ? 'Read-only' : 'Standard'); outputLine(channel, 'Attached images', attachments.length); if (activeFile) outputLine(channel, 'Active file', activeFile); log('command.runTask', { workspace: folder.uri.fsPath, active_file: activeFile, read_only: readOnly, attachment_count: attachments.length, attachment_types: attachments.map(item => item.mime_type) });
       try {
-        const router = client(); const project = await router.ensureProject(folder.uri.fsPath, folder.name); await router.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
+        const router = client(); const { binding, project: registeredProject } = await inspectWorkspace(router, folder);
+        if (!readOnly) requireWorkspaceMatch(binding);
+        const project = registeredProject && binding.status === 'MATCH' ? registeredProject : await router.ensureProject(folder.uri.fsPath, folder.name);
+        if (!sameWorkspacePath(folder.uri.fsPath, project.workspacePath)) throw Object.assign(new Error('AI Router returned a different workspace path.'), { code: 'WORKSPACE_MISMATCH' });
+        await router.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
         const selection = { ...configuredSelection(), ...(overrideSelection ?? {}) }; const route = await router.explain(objective, selection, attachments); outputLine(channel, 'Selected resource', route.selected ?? route.error); if (!route.selected) throw Object.assign(new Error(route.error?.message || 'No eligible route.'), { code: route.error?.code });
         notifyPanel({ type: 'progress', value: attachments.length ? 'Uploading attached images securely…' : 'Creating task…' });
         const uploaded = [];
@@ -139,12 +160,13 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     const provider = { resolveWebviewView(view) {
       panel = view; view.webview.options = { enableScripts: true, localResourceRoots: [context.extensionUri] };
       const scriptUri = view.webview.asWebviewUri(vscodeApi.Uri.joinPath(context.extensionUri, 'webview.js')); const styleUri = view.webview.asWebviewUri(vscodeApi.Uri.joinPath(context.extensionUri, 'webview.css'));
-      view.webview.html = `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${view.webview.cspSource} data: blob:; style-src ${view.webview.cspSource}; script-src ${view.webview.cspSource};"><link rel="stylesheet" href="${styleUri}"></head><body><h3>AI Router</h3><div id="connection" class="status">Checking local service…</div><label>Instruction<textarea id="instruction" placeholder="Describe the coding task or paste ARTP/1"></textarea></label><section id="dropZone" class="drop-zone" aria-label="Image attachments"><div class="attachment-heading"><span>Visual references</span><button id="attach" class="secondary compact" type="button">Attach image</button></div><input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple hidden><div id="attachmentList" class="attachment-list"></div><small>PNG, JPEG or WebP · up to 4 images · 5 MB each · paste or drop supported</small></section><label>Routing mode<select id="routingMode"><option value="automatic">Automatic Routing</option><option value="manual">Manual Resource Selection</option></select></label><label>Profile<select id="profile"><option value="">Select a profile</option></select></label><label>Model<select id="model"><option value="">Provider default</option></select></label><label>Reasoning effort<select id="effort"><option value="">Provider default / Auto</option>${['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'ultracode'].map(value => `<option>${value}</option>`).join('')}</select></label><label class="check"><input id="readOnly" type="checkbox"> Read-only / no file changes</label><div class="row"><button id="run">Run Task</button><button id="explain" class="secondary">Explain Route</button><button id="preview" class="secondary">Preview ARTP</button><button id="executeArtp" hidden>Execute ARTP</button></div><div class="row"><button id="dashboard" class="secondary">Open Dashboard</button><button id="refresh" class="secondary">Refresh</button></div><h4>Status / result</h4><div id="result" class="status">Ready.</div><script src="${scriptUri}"></script></body></html>`;
-      view.webview.onDidReceiveMessage(async message => { log('webview.message', { type: message.type, attachment_count: Array.isArray(message.attachments) ? message.attachments.length : 0 }); if (message.type === 'dashboard') return vscodeApi.commands.executeCommand('aiRouter.openDashboard'); if (message.type === 'refresh') return vscodeApi.commands.executeCommand('aiRouter.refresh'); if (message.type === 'preview') return previewArtp(message.instruction, message.attachments ?? []); if (message.type === 'executeArtp') return executeArtp(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'explain') return explainRoute(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'run') return runTask(message.instruction, message.selection, Boolean(message.readOnly), message.attachments ?? []); log('webview.message.ignored', { type: String(message.type || 'missing') }); return null; });
+      view.webview.html = `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${view.webview.cspSource} data: blob:; style-src ${view.webview.cspSource}; script-src ${view.webview.cspSource};"><link rel="stylesheet" href="${styleUri}"></head><body><h3>AI Router</h3><div id="connection" class="status">Checking local service…</div><section id="workspaceStatus" class="workspace-status bad" aria-live="polite"><div>VS Code Folder:</div><code id="vscodeFolder">Checking…</code><div>AI Router Registered Workspace:</div><code id="registeredWorkspace">Checking…</code><div>Status: <strong id="workspaceMatch">WORKSPACE MISMATCH</strong></div></section><label>Instruction<textarea id="instruction" placeholder="Describe the coding task or paste ARTP/1"></textarea></label><section id="dropZone" class="drop-zone" aria-label="Image attachments"><div class="attachment-heading"><span>Visual references</span><button id="attach" class="secondary compact" type="button">Attach image</button></div><input id="fileInput" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple hidden><div id="attachmentList" class="attachment-list"></div><small>PNG, JPEG or WebP · up to 4 images · 5 MB each · paste or drop supported</small></section><label>Routing mode<select id="routingMode"><option value="automatic">Automatic Routing</option><option value="manual">Manual Resource Selection</option></select></label><label>Profile<select id="profile"><option value="">Select a profile</option></select></label><label>Model<select id="model"><option value="">Provider default</option></select></label><label>Reasoning effort<select id="effort"><option value="">Provider default / Auto</option>${['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'ultracode'].map(value => `<option>${value}</option>`).join('')}</select></label><label class="check"><input id="readOnly" type="checkbox"> Read-only / no file changes</label><div class="row"><button id="run">Run Task</button><button id="explain" class="secondary">Explain Route</button><button id="preview" class="secondary">Preview ARTP</button><button id="executeArtp" hidden>Execute ARTP</button></div><div class="row"><button id="dashboard" class="secondary">Open Dashboard</button><button id="refresh" class="secondary">Refresh</button></div><h4>Status / result</h4><div id="result" class="status">Ready.</div><script src="${scriptUri}"></script></body></html>`;
+      view.webview.onDidReceiveMessage(async message => { log('webview.message', { type: message.type, attachment_count: Array.isArray(message.attachments) ? message.attachments.length : 0 }); if (message.type === 'dashboard') return vscodeApi.commands.executeCommand('aiRouter.openDashboard'); if (message.type === 'ready' || message.type === 'refresh') return vscodeApi.commands.executeCommand('aiRouter.refresh'); if (message.type === 'preview') return previewArtp(message.instruction, message.attachments ?? []); if (message.type === 'executeArtp') return executeArtp(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'explain') return explainRoute(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'run') return runTask(message.instruction, message.selection, Boolean(message.readOnly), message.attachments ?? []); log('webview.message.ignored', { type: String(message.type || 'missing') }); return null; });
       log('webview.resolved'); refresh();
     } };
 
     context.subscriptions.push(vscodeApi.window.registerWebviewViewProvider('aiRouter.control', provider)); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.openDashboard', openDashboard)); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.explainRoute', () => explainRoute())); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.runTask', () => runTask())); context.subscriptions.push(vscodeApi.commands.registerCommand('aiRouter.refresh', refresh));
+    if (vscodeApi.workspace.onDidChangeWorkspaceFolders) context.subscriptions.push(vscodeApi.workspace.onDidChangeWorkspaceFolders(() => void loadResources()));
     log('extension.activated', { version: context.extension.packageJSON.version, endpoint: baseUrl() }); heartbeat(); const timer = setInterval(heartbeat, 45_000); context.subscriptions.push({ dispose: () => clearInterval(timer) });
     return { heartbeat, loadResources, refresh, openDashboard, explainRoute, runTask, previewArtp, provider, channel };
   };

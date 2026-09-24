@@ -1,4 +1,5 @@
 'use strict';
+const { sameWorkspacePath } = require('./workspace-context');
 
 class RouterError extends Error {
   constructor(message, code, status, details = null) { super(message); this.name = 'RouterError'; this.code = code; this.status = status; this.details = details; }
@@ -20,10 +21,13 @@ class RouterClient {
   get(path) { return this.request(path); }
   async post(path, body = {}) { if (!this.nonce) await this.get('/api/health'); return this.request(path, { method: 'POST', body: JSON.stringify(body) }); }
   async ensureProject(workspacePath, displayName) {
-    const projects = await this.get('/api/projects'); const normalized = workspacePath.toLowerCase().replaceAll('\\', '/');
-    const existing = projects.find((project) => project.workspacePath.toLowerCase().replaceAll('\\', '/') === normalized);
-    if (existing) return existing;
-    const result = await this.post('/api/projects/register', { path: workspacePath, display_name: displayName }); return result.project;
+    const projects = await this.get('/api/projects');
+    const matches = projects.filter(project => sameWorkspacePath(workspacePath, project.workspacePath));
+    if (matches.length > 1) throw new RouterError('Multiple AI Router projects use the open VS Code folder.', 'WORKSPACE_MISMATCH');
+    if (matches.length === 1) return matches[0];
+    const result = await this.post('/api/projects/register', { path: workspacePath, display_name: displayName });
+    if (!sameWorkspacePath(workspacePath, result.project?.workspacePath)) throw new RouterError('AI Router registered a different workspace path.', 'WORKSPACE_MISMATCH');
+    return result.project;
   }
   explain(objective, selection = {}, attachments = []) {
     const manual = selection.routing_mode === 'manual' || Boolean(selection.provider_id || selection.profile_id || selection.model_id || selection.execution_channel || selection.reasoning_effort);

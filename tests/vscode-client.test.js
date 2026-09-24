@@ -4,12 +4,24 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { RouterClient } = require('../interfaces/vscode/router-client.js');
-const { workspaceRelativeFile } = require('../interfaces/vscode/workspace-context.js');
+const { workspaceRelativeFile, sameWorkspacePath, workspaceBinding } = require('../interfaces/vscode/workspace-context.js');
 
 test('active editor context is accepted only for files inside the workspace', () => {
   assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'file', fsPath: 'D:\\Workspace\\PROJECTOS\\SND-YDB\\src\\main.js' }), 'src\\main.js');
   assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'file', fsPath: 'C:\\Users\\user\\Documents\\wholesale.html' }), null);
   assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'untitled', fsPath: 'D:\\Workspace\\draft.txt' }), null);
+});
+
+test('workspace binding compares full Windows paths, not project names', () => {
+  const registered = 'D:\\Workspace\\PROJECTOS\\SND-YDB';
+  const copy = 'D:\\PROJECTOS - Copy\\SND-YDB';
+  const projects = [{ projectId: 'snd-ydb', displayName: 'SND-YDB', workspacePath: registered }];
+  assert.equal(sameWorkspacePath('d:/ai-workspace/projectos/snd-ydb/', registered), true);
+  assert.equal(sameWorkspacePath(copy, registered), false);
+  assert.equal(sameWorkspacePath('SND-YDB', registered), false);
+  assert.deepEqual(workspaceBinding('d:/ai-workspace/projectos/snd-ydb/', projects).status, 'MATCH');
+  assert.deepEqual(workspaceBinding(copy, projects, 'snd-ydb'), { vscodePath: copy, registeredPath: registered, projectId: 'snd-ydb', status: 'WORKSPACE MISMATCH' });
+  assert.equal(workspaceBinding(copy, projects).registeredPath, null, 'same display name cannot identify a project');
 });
 
 test('VS Code client talks only to AI Router and verifies state-changing requests', async () => {
@@ -25,6 +37,15 @@ test('VS Code client talks only to AI Router and verifies state-changing request
   assert.equal(calls[1].options.headers.origin, 'http://127.0.0.1:43127'); assert.equal(calls[1].options.headers['x-ai-router-control'], 'nonce-1');
   const body = JSON.parse(calls[1].options.body); assert.equal(body.project_id, 'project-one'); assert.deepEqual(body.required_capabilities, ['coding']);
   assert.ok(body.action_policy.allowed.includes('modify_file')); assert.equal(body.action_policy.allowed.includes('delete_file'), false);
+});
+
+test('client reuses only an exact registered path and rejects a divergent registration', async () => {
+  const calls = [];
+  const existing = new RouterClient('http://127.0.0.1:43127', async (url) => { calls.push(url); return new Response(JSON.stringify([{ projectId: 'match', workspacePath: 'D:\\Workspace\\PROJECTOS\\SND-YDB' }]), { headers: { 'content-type': 'application/json' } }); });
+  assert.equal((await existing.ensureProject('d:/ai-workspace/projectos/snd-ydb/', 'SND-YDB')).projectId, 'match');
+  assert.equal(calls.length, 1);
+  const divergent = new RouterClient('http://127.0.0.1:43127', async (url) => new Response(JSON.stringify(url.endsWith('/api/projects') ? [] : { project: { projectId: 'wrong', workspacePath: 'D:\\Workspace\\PROJECTOS\\SND-YDB' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce' } }));
+  await assert.rejects(() => divergent.ensureProject('D:\\PROJECTOS - Copy\\SND-YDB', 'SND-YDB'), { code: 'WORKSPACE_MISMATCH' });
 });
 
 test('VS Code client reports router errors and never falls back to a provider endpoint', async () => {
@@ -136,7 +157,7 @@ test('extension activates, registers every command, and handles every webview ac
   };
   class FakeClient {
     async post() { return { status: 'ok' }; }
-    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY', blockers: [] }; return {}; }
+    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY', blockers: [] }; if (path === '/api/projects') return [{ projectId: 'snd-ydb', workspacePath: 'D:\\Workspace\\PROJECTOS\\SND-YDB' }]; return {}; }
     async explain() { return { selected: { provider_id: 'ollama', model_id: 'qwen' } }; }
     async ensureProject(workspacePath) { ensuredWorkspace = workspacePath; return { projectId: 'snd-ydb' }; }
     async createTask(_project, _objective, _instruction, _selection, options) { createOptions = options; return { descriptor: { task_id: 'read-only-task' } }; }
@@ -154,14 +175,61 @@ test('extension activates, registers every command, and handles every webview ac
   const webview = { cspSource: 'vscode-webview:', options: null, html: '', asWebviewUri: value => `webview:${value}`, postMessage(message) { messages.push(message); }, onDidReceiveMessage(handler) { messageHandler = handler; return disposable(); } };
   provider.resolveWebviewView({ webview }); await new Promise(resolve => setImmediate(resolve));
   assert.equal(webview.options.enableScripts, true); assert.match(webview.html, /Content-Security-Policy/); assert.match(webview.html, /webview\.js/); assert.match(webview.html, /readOnly/);
-  await messageHandler({ type: 'dashboard' }); await messageHandler({ type: 'refresh' }); await messageHandler({ type: 'explain', instruction: 'Inspect only', selection: {} }); await messageHandler({ type: 'run', instruction: 'Inspect only', selection: {}, readOnly: true });
+  assert.match(webview.html, /VS Code Folder:/); assert.match(webview.html, /AI Router Registered Workspace:/); assert.match(webview.html, /WORKSPACE MISMATCH/);
+  await messageHandler({ type: 'dashboard' }); await messageHandler({ type: 'ready' }); await messageHandler({ type: 'refresh' }); await messageHandler({ type: 'explain', instruction: 'Inspect only', selection: {} });
+  await messageHandler({ type: 'run', instruction: 'Create one file', selection: {}, readOnly: false }); assert.equal(createOptions.readOnly, false);
+  await messageHandler({ type: 'run', instruction: 'Inspect only', selection: {}, readOnly: true });
   await messageHandler({ type: 'preview', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
   await messageHandler({ type: 'run', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
-  assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, 'D:\\Workspace\\PROJECTOS\\SND-YDB'); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'task'));
+  assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, undefined); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'workspace' && item.status === 'MATCH' && item.registeredPath === 'D:\\Workspace\\PROJECTOS\\SND-YDB')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'task'));
   assert.ok(messages.some(item => item.type === 'task' && item.state === 'COMPLETED')); assert.ok(logs.some(line => line.includes('task.resume.response_lost')));
   assert.equal(messages.filter(item => item.type === 'artpPreview').length, 2); assert.equal(createOptions.readOnly, true);
   assert.ok(logs.some(line => line.includes('extension.activated'))); assert.ok(logs.some(line => line.includes('webview.message'))); assert.ok(logs.every(line => !line.includes('Inspect only')));
   for (const item of context.subscriptions) item.dispose?.(); void api;
+});
+
+test('a different registered workspace blocks writes but permits a read-only task with a warning', async () => {
+  const messages = []; const errors = []; let provider; let created = 0; let registered = 0;
+  const disposable = () => ({ dispose() {} });
+  const openPath = 'D:\\PROJECTOS - Copy\\SND-YDB';
+  const registeredPath = 'D:\\Workspace\\PROJECTOS\\SND-YDB';
+  const vscode = {
+    StatusBarAlignment: { Left: 1 }, Uri: { parse: value => value, joinPath: (...values) => values.join('/') },
+    env: { async openExternal() { return true; } },
+    commands: { registerCommand() { return disposable(); } },
+    workspace: { workspaceFolders: [{ name: 'SND-YDB', uri: { fsPath: openPath } }], getConfiguration() { return { get(_name, fallback) { return fallback; } }; } },
+    window: {
+      activeTextEditor: null, createOutputChannel() { return { appendLine() {}, clear() {}, show() {}, dispose() {} }; },
+      createStatusBarItem() { return { show() {}, dispose() {}, text: '' }; },
+      registerWebviewViewProvider(_id, value) { provider = value; return disposable(); },
+      showErrorMessage(message) { errors.push(message); }
+    }
+  };
+  class FakeClient {
+    async get(path) { if (path === '/api/projects') return [{ projectId: 'original', displayName: 'SND-YDB', workspacePath: registeredPath }]; if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY' }; return {}; }
+    async post() { return {}; }
+    async ensureProject(workspacePath) { registered += 1; return { projectId: 'copy', workspacePath }; }
+    async explain() { return { selected: { provider_id: 'ollama', profile_id: 'gemma4', model_id: 'gemma4:26b' } }; }
+    async createTask() { created += 1; return { descriptor: { task_id: 'read-only' } }; }
+    async resume() { return {}; }
+    async task() { return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Inspected.' }], workspace_changes: { changedFiles: [] } }; }
+  }
+  const Module = require('node:module'); const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) { if (request === 'vscode') return vscode; return originalLoad.call(this, request, parent, isMain); };
+  let createExtension;
+  try { ({ createExtension } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
+  const context = { subscriptions: [], extension: { packageJSON: { version: '0.6.0' }, id: 'ai-router-local.ai-router-vscode' }, extensionUri: 'extension-root', workspaceState: { get() { return 'original'; }, update() {} } };
+  const api = createExtension(vscode, FakeClient)(context);
+  try {
+    provider.resolveWebviewView({ webview: { cspSource: 'vscode-webview:', asWebviewUri: value => value, postMessage(message) { messages.push(message); }, onDidReceiveMessage() { return disposable(); } } });
+    await api.loadResources();
+    assert.ok(messages.some(item => item.type === 'workspace' && item.status === 'WORKSPACE MISMATCH' && item.vscodePath === openPath && item.registeredPath === registeredPath));
+    assert.equal(await api.runTask('Create a file'), null);
+    assert.equal(created, 0); assert.equal(registered, 0);
+    assert.ok(errors.some(item => item.includes('WORKSPACE_MISMATCH')));
+    await api.runTask('Inspect only', null, true);
+    assert.equal(created, 1); assert.equal(registered, 1);
+  } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });
 
 test('read-only tasks deny every file-changing action', async () => {
