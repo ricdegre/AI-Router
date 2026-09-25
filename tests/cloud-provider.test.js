@@ -31,7 +31,8 @@ test('OpenRouter validates credentials, discovers free and paid models, and runs
   const root = await temporaryDirectory(t, 'openrouter-'); const vault = new SecretStore(root, { protector: new TestProtector() }); let chatBody; const requests = [];
   const models = { data: [
     { id: 'qwen/free:free', name: 'Qwen Free', context_length: 32000, pricing: { prompt: '0', completion: '0' }, architecture: { input_modalities: ['text'], output_modalities: ['text'] }, supported_parameters: ['tools', 'response_format'] },
-    { id: 'vendor/paid', name: 'Paid', context_length: 128000, pricing: { prompt: '0.000001', completion: '0.000002' }, architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [] }
+    { id: 'vendor/paid', name: 'Paid', context_length: 128000, pricing: { prompt: '0.000001', completion: '0.000002' }, architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] }, supported_parameters: [] },
+    { id: 'vendor/image-fee:free', name: 'Image fee', pricing: { prompt: '0', completion: '0', image: '0.01' } }
   ] };
   const provider = new OpenRouterProvider({ secretStore: vault, fetch: async (url, options) => {
     requests.push({ url: String(url), method: options.method });
@@ -40,15 +41,21 @@ test('OpenRouter validates credentials, discovers free and paid models, and runs
     if (String(url).endsWith('/key')) return jsonResponse({ data: { usage: 2.5, usage_daily: 1.25, limit: 10, limit_remaining: 7.5, limit_reset: 'monthly', free_model_daily_requests: { limit: 50, remaining: 40, used: 10 } } });
     chatBody = JSON.parse(options.body); return jsonResponse({ model: chatBody.model, choices: [{ message: { content: 'OK' } }], usage: { prompt_tokens: 4, completion_tokens: 1 } });
   } });
-  const connected = await provider.connect({ profile_id: 'openrouter-main', credential: '  Bearer valid-key\r\n' }); assert.equal(connected.model_count, 2); assert.equal(connected.key_validated, true);
+  const connected = await provider.connect({ profile_id: 'openrouter-main', credential: '  Bearer valid-key\r\n' }); assert.equal(connected.model_count, 3); assert.equal(connected.key_validated, true);
   assert.deepEqual(requests.slice(0, 2), [
     { url: 'https://openrouter.ai/api/v1/key', method: 'GET' },
     { url: 'https://openrouter.ai/api/v1/models', method: 'GET' }
   ]);
   assert.equal(await vault.get('openrouter-main', 'openrouter-api-key'), 'valid-key');
   const discovered = await provider.discoverModels({ profile_id: 'openrouter-main' }); assert.equal(discovered[0].is_free, true); assert.equal(discovered[1].is_free, false); assert.equal(discovered[1].discovered_facts.vision, true);
+  assert.equal(discovered[0].discovered_facts.execution_channel, 'openrouter-free');
+  assert.equal(discovered[1].discovered_facts.execution_channel, 'openrouter-cloud');
+  assert.equal(discovered[2].is_free, false); assert.equal(discovered[2].discovered_facts.execution_channel, 'openrouter-cloud');
+  assert.equal(provider.descriptor.execution_channels.find((item) => item.id === 'openrouter-free').cost_category, 'FREE');
   const chat = await provider.testChat({ profile_id: 'openrouter-main', model: 'qwen/free:free', message: 'Reply only with OK', max_output_tokens: 8, timeout_ms: 5000 });
   assert.equal(chat.response, 'OK'); assert.equal(chatBody.model, 'qwen/free:free'); assert.equal('tools' in chatBody, false);
+  await assert.rejects(() => provider.testChat({ profile_id: 'openrouter-main', model: 'vendor/paid', message: 'OK', max_output_tokens: 8, inference: { execution_channel: 'openrouter-free' } }), { code: 'OPENROUTER_FREE_MODEL_UNAVAILABLE' });
+  await assert.rejects(() => provider.execute({ profile_id: 'openrouter-main', model: 'vendor/paid', inference: { execution_channel: 'openrouter-free' }, prompt: 'OK' }), { code: 'OPENROUTER_FREE_MODEL_UNAVAILABLE' });
   assert.deepEqual(await provider.usage({ profile_id: 'openrouter-main' }), { available: true, usage: 2.5, usage_daily: 1.25 });
   assert.deepEqual(await provider.limits({ profile_id: 'openrouter-main' }), { available: true, limit: 10, limit_remaining: 7.5, limit_reset: 'monthly', free_model_daily_requests: { limit: 50, remaining: 40, used: 10 } });
 });

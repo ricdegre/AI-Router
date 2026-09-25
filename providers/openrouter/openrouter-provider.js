@@ -18,12 +18,18 @@ function normalizeCredential(value) {
 
 export class OpenRouterProvider extends ProviderAdapter {
   constructor(options = {}) {
-    super({ id: 'openrouter', name: 'OpenRouter', type: 'gateway', strength_class: 'strong', capabilities: ['chat', 'coding', 'vision', 'long_context', 'metered_api', 'streaming', 'tool_use'], authentication_modes: ['api-key'], execution_channels: [{ id: 'openrouter-cloud', name: 'OpenRouter Cloud', cost_category: 'UNKNOWN', metered: true, input_modalities: ['text', 'image'] }], inference_controls: [] });
+    super({ id: 'openrouter', name: 'OpenRouter', type: 'gateway', strength_class: 'strong', capabilities: ['chat', 'coding', 'vision', 'long_context', 'metered_api', 'streaming', 'tool_use'], authentication_modes: ['api-key'], execution_channels: [{ id: 'openrouter-free', name: 'OpenRouter Free', cost_category: 'FREE', metered: false, input_modalities: ['text', 'image'] }, { id: 'openrouter-cloud', name: 'OpenRouter Cloud', cost_category: 'UNKNOWN', metered: true, input_modalities: ['text', 'image'] }], inference_controls: [] });
     this.baseUrl = new URL(options.baseUrl ?? 'https://openrouter.ai/api/v1/');
     this.fetch = options.fetch ?? globalThis.fetch; this.secretStore = options.secretStore;
     this.timeoutPolicy = validateProviderTimeouts(options.timeoutPolicy ?? {});
   }
-  imageTransport(channelId) { return { implemented: channelId === 'openrouter-cloud', mechanism: 'chat-completions-image-data-url' }; }
+  imageTransport(channelId) { return { implemented: channelId === 'openrouter-cloud' || channelId === 'openrouter-free', mechanism: 'chat-completions-image-data-url' }; }
+
+  async assertFreeModel(profileId, modelId) {
+    const models = await this.discoverModels({ profile_id: profileId });
+    const model = models.find((item) => item.model_id === modelId);
+    if (!model || !model.is_free) throw new ProviderError('The selected OpenRouter model is not currently verified free.', 'OPENROUTER_FREE_MODEL_UNAVAILABLE', { providerId: 'openrouter', failureCategory: 'execution_failure' });
+  }
 
   async key(profileId) {
     if (!profileId) throw new ProviderError('Connect a profile before discovering OpenRouter models.', 'PROFILE_CREDENTIAL_MISSING', { providerId: 'openrouter', failureCategory: 'authentication' });
@@ -48,14 +54,14 @@ export class OpenRouterProvider extends ProviderAdapter {
 
   modelDescriptor(model) {
     const promptPrice = price(model.pricing?.prompt), completionPrice = price(model.pricing?.completion);
-    const free = /:free$/i.test(model.id) || (promptPrice === 0 && completionPrice === 0);
+    const free = promptPrice === 0 && completionPrice === 0 && Object.values(model.pricing ?? {}).every((value) => price(value) === 0);
     const modalities = [...(model.architecture?.input_modalities ?? []), ...(model.architecture?.output_modalities ?? [])];
     const descriptor = createModelDescriptor({ providerId: 'openrouter', modelId: model.id, discovered: {
       display_name: model.name ?? model.id, family: model.architecture?.instruct_type ?? null, local: false,
       context_size: model.context_length ?? null, tool_support: model.supported_parameters?.includes('tools') ?? null,
       structured_output_support: model.supported_parameters?.includes('response_format') ?? null,
       vision: modalities.includes('image'), embedding: false, coding_suitability: null,
-      reasoning_support: model.supported_parameters?.includes('reasoning') ?? null, loaded: null, parameter_size: null, execution_channel: 'openrouter-cloud'
+      reasoning_support: model.supported_parameters?.includes('reasoning') ?? null, loaded: null, parameter_size: null, execution_channel: free ? 'openrouter-free' : 'openrouter-cloud'
     }, heuristics: { coding_suitability: /code|coder|devstral|codestral/i.test(`${model.id} ${model.name ?? ''}`) ? 'likely' : 'unknown' } });
     return { ...descriptor, is_free: free, pricing: { prompt: promptPrice, completion: completionPrice }, cost_category: free ? 'FREE' : 'METERED', provider_default_supported: false };
   }
@@ -89,11 +95,13 @@ export class OpenRouterProvider extends ProviderAdapter {
     return { available: Object.keys(values).length > 0, ...values };
   }
 
-  async testChat({ profile_id, model, message, max_output_tokens, timeout_ms }) {
+  async testChat({ profile_id, model, message, max_output_tokens, timeout_ms, inference }) {
+    if (inference?.execution_channel === 'openrouter-free') await this.assertFreeModel(profile_id, model);
     const started = performance.now(); const result = await this.request('chat/completions', { profile_id, method: 'POST', timeout_ms, operation: 'test_chat', body: { model, messages: [{ role: 'user', content: message }], max_tokens: max_output_tokens, tools: undefined } });
     return { status: 'connected', response: result.choices?.[0]?.message?.content ?? '', model: result.model ?? model, latency_ms: Math.round(performance.now() - started), usage_delta: result.usage ?? null };
   }
   async execute(request) {
+    if (request.inference?.execution_channel === 'openrouter-free') await this.assertFreeModel(request.profile_id ?? request.profile?.profile_id, request.model);
     let messages = request.messages ?? [{ role: 'user', content: request.structured_prompt ?? request.prompt ?? request.objective ?? '' }];
     if (request.attachments?.length) {
       const content = [{ type: 'text', text: request.structured_prompt ?? request.prompt ?? request.objective ?? '' }];

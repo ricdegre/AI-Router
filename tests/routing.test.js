@@ -6,6 +6,7 @@ import { EscalationPlan } from '../routing/escalation.js';
 import { MockProvider } from './mock-provider.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 import { createModelDescriptor } from '../providers/core/model-descriptor.js';
+import { OpenRouterProvider } from '../providers/openrouter/openrouter-provider.js';
 
 function profile(profileId, providerId, cost = 'local', overrides = {}) {
   const channel = ({ local: 'local', subscription: 'subscription', metered: 'metered', FREE: 'free', LOCAL: 'local', SUBSCRIPTION_INCLUDED: 'subscription' })[cost] ?? 'local';
@@ -95,6 +96,20 @@ test('a FREE model on a metered execution channel is still excluded when metered
   provider.descriptor.execution_channels = [{ id: 'gateway-channel', name: 'Gateway', cost_category: 'FREE', metered: true }]; registry.register(provider);
   const result = await new RoutingPolicy().explain({ required_capabilities: ['coding'], cost_policy: { allow_metered: false } }, registry, [profile('free-profile', 'gateway', 'FREE', { execution_channel: 'gateway-channel' })]);
   assert.equal(result.selected, null); assert.ok(result.evaluations[0].rejected.includes('metered-execution-channel-disallowed'));
+});
+
+test('real OpenRouter free channel routes manually without enabling metered fallback', async () => {
+  const provider = new OpenRouterProvider();
+  provider.health = async () => ({ status: 'healthy', reachable: true });
+  const registry = new ProviderRegistry(); registry.register(provider);
+  const freeModel = provider.modelDescriptor({ id: 'vendor/free:free', pricing: { prompt: '0', completion: '0' }, supported_parameters: [] });
+  const freeProfile = profile('openrouter-real', 'openrouter', 'FREE', { routing_classification: 'REAL', status: 'ready', selected_model_id: freeModel.model_id, execution_channel: 'openrouter-free', models: [freeModel] });
+  const selected = await new RoutingPolicy().explain({ objective: 'Read README.md only', required_capabilities: ['coding'], manual_provider: 'openrouter', manual_profile: freeProfile.profile_id, manual_model: freeModel.model_id, manual_execution_channel: 'openrouter-free' }, registry, [freeProfile]);
+  assert.equal(selected.selected?.profile_id, freeProfile.profile_id);
+  assert.equal(selected.selected?.cost_category, 'FREE');
+  const stale = await new RoutingPolicy().explain({ objective: 'Read README.md only', required_capabilities: ['coding'], manual_profile: freeProfile.profile_id }, registry, [{ ...freeProfile, execution_channel: 'openrouter-cloud' }]);
+  assert.equal(stale.selected, null);
+  assert.ok(stale.evaluations[0].rejected.includes('execution-channel-cost-mismatch'));
 });
 
 test('registered execution channel is authoritative for local, subscription, free, metered and unknown routes', async () => {
