@@ -8,15 +8,16 @@ const { workspaceRelativeFile, sameWorkspacePath, workspaceBinding } = require('
 const { taskSnapshot, trackTask } = require('../interfaces/vscode/task-tracking.js');
 const { selectCurrentTask } = require('../interfaces/vscode/current-task-selection.js');
 
-test('current task selects an active task, then the latest workspace task, never an older blocked task', () => {
+test('current task selects an active task or a terminal task from this session, not history', () => {
   const workspacePath = 'D:\\Workspace\\fixture';
   const item = (taskId, state, updated, path = workspacePath) => ({ descriptor: { task_id: taskId, project_id: 'fixture', created_at: updated, filesystem_scope: { workspace_path: path } }, state: { state, updated_at: updated } });
   const blocked = item('blocked-old', 'CREATED', '2026-09-24T08:00:00Z');
   const completed = item('completed-new', 'COMPLETED', '2026-09-24T09:00:00Z');
-  assert.equal(selectCurrentTask([blocked, completed], 'fixture', workspacePath).descriptor.task_id, 'completed-new');
+  assert.equal(selectCurrentTask([blocked, completed], 'fixture', workspacePath), null);
+  assert.equal(selectCurrentTask([blocked, completed], 'fixture', workspacePath, 'completed-new').descriptor.task_id, 'completed-new');
   const running = item('running-old', 'RUNNING', '2026-09-24T07:00:00Z');
   assert.equal(selectCurrentTask([blocked, completed, running], 'fixture', workspacePath).descriptor.task_id, 'running-old');
-  assert.equal(selectCurrentTask([blocked, completed, item('other-path', 'RUNNING', '2026-09-24T10:00:00Z', 'D:\\Workspace\\other')], 'fixture', workspacePath).descriptor.task_id, 'completed-new');
+  assert.equal(selectCurrentTask([blocked, completed, item('other-path', 'RUNNING', '2026-09-24T10:00:00Z', 'D:\\Workspace\\other')], 'fixture', workspacePath), null);
   assert.equal(selectCurrentTask([], 'fixture', workspacePath), null);
 });
 
@@ -27,6 +28,8 @@ test('task status reflects persisted progress and terminal outcomes', () => {
   assert.equal(taskSnapshot({ ...base, execution_plan: { current_step: 'ACTIONS' } }, { readOnly: false }).status, 'APPLYING_CHANGES');
   const completed = taskSnapshot({ ...base, state: { ...base.state, state: 'COMPLETED', updated_at: '2026-09-24T00:01:00Z' }, attempts: [{ provider_id: 'ollama', model_id: 'gemma4:26b', summary: 'Wholesale review complete.', validation: { passed: true } }] }, { taskId: 'task-1', readOnly: true });
   assert.equal(completed.status, 'COMPLETED'); assert.equal(completed.result, 'Wholesale review complete.'); assert.deepEqual(completed.changedFiles, []); assert.equal(completed.durationMs, 60000); assert.equal(completed.terminal, true);
+  const write = taskSnapshot({ ...base, state: { state: 'COMPLETED' }, workspace_changes: { changedFiles: ['?? USER_ACCEPTANCE_TEST.txt'] }, attempts: [{ execution_results: [{ status: 'completed', target: 'USER_ACCEPTANCE_TEST.txt' }] }] }, { taskId: 'write-1' });
+  assert.deepEqual(write.changedFiles, ['USER_ACCEPTANCE_TEST.txt']);
   assert.equal(taskSnapshot({ ...base, state: { state: 'FAILED' } }).status, 'FAILED');
   assert.equal(taskSnapshot({ ...base, state: { state: 'BLOCKED' } }).status, 'BLOCKED');
   assert.equal(taskSnapshot({ ...base, state: { state: 'FAILED' }, attempts: [{ validation: { passed: false } }] }).status, 'VALIDATION_FAILED');
@@ -43,6 +46,16 @@ test('blocked resume response is authoritative even when task state has not tran
   const detail = { state: { state: 'CREATED' }, attempts: [], resume: { recommendation: 'RESUMABLE', reasons: [] } };
   const outcome = await trackTask({ async resume() { return { status: 'blocked', explanation: { reasons: ['project-lock-active'] } }; }, async task() { return detail; } }, 'project', 'task', { resume: true, wait: async () => {} });
   assert.equal(outcome.status, 'BLOCKED'); assert.equal(outcome.persistedState, 'CREATED'); assert.match(outcome.error, /project-lock-active/);
+});
+
+test('failed resume response is visible immediately instead of leaving validation spinning', async () => {
+  const failure = Object.assign(new Error('The local control service could not complete the request.'), { code: 'CONTROL_INTERNAL_ERROR' });
+  const updates = [];
+  const result = await trackTask({ async resume() { throw failure; }, async task() { await Promise.resolve(); return { state: { state: 'WAITING_VALIDATION' }, attempts: [{ summary: 'Created file', validation: { status: 'PASSED', passed: true } }] }; } }, 'project', 'task', { resume: true, wait: async () => {}, onUpdate: snapshot => updates.push(snapshot) });
+  assert.equal(result.status, 'TRACKING_LOST');
+  assert.match(result.error, /CONTROL_INTERNAL_ERROR/);
+  assert.equal(result.persistedState, 'WAITING_VALIDATION');
+  assert.equal(updates.length, 1);
 });
 
 test('tracking window consults persisted state, keeps running tasks visible, and observes later completion', async () => {
@@ -228,7 +241,7 @@ test('extension activates, registers every command, and handles every webview ac
   const webview = { cspSource: 'vscode-webview:', options: null, html: '', asWebviewUri: value => `webview:${value}`, postMessage(message) { messages.push(message); }, onDidReceiveMessage(handler) { messageHandler = handler; return disposable(); } };
   provider.resolveWebviewView({ webview }); await new Promise(resolve => setImmediate(resolve));
   assert.equal(webview.options.enableScripts, true); assert.match(webview.html, /Content-Security-Policy/); assert.match(webview.html, /webview\.js/); assert.match(webview.html, /readOnly/);
-  assert.match(webview.html, /VS Code Folder:/); assert.match(webview.html, /AI Router Registered Workspace:/); assert.match(webview.html, /WORKSPACE MISMATCH/);
+  assert.match(webview.html, /VS Code Folder:/); assert.match(webview.html, /AI Router Registered Workspace:/); assert.match(webview.html, /CHECKING/);
   await messageHandler({ type: 'dashboard' }); await messageHandler({ type: 'ready' }); await messageHandler({ type: 'refresh' }); await messageHandler({ type: 'explain', instruction: 'Inspect only', selection: {} });
   await messageHandler({ type: 'run', instruction: 'Create one file', selection: {}, readOnly: false }); assert.equal(createOptions.readOnly, false);
   await messageHandler({ type: 'run', instruction: 'Inspect only', selection: {}, readOnly: true });
@@ -281,8 +294,8 @@ test('Focus Mode opens a central panel, closes noisy views, and shares sidebar t
     assert.deepEqual(builtins, ['workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel', 'workbench.action.closeAuxiliaryBar', 'workbench.action.closePanel']);
     await api.refresh();
     await sidebarHandler({ type: 'clearDraft' });
-    assert.ok(sidebarMessages.some(item => item.type === 'taskStatus' && item.task.result === 'Fixture result.'));
-    assert.ok(focusMessages.some(item => item.type === 'taskStatus' && item.task.result === 'Fixture result.'));
+    assert.equal(sidebarMessages.filter(item => item.type === 'taskStatus').at(-1).task.status, 'READY');
+    assert.equal(focusMessages.filter(item => item.type === 'taskStatus').at(-1).task.status, 'READY');
     assert.ok(focusMessages.some(item => item.type === 'workspace' && item.status === 'MATCH'));
     const source = await (await import('node:fs/promises')).readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8');
     assert.match(source, /document\.createElement\('details'\)/); assert.doesNotMatch(source, /advanced\.open\s*=/);
@@ -295,8 +308,45 @@ test('Focus Mode opens a central panel, closes noisy views, and shares sidebar t
     assert.match(source, /workspaceMatched = message\.status === 'MATCH'/); assert.match(source, /task\.result/);
     assert.match(source, /newTask\.textContent = 'New Task'/);
     assert.match(source, /instruction\.value = ''; attachments = \[\]; fileInput\.value = ''/);
+    assert.match(source, /renderTask\(\{ status: 'READY', taskId: null \}\); result\.textContent = ''/);
     assert.match(source, /vscode\.postMessage\(\{ type: 'clearDraft' \}\)/);
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
+});
+
+test('VS Code effort choices follow selected model metadata and discard unsupported previous effort', async () => {
+  const fs = await import('node:fs/promises');
+  const webview = await fs.readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8');
+  const extension = await fs.readFile(new URL('../interfaces/vscode/extension.js', import.meta.url), 'utf8');
+  assert.match(webview, /model\?\.discovered_facts\?\.supported_reasoning_efforts \|\| \[\]/);
+  assert.match(webview, /effort\.replaceChildren\(option\('', 'Provider default \/ Auto'\)\)/);
+  assert.match(webview, /supported\.includes\(preferredEffort\) \? preferredEffort : ''/);
+  assert.match(webview, /profiles\.addEventListener\('change', \(\) => fillModels\(\)\)/);
+  assert.match(webview, /models\.addEventListener\('change', \(\) => fillEfforts\(\)\)/);
+  assert.match(webview, /fillEfforts\(\); \}/);
+  assert.doesNotMatch(extension, /\['none', 'minimal', 'low', 'medium', 'high'/);
+});
+
+test('resource refresh and New Task retain the routing mode explicitly selected in Focus Mode', async () => {
+  const fs = await import('node:fs/promises');
+  const webview = await fs.readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8');
+  assert.match(webview, /let routingModeTouched = false/);
+  assert.match(webview, /routingModeTouched = true; updateRoutingMode\(\)/);
+  assert.match(webview, /if \(!routingModeTouched\) routingMode\.value = message\.selection\?\.routing_mode \|\| \(savedProfile \? 'manual' : 'automatic'\)/);
+  assert.doesNotMatch(webview, /routingMode\.value = savedProfile \? 'manual' : 'automatic'/);
+});
+
+test('Focus Mode replaces Creating task with a tracking error when execution persistence fails', async () => {
+  const fs = await import('node:fs/promises');
+  const webview = await fs.readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8');
+  assert.match(webview, /task\.status === 'TRACKING_LOST'\) result\.textContent = task\.error/);
+});
+
+test('Refresh clears its temporary status when reconciliation finishes without a task', async () => {
+  const fs = await import('node:fs/promises');
+  const webview = await fs.readFile(new URL('../interfaces/vscode/webview.js', import.meta.url), 'utf8');
+  const extension = await fs.readFile(new URL('../interfaces/vscode/extension.js', import.meta.url), 'utf8');
+  assert.match(extension, /notifyPanel\(\{ type: 'refreshDone' \}\)/);
+  assert.match(webview, /message\.type === 'refreshDone' && result\.textContent === 'Refreshing…'\) result\.textContent = ''/);
 });
 
 test('optional Focus Mode auto-open requires an exact registered workspace match', async () => {
@@ -373,7 +423,7 @@ test('a different registered workspace blocks writes but permits a read-only tas
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });
 
-test('webview reload replaces stale blocked task with latest completed result and returns READY when empty', async () => {
+test('cold start ignores terminal history, active task takes precedence, and New Task returns READY', async () => {
   const messages = []; let provider; let handler; let resumes = 0; let reads = 0; let tasks = []; const persisted = new Map();
   const disposable = () => ({ dispose() {} });
   const folderPath = 'D:\\Workspace\\fixture';
@@ -405,13 +455,25 @@ test('webview reload replaces stale blocked task with latest completed result an
     provider.resolveWebviewView({ webview: { cspSource: 'vscode-webview:', asWebviewUri: value => value, postMessage(message) { messages.push(message); }, onDidReceiveMessage(value) { handler = value; return disposable(); } } });
     await handler({ type: 'ready' });
     await new Promise(resolve => setImmediate(resolve));
-    assert.ok(reads >= 1); assert.equal(resumes, 0);
-    assert.ok(messages.some(item => item.type === 'taskStatus' && item.task.status === 'COMPLETED' && item.task.result === 'Recovered result.' && item.task.taskId === 'task-recover'));
+    assert.equal(reads, 0); assert.equal(resumes, 0);
+    assert.equal(messages.filter(item => item.type === 'taskStatus').at(-1).task.status, 'READY');
     assert.ok(!messages.some(item => item.type === 'taskStatus' && item.task.taskId === 'task-blocked-old'));
-    assert.equal(persisted.get('aiRouter.currentTask').taskId, 'task-recover');
+    assert.equal(persisted.get('aiRouter.currentTask'), null);
+    tasks.push({ descriptor: { project_id: 'fixture', task_id: 'task-active', created_at: '2026-09-24T07:00:00Z', filesystem_scope: { workspace_path: folderPath }, action_policy: { allowed: [] } }, state: { state: 'RUNNING', updated_at: '2026-09-24T07:00:00Z' } });
+    await api.refresh();
+    assert.equal(messages.filter(item => item.type === 'taskStatus').at(-1).task.taskId, 'task-active');
+    assert.equal(messages.filter(item => item.type === 'taskStatus').at(-1).task.status, 'COMPLETED');
+    assert.equal(persisted.get('aiRouter.currentTask').taskId, 'task-active');
+    tasks.at(-1).state.state = 'COMPLETED';
+    await handler({ type: 'clearDraft' });
+    assert.equal(messages.filter(item => item.type === 'taskStatus').at(-1).task.status, 'READY');
+    assert.equal(persisted.get('aiRouter.currentTask'), null);
+    await api.refresh();
+    assert.equal(messages.filter(item => item.type === 'taskStatus').at(-1).task.status, 'READY');
     tasks = [];
     await api.refresh();
-    assert.equal(messages.at(-1).task?.status, 'READY');
+    assert.equal(messages.filter(item => item.type === 'taskStatus').at(-1).task.status, 'READY');
+    assert.equal(messages.at(-1).type, 'refreshDone');
     assert.equal(persisted.get('aiRouter.currentTask'), null);
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });

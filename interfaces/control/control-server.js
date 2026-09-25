@@ -86,6 +86,11 @@ export function createControlServer({ api, host = '127.0.0.1', port = 43127, fin
       }
       throw new AiRouterError('Endpoint not found.', 'CONTROL_ENDPOINT_NOT_FOUND');
     } catch (error) {
+      if (!(error instanceof AiRouterError)) {
+        const frame = String(error?.stack ?? '').split('\n').slice(1).find((line) => /\.(?:js|mjs):\d+/.test(line))?.trim() ?? 'unknown';
+        const file = typeof error?.path === 'string' ? ` ${path.basename(error.path).replace(/[^A-Za-z0-9._-]/g, '')}` : '';
+        process.stderr.write(`[AI Router control error] ${String(error?.name ?? 'Error').replace(/[^A-Za-z]/g, '')} ${String(error?.code ?? '').replace(/[^A-Z0-9_]/g, '')}${file} ${frame}\n`);
+      }
       const safe = safeError(error); json(response, safe.status, safe.body);
     }
   });

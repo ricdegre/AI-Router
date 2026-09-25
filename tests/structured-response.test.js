@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createModelDescriptor, resolvedModelValue } from '../providers/core/model-descriptor.js';
 import { parseStructuredResponse } from '../providers/core/structured-response.js';
+import { buildStructuredTaskPrompt } from '../providers/core/task-prompt.js';
 
 const valid = {
   schema_version: '0.1', status: 'ok', summary: 'done', observations: [], proposed_actions: [],
@@ -31,6 +32,19 @@ test('plain text fallback is explicit and never marked valid', () => {
   assert.equal(parsed.fallback, true);
   assert.ok(parsed.response.uncertainty.length > 0);
   assert.throws(() => parseStructuredResponse('plain', { allowTextFallback: false }), { code: 'MALFORMED_STRUCTURED_RESPONSE' });
+});
+
+test('read-only worker prompt requires the actual requested answer in the visible summary', () => {
+  const prompt = buildStructuredTaskPrompt({ task_analysis: { write_mode: 'read_only' }, prompt: 'Read the numbers in the attached image.' });
+  assert.match(prompt, /Put the actual answer requested by the user in summary/);
+  assert.match(prompt, /including any exact names, numbers, or visual values requested/);
+  assert.match(prompt, /never replace the answer with a statement that you completed or transcribed it/);
+});
+
+test('write worker prompt distinguishes a complete action plan from unfinished work', () => {
+  const prompt = buildStructuredTaskPrompt({ task_analysis: { write_mode: 'write' }, prompt: 'Create one file.' });
+  assert.match(prompt, /If your proposed actions fully satisfy the requested change, use status "ok" with empty remaining_work/);
+  assert.match(prompt, /AI Router applies and validates those actions after your response/);
 });
 
 test('model descriptor keeps facts, overrides, and heuristics separate', () => {

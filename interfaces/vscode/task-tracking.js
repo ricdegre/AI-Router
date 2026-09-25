@@ -17,7 +17,8 @@ function taskSnapshot(detail, { taskId, projectId, readOnly = false, startedAt =
   const started = startedAt || detail?.state?.started_at || detail?.state?.created_at || null;
   const ended = blockedBeforeStart ? new Date().toISOString() : TERMINAL.has(state) ? detail?.state?.updated_at || new Date().toISOString() : null;
   const durationMs = started ? Math.max(0, Date.parse(ended || new Date().toISOString()) - Date.parse(started)) : null;
-  const changedFiles = readOnly ? [] : [...new Set([...(detail?.workspace_changes?.changedFiles ?? []), ...(detail?.attempts ?? []).flatMap(item => (item.execution_results ?? []).filter(result => result.status === 'completed' && result.target).map(result => result.target))])];
+  const gitChanged = (detail?.workspace_changes?.changedFiles ?? []).map(entry => /^[ MADRCU?!]{2} /.test(entry) ? entry.slice(3).split(' -> ').at(-1) : entry);
+  const changedFiles = readOnly ? [] : [...new Set([...gitChanged, ...(detail?.attempts ?? []).flatMap(item => (item.execution_results ?? []).filter(result => result.status === 'completed' && result.target).map(result => result.target))])];
   return { taskId, projectId, status, persistedState: state, stage, provider: attempt.provider_id ?? detail?.state?.provider_id ?? null, model: attempt.model_id ?? null, durationMs: Number.isFinite(durationMs) ? durationMs : null, validation: attempt.validation ?? null, changedFiles, result: attempt.result ?? attempt.structured_response ?? attempt.summary ?? null, error: blockedBeforeStart ? reason || 'Task could not start.' : attempt.failure_code ?? (['FAILED', 'BLOCKED'].includes(state) ? reason : null), terminal: TERMINAL.has(state) || blockedBeforeStart };
 }
 
@@ -35,6 +36,10 @@ async function trackTask(router, projectId, taskId, options = {}) {
       failures = 0;
       let snapshot = taskSnapshot(detail, { ...options, projectId, taskId, resumeOutcome });
       if (snapshot.terminal) { onUpdate(snapshot); return snapshot; }
+      if (resumeError) {
+        snapshot = { ...snapshot, status: 'TRACKING_LOST', stage: 'Execution stopped', error: `${resumeError.code || 'RESUME_FAILED'} — ${resumeError.message}`, terminal: false };
+        onUpdate(snapshot); return snapshot;
+      }
       if (now() - started >= (options.trackingWindowMs ?? 600_000)) {
         const executing = ['READY', 'ROUTING', 'RUNNING', 'WAITING_VALIDATION', 'ESCALATING'].includes(snapshot.persistedState);
         snapshot = { ...snapshot, status: executing ? 'STILL RUNNING' : 'TRACKING_LOST', error: executing ? null : resumeError?.message ?? 'Task has not reached an executing state.' };

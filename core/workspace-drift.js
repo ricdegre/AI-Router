@@ -17,7 +17,7 @@ function checkpointForTask(descriptor, checkpoints = []) {
   if (own.length) return own.at(-1);
   const createdAt = Date.parse(descriptor.created_at);
   if (!Number.isFinite(createdAt)) return checkpoints.at(-1) ?? null;
-  return checkpoints.filter((item) => !item.task_id && Number.isFinite(Date.parse(item.recordedAt)) && Date.parse(item.recordedAt) <= createdAt).at(-1) ?? null;
+  return checkpoints.filter((item) => Number.isFinite(Date.parse(item.recordedAt)) && Date.parse(item.recordedAt) <= createdAt).at(-1) ?? null;
 }
 
 export async function detectWorkspaceDrift({ descriptor, project, memory, attempts = [], pendingActions = [] }) {

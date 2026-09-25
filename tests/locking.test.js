@@ -4,7 +4,7 @@ import { readFile, writeFile, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { hostname } from 'node:os';
 import { acquireFileLock } from '../core/file-lock.js';
-import { readJson, updateJsonAtomic } from '../core/json-store.js';
+import { readJson, retryTransientFileError, updateJsonAtomic } from '../core/json-store.js';
 import { ProjectRegistry } from '../core/project-registry.js';
 import { temporaryDirectory } from './helpers.js';
 
@@ -52,6 +52,22 @@ test('concurrent JSON mutations preserve every update', async (t) => {
   assert.equal(new Set(result.writers).size, 25);
   const content = await readFile(target, 'utf8');
   assert.doesNotThrow(() => JSON.parse(content));
+});
+
+test('atomic JSON I/O retries transient Windows access errors but not persistent or unrelated errors', async () => {
+  const waits = []; let attempts = 0;
+  const result = await retryTransientFileError(async () => {
+    attempts += 1;
+    if (attempts < 3) throw Object.assign(new Error('temporarily locked'), { code: 'EPERM' });
+    return 'saved';
+  }, async ms => { waits.push(ms); });
+  assert.equal(result, 'saved'); assert.equal(attempts, 3); assert.deepEqual(waits, [25, 50]);
+  let denied = 0;
+  await assert.rejects(() => retryTransientFileError(async () => { denied += 1; throw Object.assign(new Error('denied'), { code: 'EACCES' }); }, async () => {}), { code: 'EACCES' });
+  assert.equal(denied, 4);
+  let unrelated = 0;
+  await assert.rejects(() => retryTransientFileError(async () => { unrelated += 1; throw Object.assign(new Error('full'), { code: 'ENOSPC' }); }, async () => {}), { code: 'ENOSPC' });
+  assert.equal(unrelated, 1);
 });
 
 test('concurrent project registrations do not lose records', async (t) => {

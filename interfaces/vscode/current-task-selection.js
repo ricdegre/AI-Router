@@ -4,7 +4,7 @@ const { sameWorkspacePath } = require('./workspace-context');
 
 const ACTIVE_STATES = new Set(['ROUTING', 'RUNNING', 'WAITING_VALIDATION', 'ESCALATING']);
 
-function selectCurrentTask(tasks, projectId, workspacePath) {
+function selectCurrentTask(tasks, projectId, workspacePath, sessionTaskId = null) {
   if (!Array.isArray(tasks)) throw new TypeError('AI Router task list is not an array.');
   const relevant = tasks.filter(item => item?.descriptor?.project_id === projectId
     && sameWorkspacePath(item.descriptor.filesystem_scope?.workspace_path, workspacePath)
@@ -14,7 +14,9 @@ function selectCurrentTask(tasks, projectId, workspacePath) {
     return time(right) - time(left) || String(right.descriptor.task_id).localeCompare(String(left.descriptor.task_id));
   };
   relevant.sort(newest);
-  return relevant.find(item => ACTIVE_STATES.has(item.state?.state)) ?? relevant[0] ?? null;
+  return relevant.find(item => ACTIVE_STATES.has(item.state?.state))
+    ?? relevant.find(item => sessionTaskId && item.descriptor.task_id === sessionTaskId)
+    ?? null;
 }
 
 module.exports = { selectCurrentTask };

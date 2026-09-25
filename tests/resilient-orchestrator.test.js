@@ -129,6 +129,17 @@ test('partial success creates a durable ready-for-handoff state', async (t) => {
   assert.deepEqual(handoff.remaining_work, ['Run second stage']);
 });
 
+test('partial response after a validated file creation reaches a terminal handoff', async (t) => {
+  const target = 'USER_ACCEPTANCE_TEST.txt';
+  const content = 'AI Router real user acceptance test\nStatus: PASS';
+  const setup = await fixture(t, [{ provider: 'mock-a', profile: 'profile-a', execute: async () => ({ structured: response('partial', 'Created the requested file.', [{ action_id: 'create-acceptance', type: 'create_file', target, parameters: { content } }], ['Confirm final outcome.']) }) }]);
+  const task = { project_id: setup.project.projectId, task_id: 'partial-write-01', objective: 'Create the acceptance file', preferred_profiles: ['profile-a'], required_capabilities: ['coding'], validation_requirements: [{ validation_id: 'exact-content', type: 'exact_content', target, expected: content }] };
+  const result = await setup.orchestrator.run(task, { maxAttempts: 1 });
+  assert.equal(result.status, 'ready-for-handoff');
+  assert.equal((await setup.dependencies.taskStore.get(setup.project.projectId, task.task_id)).state, 'BLOCKED');
+  assert.equal(await readFile(path.join(setup.workspace, target), 'utf8'), content);
+});
+
 test('write task with an edit intent cannot report completed when the provider proposes no actions', async (t) => {
   const setup = await fixture(t, [{ provider: 'mock-a', profile: 'profile-a', execute: async () => ({ structured: response('ok', 'No changes are needed.', []) }) }]);
   const task = { project_id: setup.project.projectId, task_id: 'no-actions-01', objective: 'Implement a requested file change', required_capabilities: ['coding'] };

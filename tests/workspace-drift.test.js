@@ -53,6 +53,9 @@ test('a new clean baseline applies only to tasks created afterward', async (t) =
   const pinned = await detectWorkspaceDrift({ ...base, descriptor: descriptor('pinned-task', '2026-01-04T00:00:00.000Z'), memory: { ...base.memory, checkpoints: [old, { ...old, task_id: 'pinned-task' }, current] } });
   assert.equal(pinned.checkpoint.commit, old.commit);
   assert.equal(pinned.classification, 'BLOCKING');
+  const afterPriorTask = await detectWorkspaceDrift({ ...base, descriptor: descriptor('next-task', '2026-01-04T00:00:00.000Z'), memory: { ...base.memory, checkpoints: [{ ...old, task_id: 'prior-task' }, { ...current, task_id: 'prior-task' }] } });
+  assert.equal(afterPriorTask.classification, 'SAFE');
+  assert.equal(afterPriorTask.checkpoint.commit, current.commit);
   const missing = await detectWorkspaceDrift({ ...base, descriptor: descriptor('too-early', '2025-12-31T00:00:00.000Z') });
   assert.ok(missing.reasons.includes('checkpoint-reference-unavailable'));
 });
