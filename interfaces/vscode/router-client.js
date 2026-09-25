@@ -34,6 +34,7 @@ class RouterClient {
     const query = new URLSearchParams({ objective, task_type: 'coding', risk: 'low', capability: 'coding', mode: manual ? 'manual' : 'automatic', read_only: selection.read_only ? 'true' : 'false' });
     if (attachments.length) { query.append('capability', 'vision'); query.set('attachment_count', String(attachments.length)); }
     if (selection.provider_id) query.set('provider', selection.provider_id); if (selection.profile_id) query.set('profile', selection.profile_id); if (selection.model_id) query.set('model', selection.model_id); if (selection.execution_channel) query.set('channel', selection.execution_channel); if (selection.reasoning_effort) query.set('effort', selection.reasoning_effort);
+    if (objective.length > 2_000) return this.post('/api/routing/explain', { ...Object.fromEntries(query), capability: query.getAll('capability') });
     return this.get(`/api/routing/explain?${query}`);
   }
   uploadAttachment(attachment, draftId = null) { return this.post('/api/attachments', { filename: attachment.filename, mime_type: attachment.mime_type, data_base64: attachment.data_base64, purpose: 'visual_reference', ...(draftId ? { draft_id: draftId } : {}) }); }

@@ -25,6 +25,22 @@ function cleanText(value, label, max = 4_000) {
   return value.trim();
 }
 
+function taskText(body) {
+  const rawObjective = body?.objective;
+  if (typeof rawObjective !== 'string' || !rawObjective.trim() || rawObjective.includes('\0')) throw new AiRouterError('Objective is invalid.', 'INVALID_CONTROL_INPUT');
+  if (rawObjective.length > 64_000) throw new AiRouterError('Objective exceeds 64000 characters.', 'INVALID_CONTROL_INPUT');
+  const rawInstruction = body?.instruction;
+  if (rawInstruction != null && (typeof rawInstruction !== 'string' || rawInstruction.includes('\0'))) throw new AiRouterError('Instruction is invalid.', 'INVALID_CONTROL_INPUT');
+  const fullObjective = rawObjective.trim();
+  const longObjective = fullObjective.length > 2_000;
+  const objective = longObjective ? fullObjective.split(/\r?\n/).find(line => line.trim()).trim().slice(0, 2_000) : fullObjective;
+  const instruction = longObjective
+    ? rawInstruction?.includes(fullObjective) ? rawInstruction : [fullObjective, rawInstruction].filter(Boolean).join('\n\n')
+    : rawInstruction ?? '';
+  if (instruction.length > 64_000) throw new AiRouterError('Instruction exceeds 64000 characters.', 'INVALID_CONTROL_INPUT');
+  return { objective, instruction };
+}
+
 function rejectSecretFields(value) {
   if (!value || typeof value !== 'object') return;
   for (const [key, child] of Object.entries(value)) { if (/(password|secret|api.?key|credential|^(?:access|refresh|auth|bearer)?_?token$)/i.test(key)) throw new AiRouterError('Secret fields are not accepted by the control API.', 'SENSITIVE_PROFILE_FIELD'); rejectSecretFields(child); }
@@ -183,8 +199,10 @@ export class ControlApi {
     const settings = await this.settingsStore.load();
     const capabilities = query.getAll('capability').filter(Boolean);
     const attachmentCount = Math.min(4, Math.max(0, Number.parseInt(query.get('attachment_count') || '0', 10) || 0));
+    const objective = query.get('objective') || '';
+    if (objective.length > 64_000 || objective.includes('\0')) throw new AiRouterError('Routing objective exceeds the supported input limit.', 'INVALID_CONTROL_INPUT');
     return this.services.routingPolicy.explain({
-      objective: (query.get('objective') || '').slice(0, 2_000), task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities, routing_mode: query.get('mode') || 'automatic', read_only: query.get('read_only') === 'true',
+      objective, task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities, routing_mode: query.get('mode') || 'automatic', read_only: query.get('read_only') === 'true',
       attachments: Array.from({ length: attachmentCount }, (_, index) => ({ type: 'image', attachment_id: `explain-${index + 1}` })),
       manual_provider: query.get('provider') || null, manual_profile: query.get('profile') || null, manual_model: query.get('model') || null, manual_execution_channel: query.get('channel') || null, manual_reasoning_effort: query.get('effort') || null,
       allow_metered: query.get('allow_metered') === 'true' && settings.allow_metered,
@@ -365,14 +383,23 @@ export class ControlApi {
       this.providerCache.at = 0; this.modelCache.clear();
       await this.services.auditLog.record('provider_state_changed', { provider_id: providerId, enabled }); return { provider_id: providerId, enabled };
     }
+    if (pathname === '/api/routing/explain') {
+      const query = new URLSearchParams();
+      for (const key of ['objective', 'task_type', 'risk', 'mode', 'read_only', 'attachment_count', 'provider', 'profile', 'model', 'channel', 'effort', 'allow_metered']) {
+        if (body?.[key] != null) query.set(key, String(body[key]));
+      }
+      for (const capability of Array.isArray(body?.capability) ? body.capability : body?.capability ? [body.capability] : []) query.append('capability', String(capability));
+      return this.routing(query);
+    }
     if (pathname === '/api/tasks') {
       const project = await this.services.projectRegistry.get(requiredId(body?.project_id, 'Project ID'));
       const taskId = body?.task_id ? requiredId(body.task_id, 'Task ID') : `task-${Date.now()}-${randomUUID().slice(0, 6)}`;
       const settings = await this.settingsStore.load();
+      const { objective, instruction } = taskText(body);
       const claimedAttachments = await this.services.attachmentStore.claim(Array.isArray(body?.attachment_ids) ? body.attachment_ids : [], project.projectId, taskId);
       try {
         const descriptor = descriptorFromTask({
-          project_id: project.projectId, task_id: taskId, objective: cleanText(body?.objective, 'Objective', 2_000), prompt: typeof body?.instruction === 'string' ? body.instruction.slice(0, 64_000) : '',
+          project_id: project.projectId, task_id: taskId, objective, prompt: instruction,
           task_type: body?.task_type ?? 'general', risk: body?.risk ?? 'low', required_capabilities: Array.isArray(body?.required_capabilities) ? body.required_capabilities : [], attachments: claimedAttachments,
           max_attempts: body?.max_attempts ?? settings.max_attempts, allow_metered: body?.allow_metered === true && settings.allow_metered,
           manual_provider: body?.provider_id ?? null, manual_profile: body?.profile_id ?? null, manual_model: body?.model_id ?? null, manual_execution_channel: body?.execution_channel ?? null, manual_reasoning_effort: body?.reasoning_effort ?? null,

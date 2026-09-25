@@ -179,6 +179,22 @@ test('VS Code client uploads images only to AI Router and marks visual tasks', a
   const body = JSON.parse(calls.at(-1).options.body); assert.deepEqual(body.required_capabilities, ['coding', 'vision']); assert.deepEqual(body.attachment_ids, ['att-one']); assert.deepEqual(body.context_policy.required_files, ['src/view.js']); assert.ok(calls.every(call => call.url.startsWith('http://127.0.0.1:43127/api/')));
 });
 
+test('VS Code routes a long Unicode instruction through the full-body local explain endpoint', async () => {
+  const calls = [];
+  const fetch = async (url, options = {}) => { calls.push({ url, options }); return new Response(JSON.stringify({ selected: { profile_id: 'claude' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce' } }); };
+  const client = new RouterClient('http://127.0.0.1:43127', fetch);
+  const fullPrompt = `SND/YDB — navegación Wholesale\n${'Preservar Catálogo mayorista, selección activa y bilingüismo.\n'.repeat(140)}`;
+  await client.explain(fullPrompt, { routing_mode: 'manual', provider_id: 'anthropic', profile_id: 'claude', model_id: 'opus', reasoning_effort: 'medium' }, [{ mime_type: 'image/png' }]);
+  const explainCall = calls.find(call => call.url.endsWith('/api/routing/explain'));
+  assert.ok(explainCall);
+  const body = JSON.parse(explainCall.options.body);
+  assert.equal(body.objective, fullPrompt);
+  assert.deepEqual(body.capability, ['coding', 'vision']);
+  assert.equal(body.attachment_count, '1');
+  assert.equal(body.mode, 'manual');
+  assert.equal(body.effort, 'medium');
+});
+
 test('packaged VS Code extension contributes a local-only activity panel and heartbeat', async () => {
   const fs = await import('node:fs/promises');
   const manifest = JSON.parse(await fs.readFile(new URL('../interfaces/vscode/package.json', import.meta.url), 'utf8'));
@@ -380,7 +396,7 @@ test('optional Focus Mode auto-open requires an exact registered workspace match
 });
 
 test('a different registered workspace blocks writes but permits a read-only task with a warning', async () => {
-  const messages = []; const errors = []; let provider; let created = 0; let registered = 0;
+  const messages = []; const errors = []; let provider; let created = 0; let registered = 0; let createdObjective; let createdInstruction; let explainedObjective;
   const disposable = () => ({ dispose() {} });
   const openPath = 'D:\\PROJECTOS - Copy\\SND-YDB';
   const registeredPath = 'D:\\Workspace\\PROJECTOS\\SND-YDB';
@@ -400,8 +416,8 @@ test('a different registered workspace blocks writes but permits a read-only tas
     async get(path) { if (path === '/api/projects') return [{ projectId: 'original', displayName: 'SND-YDB', workspacePath: registeredPath }]; if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY' }; return {}; }
     async post() { return {}; }
     async ensureProject(workspacePath) { registered += 1; return { projectId: 'copy', workspacePath }; }
-    async explain() { return { selected: { provider_id: 'ollama', profile_id: 'gemma4', model_id: 'gemma4:26b' } }; }
-    async createTask() { created += 1; return { descriptor: { task_id: 'read-only' } }; }
+    async explain(objective) { explainedObjective = objective; return { selected: { provider_id: 'ollama', profile_id: 'gemma4', model_id: 'gemma4:26b' } }; }
+    async createTask(_project, objective, instruction) { created += 1; createdObjective = objective; createdInstruction = instruction; return { descriptor: { task_id: 'read-only' } }; }
     async resume() { return {}; }
     async task() { return { state: { state: 'COMPLETED' }, attempts: [{ summary: 'Inspected.' }], workspace_changes: { changedFiles: [] } }; }
   }
@@ -420,6 +436,12 @@ test('a different registered workspace blocks writes but permits a read-only tas
     assert.ok(errors.some(item => item.includes('WORKSPACE_MISMATCH')));
     await api.runTask('Inspect only', null, true);
     assert.equal(created, 1); assert.equal(registered, 1);
+    const longPrompt = `SND/YDB — reorganiza el sidebar de Wholesale\n${'Preserva rutas, datos, permisos y traducciones ES/EN.\n'.repeat(110)}`;
+    await api.runTask(longPrompt, null, true);
+    assert.equal(created, 2);
+    assert.equal(explainedObjective, longPrompt);
+    assert.equal(createdObjective, 'SND/YDB — reorganiza el sidebar de Wholesale');
+    assert.ok(createdInstruction.startsWith(longPrompt));
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });
 

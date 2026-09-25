@@ -181,6 +181,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
       const folder = vscodeApi.workspace.workspaceFolders?.[0]; if (!folder) return vscodeApi.window.showErrorMessage('Open a workspace before running an AI Router task.');
       const objective = instruction || await vscodeApi.window.showInputBox({ prompt: 'Describe the coding change', ignoreFocusOut: true }); if (!objective) return null;
       if (objective.startsWith('ARTP/')) return previewArtp(objective, attachments);
+      const taskObjective = objective.split(/\r?\n/).find(line => line.trim())?.trim().slice(0, 2_000) || objective.trim().slice(0, 2_000);
       const editor = vscodeApi.window.activeTextEditor; const activeFile = editor ? workspaceRelativeFile(folder.uri.fsPath, editor.document.uri) : null;
       let selectedText = ''; if (activeFile && editor && vscodeApi.workspace.getConfiguration('aiRouter').get('includeSelection', true) && !editor.selection.isEmpty) selectedText = editor.document.getText(editor.selection);
       const taskInstruction = [objective, readOnly ? 'Read-only mode: do not create, modify, move, or delete files.' : '', activeFile ? `Active file: ${activeFile}` : '', selectedText ? `Selected text (user supplied):\n${selectedText}` : ''].filter(Boolean).join('\n\n');
@@ -195,7 +196,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
         notifyPanel({ type: 'progress', value: attachments.length ? 'Uploading attached images securely…' : 'Creating task…' });
         const uploaded = [];
         for (const attachment of attachments) uploaded.push(await router.uploadAttachment(attachment));
-        const created = await router.createTask(project.projectId, objective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id), requiredFiles: activeFile ? [activeFile] : [] }); taskId = created.descriptor.task_id;
+        const created = await router.createTask(project.projectId, taskObjective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id), requiredFiles: activeFile ? [activeFile] : [] }); taskId = created.descriptor.task_id;
         await rememberTask(project, taskId, readOnly);
         const outcome = await followTask(currentTask, true);
         log('command.runTask.tracking', { task_id: taskId, state: outcome?.status ?? 'TRACKING_LOST', changed_file_count: outcome?.changedFiles?.length ?? 0 });

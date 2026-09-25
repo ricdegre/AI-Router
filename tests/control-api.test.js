@@ -88,6 +88,44 @@ test('control API stages image bytes privately and audits only bounded metadata'
   const events = await services.auditLog.list({ task_id: 'visual-task' }); const serialized = JSON.stringify(events); assert.doesNotMatch(serialized, new RegExp(base64)); assert.doesNotMatch(serialized, /private-screen\.png/); assert.equal(events[0].attachment_count, 1);
 });
 
+test('long multilingual task instructions persist intact with an image in manual and automatic modes', async (t) => {
+  const { api, project, services } = await fixture(t);
+  const title = 'SND/YDB — MOVE WHOLESALE NAVIGATION INTO SIDEBAR SUBMENU';
+  const longPrompt = `${title}\n\nOBJETIVO:\nModificar navegación bilingüe ES / EN.\n${'Preservar rutas, permisos, selección activa y datos existentes.\n'.repeat(120)}\nNo hagas push.`;
+  assert.ok(longPrompt.length > 2_000);
+  const bytes = Buffer.alloc(24); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes); bytes.write('IHDR', 12, 'ascii'); bytes.writeUInt32BE(8, 16); bytes.writeUInt32BE(9, 20);
+  for (const [name, provider, profile] of [['claude', 'anthropic', 'claude'], ['openai', 'openai', 'chatgpt'], ['automatic', null, null]]) {
+    const staged = await api.handlePost('/api/attachments', { filename: 'usar-esta.png', mime_type: 'image/png', data_base64: bytes.toString('base64') });
+    const created = await api.handlePost('/api/tasks', { project_id: project.projectId, task_id: `long-${name}`, objective: longPrompt, instruction: `${longPrompt}\n\nActive file: app/sidebar.tsx`, required_capabilities: ['coding', 'vision'], attachment_ids: [staged.attachment_id], provider_id: provider, profile_id: profile });
+    assert.equal(created.descriptor.objective, title);
+    assert.equal(created.descriptor.execution_input.instruction, `${longPrompt}\n\nActive file: app/sidebar.tsx`);
+    assert.equal(created.descriptor.attachments.length, 1);
+    assert.equal(created.descriptor.manual_overrides.provider_id, provider);
+    assert.equal((await services.taskStore.get(project.projectId, `long-${name}`)).state, 'CREATED');
+  }
+  const textOnly = await api.handlePost('/api/tasks', { project_id: project.projectId, task_id: 'long-no-image', objective: longPrompt });
+  assert.equal(textOnly.descriptor.execution_input.instruction, longPrompt);
+  assert.deepEqual(textOnly.descriptor.attachments, []);
+  const short = await api.handlePost('/api/tasks', { project_id: project.projectId, task_id: 'traditional-short', objective: 'Inspect the sidebar' });
+  assert.equal(short.descriptor.objective, 'Inspect the sidebar');
+  assert.equal(short.descriptor.execution_input.instruction, '');
+  await assert.rejects(() => api.handlePost('/api/tasks', { project_id: project.projectId, objective: 'x'.repeat(64_001) }), { code: 'INVALID_CONTROL_INPUT', message: 'Objective exceeds 64000 characters.' });
+  await assert.rejects(() => api.handlePost('/api/tasks', { project_id: project.projectId, objective: title, instruction: 'x'.repeat(64_001) }), { code: 'INVALID_CONTROL_INPUT', message: 'Instruction exceeds 64000 characters.' });
+});
+
+test('routing explanation analyzes the same complete long prompt used for task creation', async (t) => {
+  const { api, project } = await fixture(t);
+  const objective = `Inspect the sidebar.\n${'Small local navigation detail.\n'.repeat(100)}\nAnaliza todo el proyecto.`;
+  assert.ok(objective.indexOf('Analiza todo el proyecto.') > 2_000);
+  const query = new URLSearchParams({ objective, task_type: 'coding', risk: 'low' });
+  const viaGet = await api.handleGet('/api/routing/explain', query);
+  const viaPost = await api.handlePost('/api/routing/explain', { objective, task_type: 'coding', risk: 'low' });
+  assert.deepEqual(viaPost.task_analysis, viaGet.task_analysis);
+  assert.equal(viaPost.task_analysis.scope, 'project');
+  const created = await api.handlePost('/api/tasks', { project_id: project.projectId, objective });
+  assert.equal(created.descriptor.execution_input.instruction, objective);
+});
+
 test('provider state and safe settings persist without secrets', async (t) => {
   const { api, dataRoot } = await fixture(t);
   await api.handlePost('/api/providers/local-test/disable', {});
