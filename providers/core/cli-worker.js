@@ -7,8 +7,76 @@ import { ProviderError, safeProviderError } from './protocol.js';
 import { resolveWithin } from '../../core/paths.js';
 
 const execFileAsync = promisify(execFile);
+const SUBSCRIPTION_PROVIDER_ENV = Object.freeze({
+  anthropic: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AWS_BASE_URL', 'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_BEDROCK_MANTLE_BASE_URL', 'ANTHROPIC_VERTEX_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_AWS_API_KEY', 'ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_SKIP_BEDROCK_AUTH', 'CLAUDE_CODE_SKIP_VERTEX_AUTH']
+});
+
+function workerEnvironment(providerId, source) {
+  const env = { ...source };
+  for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN']) delete env[name];
+  const removedProviderOverrides = [];
+  for (const name of SUBSCRIPTION_PROVIDER_ENV[providerId] ?? []) if (name in env) { removedProviderOverrides.push(name); delete env[name]; }
+  return { env, removedProviderOverrides };
+}
 
 function hasPathSeparator(value) { return value.includes('/') || value.includes('\\'); }
+
+function redactedDiagnostic(value) {
+  return String(value ?? '').replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/\bsk-(?:ant|proj|live)?-[A-Za-z0-9_-]{8,}\b/g, '[redacted-key]')
+    .replace(/\b(?:access|refresh|id)[_-]?token\s*[:=]\s*[^\s,;]+/gi, '[redacted-token]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted-email]')
+    .replace(/[\r\n\t]+/g, ' ').trim().slice(0, 700);
+}
+
+function summarizeArguments(args) {
+  const result = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = String(args[index]);
+    if (arg === '--model' || arg === '--effort' || arg === '--input-format' || arg === '--output-format') result.push(`${arg}=${String(args[index + 1] ?? '').slice(0, 80)}`);
+    else if (arg.startsWith('--')) result.push(arg);
+    else if (arg === '-p') result.push(arg);
+  }
+  return result;
+}
+
+function classifyCliFailure(value) {
+  const text = String(value ?? '');
+  const categories = [
+    ['oauth_refresh_lock', /(?:oauth|token).{0,80}(?:refresh|lock)|(?:refresh|lock).{0,80}(?:oauth|token)/i],
+    ['authentication', /(?:not authenticated|authentication failed|unauthorized|invalid (?:api )?key|login required|sign.?in required|token expired)/i],
+    ['rate_limited', /(?:rate limit|too many requests|\b429\b)/i],
+    ['quota_exhausted', /(?:usage limit|limit reached|out of extra usage|quota exceeded)/i],
+    ['model_unavailable', /(?:model.{0,40}(?:not found|unavailable|unsupported)|unknown model)/i],
+    ['context_too_large', /(?:context length|prompt.{0,30}too long|input.{0,30}too large|token limit)/i],
+    ['provider_overloaded', /(?:overloaded|capacity exceeded|\b529\b)/i],
+    ['network', /(?:connection error|network error|\b(?:dns|tls|socket)\b)/i],
+    ['invalid_cli_invocation', /(?:unknown (?:option|argument)|invalid flag|unexpected argument)/i]
+  ];
+  return categories.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
+}
+
+function summarizeStdout(value) {
+  const events = String(value ?? '').split(/\r?\n/).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+  const actualModel = events.findLast((event) => event.type === 'assistant' && typeof event.message?.model === 'string' && event.message.model !== '<synthetic>')?.message.model
+    ?? events.find((event) => event.type === 'system' && event.subtype === 'init' && typeof event.model === 'string')?.model ?? null;
+  const result = events.findLast((event) => event.type === 'result');
+  const diagnosticFields = [result?.error?.message, result?.error?.type, result?.error_code, result?.error_message, ...(Array.isArray(result?.errors) ? result.errors.map((item) => typeof item === 'string' ? item : item?.message) : [])].filter((item) => typeof item === 'string');
+  const failureText = [result?.result, ...diagnosticFields].filter((item) => typeof item === 'string').join(' ');
+  return {
+    event_types: [...new Set(events.map((event) => event.type).filter(Boolean))].slice(0, 12),
+    result_subtype: result?.subtype ?? null,
+    is_error: result?.is_error ?? null,
+    actual_model: actualModel,
+    failure_classification: classifyCliFailure(failureText),
+    error_type: typeof result?.error?.type === 'string' ? result.error.type.slice(0, 80) : null,
+    error_code: typeof result?.error_code === 'string' ? result.error_code.slice(0, 80) : null,
+    duration_ms: Number.isFinite(result?.duration_ms) ? result.duration_ms : null,
+    duration_api_ms: Number.isFinite(result?.duration_api_ms) ? result.duration_api_ms : null,
+    num_turns: Number.isFinite(result?.num_turns) ? result.num_turns : null,
+    permission_denial_count: Array.isArray(result?.permission_denials) ? result.permission_denials.length : null
+  };
+}
 
 export function executableCandidates(executable, env = process.env, platform = process.platform) {
   if (path.isAbsolute(executable) || hasPathSeparator(executable)) return [{ path: path.resolve(executable), source: 'configured' }];
@@ -43,8 +111,7 @@ export class CliWorker {
   async run(profileId, args, options = {}) {
     if (this.runOverride) return this.runOverride({ profileId, args, options });
     const cwd = this.workspace(profileId, options.purpose); await mkdir(cwd, { recursive: true, mode: 0o700 });
-    const env = { ...this.env };
-    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN']) delete env[name];
+    const { env } = workerEnvironment(this.providerId, this.env);
     const diagnostics = await this.diagnostics();
     if (!diagnostics.found) throw new ProviderError(`${this.executable} is not installed.`, 'PROVIDER_CLI_NOT_INSTALLED', { providerId: this.providerId, failureCategory: 'provider_unavailable', details: diagnostics });
     try {
@@ -60,8 +127,7 @@ export class CliWorker {
   async runStreaming(profileId, args, options = {}) {
     if (this.runOverride) return this.runOverride({ profileId, args, options });
     const cwd = this.workspace(profileId, options.purpose); await mkdir(cwd, { recursive: true, mode: 0o700 });
-    const env = { ...this.env };
-    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN']) delete env[name];
+    const { env, removedProviderOverrides } = workerEnvironment(this.providerId, this.env);
     const diagnostics = await this.diagnostics();
     if (!diagnostics.found) throw new ProviderError(`${this.executable} is not installed.`, 'PROVIDER_CLI_NOT_INSTALLED', { providerId: this.providerId, failureCategory: 'provider_unavailable', details: diagnostics });
     const policy = options.timeouts ?? { startup_ms: 30_000, first_token_ms: options.timeoutMs ?? 90_000, inactivity_ms: 60_000, overall_ms: options.timeoutMs ?? 180_000 };
@@ -101,7 +167,18 @@ export class CliWorker {
       child.once('exit', (exitCode, signal) => {
         if (settled) return; settled = true; cleanup();
         if (exitCode === 0) resolve({ stdout, stderr, exitCode: 0 });
-        else reject(new ProviderError(`${this.executable} command failed.`, 'PROVIDER_CLI_COMMAND_FAILED', { providerId: this.providerId, failureCategory: /auth|login|sign.in/i.test(`${stderr} ${stdout}`) ? 'authentication' : 'execution_failure', details: { exit_code: exitCode, signal: signal ?? null, diagnostic: String(stderr || stdout).slice(0, 500) } }));
+        else {
+          const stdoutSummary = summarizeStdout(stdout);
+          const failureText = `${stderr} ${stdout}`;
+          const failureCategory = classifyCliFailure(failureText) === 'authentication' || /auth|login|sign.in/i.test(failureText) ? 'authentication' : 'execution_failure';
+          reject(new ProviderError(`${this.executable} command failed.`, 'PROVIDER_CLI_COMMAND_FAILED', { providerId: this.providerId, failureCategory, details: {
+          exit_code: exitCode, signal: signal ?? null, executable: diagnostics.resolved_executable, cwd, process_id: child.pid ?? null,
+          arguments: summarizeArguments(args), claude_config_dir: env.CLAUDE_CONFIG_DIR ?? null,
+          provider_environment_overrides_removed: removedProviderOverrides,
+          api_key_environment: Object.fromEntries(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].map((name) => [name, env[name] ? 'present' : 'absent'])),
+          stderr_diagnostic: redactedDiagnostic(stderr), stdout_summary: stdoutSummary
+        } }));
+        }
       });
     });
   }

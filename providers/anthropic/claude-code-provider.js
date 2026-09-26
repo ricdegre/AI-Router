@@ -201,7 +201,17 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     try {
       result = await this.queueCommand(() => execute(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms, timeouts: request.execution_timeouts, signal: request.signal, ...(stdin ? { stdin } : {}), onOutput: ({ stream, chunk }) => { if (stream === 'stdout') recentOutput = `${recentOutput}${chunk}`.slice(-8192); } }));
     } catch (error) {
-      if (error.code === 'PROVIDER_CLI_COMMAND_FAILED' && oauthRefreshLocked(recentOutput)) throw new ProviderError('Claude Code OAuth refresh is locked by another or interrupted CLI process. Retry after the other process exits; sign-in is not yet known to be required.', 'CLAUDE_OAUTH_REFRESH_LOCKED', { providerId: this.descriptor.id, retryable: true, failureCategory: 'provider_unavailable', details: { exit_code: error.details?.exit_code ?? null } });
+      const stderr = error.details?.stderr_diagnostic ?? '';
+      const stdoutSummary = error.details?.stdout_summary ?? {};
+      const failureClass = stdoutSummary.failure_classification ?? null;
+      const failureEvidence = `${recentOutput}\n${stderr}\n${JSON.stringify(stdoutSummary)}`;
+      const actualModel = error.details?.stdout_summary?.actual_model ?? executedModel(recentOutput, null);
+      const details = { ...(error.details ?? {}), requested_model: request.model, actual_model: actualModel };
+      if (error.code === 'PROVIDER_CLI_COMMAND_FAILED' && (failureClass === 'oauth_refresh_lock' || oauthRefreshLocked(failureEvidence))) throw new ProviderError('Claude Code OAuth refresh is locked by another or interrupted CLI process. Retry after the other process exits; sign-in is not yet known to be required.', 'CLAUDE_OAUTH_REFRESH_LOCKED', { providerId: this.descriptor.id, retryable: true, failureCategory: 'provider_unavailable', details });
+      if (error.code === 'PROVIDER_CLI_COMMAND_FAILED' && (failureClass === 'rate_limited' || /rate limit|too many requests/i.test(failureEvidence))) throw new ProviderError('Claude Code subscription request was rate limited.', 'CLAUDE_RATE_LIMITED', { providerId: this.descriptor.id, retryable: true, failureCategory: 'rate_limited', details });
+      if (error.code === 'PROVIDER_CLI_COMMAND_FAILED' && (failureClass === 'quota_exhausted' || /usage limit|limit reached|out of extra usage/i.test(failureEvidence))) throw new ProviderError('Claude Code subscription usage is unavailable for this request.', 'CLAUDE_SUBSCRIPTION_LIMIT_REACHED', { providerId: this.descriptor.id, failureCategory: 'quota_exhausted', details });
+      if (error.code === 'PROVIDER_CLI_COMMAND_FAILED' && stdoutSummary.is_error === true) throw new ProviderError('Claude Code emitted a failed result and exited non-zero.', 'CLAUDE_EXECUTION_FAILED', { providerId: this.descriptor.id, failureCategory: 'execution_failure', details });
+      if (error.details) throw new ProviderError(error.message, error.code, { providerId: this.descriptor.id, retryable: error.retryable, failureCategory: error.failureCategory, details });
       throw error;
     }
     const envelope = parseEnvelope(result.stdout);

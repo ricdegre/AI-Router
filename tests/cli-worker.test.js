@@ -13,9 +13,9 @@ function childProcess(schedule, capture = {}) {
   return child;
 }
 
-async function worker(t, schedule, capture = {}) {
+async function worker(t, schedule, capture = {}, env = process.env) {
   const root = await temporaryDirectory(t);
-  const value = new CliWorker({ providerId: 'test', executable: 'fake', dataRoot: root, spawnProcess: (_command, _args, options) => { capture.options = options; return childProcess(schedule, capture); } });
+  const value = new CliWorker({ providerId: capture.providerId ?? 'test', executable: 'fake', dataRoot: root, env, spawnProcess: (_command, _args, options) => { capture.options = options; return childProcess(schedule, capture); } });
   value.resolvedExecutable = { path: 'fake', source: 'test' }; return value;
 }
 
@@ -41,4 +41,35 @@ test('streaming CLI distinguishes first-token, inactivity, and overall timeout',
 
   let interval; const active = await worker(t, { start(child) { interval = setInterval(() => child.stdout.write('.'), 8); }, stop() { clearInterval(interval); } });
   await assert.rejects(() => active.runStreaming('profile', [], { timeouts: { startup_ms: 20, first_token_ms: 20, inactivity_ms: 20, overall_ms: 45 } }), { code: 'PROVIDER_OVERALL_TIMEOUT' });
+});
+
+test('Claude subscription workers strip API keys and endpoint/provider overrides', async (t) => {
+  const capture = { providerId: 'anthropic' };
+  const runner = await worker(t, { start(child) { child.emit('exit', 0, null); } }, capture, {
+    ANTHROPIC_API_KEY: 'sk-ant-do-not-pass', ANTHROPIC_AUTH_TOKEN: 'must-not-pass', ANTHROPIC_BASE_URL: 'https://metered.example',
+    ANTHROPIC_AWS_API_KEY: 'also-credential', CLAUDE_CODE_USE_BEDROCK: '1', PATH: process.env.PATH
+  });
+  await runner.runStreaming('claude', ['-p', 'Reply OK'], { timeouts: { startup_ms: 100, first_token_ms: 100, inactivity_ms: 100, overall_ms: 500 } });
+  for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AWS_API_KEY', 'CLAUDE_CODE_USE_BEDROCK']) assert.equal(key in capture.options.env, false);
+});
+
+test('failed streaming CLI reports bounded redacted stderr and metadata without persisting prompt or credentials', async (t) => {
+  const capture = {};
+  const runner = await worker(t, { start(child) {
+    child.stdout.write('{"type":"system","subtype":"init","model":"claude-opus-5"}\n');
+    child.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Rate limit reached while processing private long user prompt', duration_ms: 1200, duration_api_ms: 900, num_turns: 2 })}\n`);
+    child.stderr.write('Bearer secret-token; API key sk-ant-sensitive12345; user test@example.com\n');
+    child.emit('exit', 1, null);
+  } }, capture);
+  await assert.rejects(() => runner.runStreaming('profile', ['-p', 'private long user prompt', '--model', 'opus', '--effort', 'medium'], { purpose: 'router-task', timeouts: { startup_ms: 100, first_token_ms: 100, inactivity_ms: 100, overall_ms: 500 } }), (error) => {
+    assert.equal(error.details.exit_code, 1); assert.equal(error.details.cwd.endsWith('router-task'), true);
+    assert.equal(error.details.stdout_summary.actual_model, 'claude-opus-5');
+    assert.equal(error.details.stdout_summary.failure_classification, 'rate_limited');
+    assert.equal(error.details.stdout_summary.duration_ms, 1200);
+    assert.ok(error.details.arguments.includes('--model=opus')); assert.ok(error.details.arguments.includes('--effort=medium'));
+    const serialized = JSON.stringify(error.details);
+    assert.doesNotMatch(serialized, /private long user prompt|secret-token|sk-ant-sensitive12345|test@example\.com/);
+    assert.match(error.details.stderr_diagnostic, /\[redacted\]/);
+    return true;
+  });
 });
