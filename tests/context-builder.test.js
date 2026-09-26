@@ -40,6 +40,22 @@ test('staged project inspection includes architecture files and excludes generat
   assert.ok(context.project_inspection.files_inspected >= 3); assert.ok(context.project_inspection.context_chars > 0);
 });
 
+test('project inspection prioritizes source paths named in the task objective over generic root files', async (t) => {
+  const base = await temporaryDirectory(t); const workspace = path.join(base, 'workspace'); const runtime = path.join(base, 'runtime');
+  await mkdir(path.join(workspace, 'app', 'admin'), { recursive: true });
+  await writeFile(path.join(workspace, 'README.md'), '# General project overview\n');
+  await writeFile(path.join(workspace, 'package.json'), '{"name":"generic-project"}');
+  await writeFile(path.join(workspace, 'next.config.ts'), 'export default {};');
+  await writeFile(path.join(workspace, 'app', 'admin', 'wholesale-workspace.tsx'), 'export const wholesaleNavigation = true;');
+  await writeFile(path.join(workspace, 'app', 'admin', 'wholesale-sidebar.css'), '.wholesale-sidebar { display: flex; }');
+  const { project } = await new ProjectRegistry(runtime).register(workspace); const memory = new MemoryManager(runtime); await memory.initialize(project);
+  const context = await new ContextBuilder(memory, { defaultBudgetChars: 12_000 }).build(project.projectId, { task_id: 'focus-files', objective: 'Move Wholesale navigation into a sidebar submenu' }, { workspacePath: workspace });
+  assert.ok(context.project_inspection.included_files.includes('app/admin/wholesale-workspace.tsx'));
+  assert.ok(context.project_inspection.included_files.includes('app/admin/wholesale-sidebar.css'));
+  assert.match(context.rendered, /wholesaleNavigation/);
+  assert.match(context.rendered, /wholesale-sidebar/);
+});
+
 test('visual task context combines workspace evidence with attachment metadata but no private source', async (t) => {
   const base = await temporaryDirectory(t); const workspace = path.join(base, 'workspace'); const runtime = path.join(base, 'runtime'); await mkdir(workspace); await writeFile(path.join(workspace, 'README.md'), '# Visual fixture\nBlue toolbar implementation.');
   const { project } = await new ProjectRegistry(runtime).register(workspace); const memory = new MemoryManager(runtime); await memory.initialize(project);

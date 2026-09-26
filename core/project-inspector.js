@@ -25,12 +25,14 @@ export function contextPathAllowed(relativePath, scope = {}) {
 function normalized(relativePath) { return relativePath.split(path.sep).join('/'); }
 function termsFor(task) { return String(`${task.objective ?? ''} ${task.prompt ?? ''}`).toLowerCase().split(/[^a-z0-9áéíóúñ_]+/u).filter((item) => item.length >= 4); }
 
-function scoreFile(file, terms) {
+function scoreFile(file, terms, focusTerms = new Set()) {
   let score = ROOT_KEY_FILES.test(file) ? 300 : KEY_FILES.test(file) ? 100 : 0;
   if (/^docs\/(?:00-indice|.*(?:architecture|arquitectura|handoff|overview|security)).*\.md$/i.test(file)) score += 180;
   if (/^(?:src|app|worker|server|core|db|docs)\//i.test(file)) score += 25;
   if (/(?:^|\/)(?:index|main|app|server|router|schema|architecture|overview|handoff)[.-]/i.test(file)) score += 30;
+  const pathTerms = new Set(file.toLowerCase().split(/[^a-z0-9áéíóúñ_]+/u).filter((term) => term.length >= 4));
   for (const term of terms) if (file.toLowerCase().includes(term)) score += 8;
+  for (const term of focusTerms) if (pathTerms.has(term)) score += 320;
   if (/\/tests?\//i.test(`/${file}`) || /^tests?\//i.test(file)) score -= 40;
   if (/^examples\//i.test(file)) score -= 50;
   return score;
@@ -64,7 +66,8 @@ export async function inspectProject(workspacePath, task = {}, options = {}) {
   const { excludedDirectories, excludedFiles } = found;
   const files = found.files.filter((file) => contextPathAllowed(file, options.scope));
   const terms = termsFor(task);
-  const ranked = files.filter((file) => !(options.excludeFiles ?? []).includes(file)).map((file) => ({ file, score: scoreFile(file, terms) })).sort((a, b) => b.score - a.score || a.file.localeCompare(b.file));
+  const focusTerms = new Set(String(task.objective ?? '').toLowerCase().split(/[^a-z0-9áéíóúñ_]+/u).filter((term) => term.length >= 4));
+  const ranked = files.filter((file) => !(options.excludeFiles ?? []).includes(file)).map((file) => ({ file, score: scoreFile(file, terms, focusTerms) })).sort((a, b) => b.score - a.score || a.file.localeCompare(b.file));
   const selected = ranked.slice(0, options.maxInspectedFiles ?? 24);
   const treeLimit = Math.min(3_500, Math.floor(budgetChars * 0.3));
   const tree = files.slice(0, 300).join('\n').slice(0, treeLimit);

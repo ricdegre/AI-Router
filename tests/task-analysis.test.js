@@ -27,6 +27,27 @@ test('a minimal read-only Git-status request does not inherit denied project-wid
   assert.equal(analyzeTask({ objective: 'No hagas commits. Analiza todo el proyecto.' }).required_capabilities.includes('long_context'), true);
 });
 
+test('a long write specification with many explicit sections requires strong execution', () => {
+  const sections = Array.from({ length: 8 }, (_, index) => `${index + 1}. Requirement ${index + 1}\n${'Preserve existing routes, localization, active selection, permissions, validation, security, and current data behavior. '.repeat(5)}\n`).join('\n');
+  const analysis = analyzeTask({ objective: `Implement a cross-cutting interface change.\n\n${sections}`, task_type: 'coding' });
+  assert.equal(analysis.write_mode, 'write_allowed');
+  assert.equal(analysis.complexity, 'high');
+  assert.equal(analysis.required_strength, 'strong');
+  const readOnly = analyzeTask({ objective: `Analyze the system without changing files.\n\n${sections}`, read_only: true });
+  assert.notEqual(readOnly.complexity, 'high');
+});
+
+test('a long Spanish navigation edit is not misclassified by preservation mentions of selection or architecture', () => {
+  const sections = Array.from({ length: 8 }, (_, index) => `${index + 1}. Requisito ${index + 1}\nPreservar rutas, selección activa, permisos, traducciones y arquitectura existente. ${'No tocar Productos y servicios ni datos no relacionados. '.repeat(10)}\n`).join('\n');
+  const analysis = analyzeTask({ objective: 'SND/YDB — MOVE WHOLESALE NAVIGATION INTO SIDEBAR SUBMENU', instruction: `Modificar la navegación de Wholesale y convertir Operaciones Wholesale en un submenu.\n\n${sections}`, task_type: 'coding', attachments: [{ type: 'image' }] });
+  assert.equal(analysis.intent, 'edit');
+  assert.equal(analysis.scope, 'feature');
+  assert.equal(analysis.write_mode, 'write_allowed');
+  assert.equal(analysis.complexity, 'high');
+  assert.equal(analysis.required_strength, 'strong');
+  assert.deepEqual(analysis.routing_capabilities, ['coding', 'vision']);
+});
+
 test('task analysis distinguishes a small writable selection from project work', () => {
   const analysis = analyzeTask({ objective: 'Change this selected CSS color', has_selection: true, task_type: 'coding' });
   assert.equal(analysis.intent, 'edit');
