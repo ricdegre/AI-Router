@@ -48,10 +48,31 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
 
   async inspect(profileId) {
     const timeoutMs = resolveProviderTimeout('connection_test', { provider: this.timeoutPolicy });
-    const account = await this.appServer.account({ profileId, timeoutMs });
+    const [accountResult, modelsResult, rateLimitsResult] = await Promise.allSettled([
+      this.appServer.account({ profileId, timeoutMs }),
+      this.appServer.models({ profileId, timeoutMs }),
+      this.appServer.rateLimits({ profileId, timeoutMs })
+    ]);
+    if (modelsResult.status === 'rejected') throw modelsResult.reason;
+    const models = modelRows(modelsResult.value);
+    let account = accountResult.status === 'fulfilled' ? accountResult.value : null;
+    let workspaceRoutingError = null;
+    if (accountResult.status === 'rejected') {
+      if (accountResult.reason?.code !== 'OPENAI_WORKSPACE_DISCOVERY_FAILED') throw accountResult.reason;
+      workspaceRoutingError = accountResult.reason;
+      const auth = await this.appServer.authStatus(profileId, timeoutMs);
+      if (auth.status === 'not-authenticated') throw new ProviderError('This profile is not signed in with ChatGPT.', 'OPENAI_CHATGPT_LOGIN_REQUIRED', { providerId: 'openai', failureCategory: 'authentication' });
+      if (auth.status !== 'authenticated') throw accountResult.reason;
+      account = { account: { type: 'chatgpt' }, requiresOpenaiAuth: false };
+    }
     if (!authenticated(account)) throw new ProviderError('This profile is not signed in with ChatGPT.', 'OPENAI_CHATGPT_LOGIN_REQUIRED', { providerId: 'openai', failureCategory: 'authentication' });
-    const [models, rateLimits] = await Promise.all([this.appServer.models({ profileId, timeoutMs }), this.appServer.rateLimits({ profileId, timeoutMs })]);
-    return { account: account.account, models: modelRows(models), rateLimits };
+    return {
+      account: account.account,
+      models,
+      rateLimits: rateLimitsResult.status === 'fulfilled' ? rateLimitsResult.value : null,
+      workspaceRoutingError,
+      rateLimitsError: rateLimitsResult.status === 'rejected' ? rateLimitsResult.reason : null
+    };
   }
 
   async connect({ profile_id, reconnect = false }) {
@@ -78,7 +99,15 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
 
   async health({ profile_id } = {}) {
     if (!profile_id) return { status: 'unknown', reachable: null, reason: 'profile-required' };
-    try { const result = await this.inspect(profile_id); return { status: 'healthy', reachable: true, model_count: result.models.length, plan_type: result.account.planType ?? null, auth_mode: 'chatgpt' }; }
+    try {
+      const result = await this.inspect(profile_id);
+      if (!result.models.length) return { status: 'unavailable', reachable: false, error_code: 'OPENAI_MODELS_UNAVAILABLE' };
+      return {
+        status: 'healthy', reachable: true, authenticated: true, model_count: result.models.length, plan_type: result.account.planType ?? null, auth_mode: 'chatgpt',
+        workspace_routing: result.workspaceRoutingError ? { status: 'unavailable', error_code: result.workspaceRoutingError.code, rpc_code: result.workspaceRoutingError.details?.rpc_code ?? null, rpc_message: result.workspaceRoutingError.details?.rpc_message ?? null } : { status: 'available' },
+        rate_limits_available: Boolean(result.rateLimits?.rateLimits || result.rateLimits?.rateLimitsByLimitId), rate_limits_error_code: result.rateLimitsError?.code ?? null
+      };
+    }
     catch (error) { return { status: 'unavailable', reachable: false, error_code: error.code }; }
   }
 
@@ -87,7 +116,10 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
     return result.models.filter((model) => !model.hidden).map((model) => createModelDescriptor({ providerId: 'openai', modelId: model.model ?? model.id, discovered: { display_name: model.displayName ?? model.model ?? model.id, family: model.family ?? null, local: false, context_size: model.contextWindow ?? null, tool_support: true, structured_output_support: true, vision: model.inputModalities?.includes('image') ?? null, embedding: false, coding_suitability: model.modelSpecialty === 'coding' ? 'high' : 'likely', reasoning_support: Array.isArray(model.supportedReasoningEfforts) && model.supportedReasoningEfforts.length > 0, loaded: null, parameter_size: null, execution_channel: 'codex-subscription', supported_reasoning_efforts: (model.supportedReasoningEfforts ?? []).map((item) => typeof item === 'string' ? item : item.reasoningEffort).filter(Boolean), default_reasoning_effort: model.defaultReasoningEffort ?? null, supported_reasoning_modes: [], default_reasoning_mode: null, latency_class: null, max_output_tokens: model.maxOutputTokens ?? null, quota_bucket: null } }));
   }
 
-  async limits({ profile_id } = {}) { const result = await this.inspect(profile_id); const safe = safeRateLimits(result.rateLimits); return { available: Boolean(safe?.rateLimits || safe?.rateLimitsByLimitId), ...(safe ?? {}) }; }
+  async limits({ profile_id } = {}) {
+    const result = await this.inspect(profile_id); const safe = safeRateLimits(result.rateLimits);
+    return { available: Boolean(safe?.rateLimits || safe?.rateLimitsByLimitId), ...(safe ?? {}), ...(result.rateLimitsError ? { error_code: result.rateLimitsError.code ?? 'OPENAI_RATE_LIMITS_UNAVAILABLE' } : {}) };
+  }
   async usage({ profile_id } = {}) { return this.limits({ profile_id }); }
 
   async testChat({ profile_id, model, message, max_output_tokens = 32, timeout_ms, inference = {} }) {
@@ -103,7 +135,7 @@ export class CodexSubscriptionProvider extends ProviderAdapter {
     const profileId = request.profile_id ?? request.profile?.profile_id;
     const prompt = request.structured_prompt ?? buildStructuredTaskPrompt(request);
     for (const attachment of request.attachments ?? []) await readVerifiedImage(attachment, this.descriptor.id);
-    return this.appServer.runTurn({ profileId, model: request.model, effort: request.inference?.reasoning_effort, prompt, attachments: request.attachments ?? [], outputSchema: request.format, timeoutMs: request.timeout_ms, timeoutPolicy: request.execution_timeouts, purpose: 'router-task' });
+    return this.appServer.runTurn({ profileId, model: request.model, effort: request.inference?.reasoning_effort, prompt, attachments: request.attachments ?? [], outputSchema: request.format, timeoutMs: request.timeout_ms, timeoutPolicy: request.execution_timeouts, purpose: 'router-task', workspacePath: request.workspace_path });
   }
 
   async executeStructured(request) {

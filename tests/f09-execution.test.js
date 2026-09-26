@@ -65,9 +65,10 @@ test('execution envelope separates semantics, destination, private image path an
   const context = { rendered: '## task\nInspect image', sections: [{ name: 'task', content: 'Inspect image', truncated: false }], budget_chars: 16_000, project_inspection: null };
   const task = { task_id: 'f09-envelope', project_id: 'fixture', objective: 'Inspect image', prompt: 'Describe visual arrangement', task_type: 'coding', risk: 'low', action_policy: { allowed: ['read_file'] }, filesystem_scope: { allowed_paths: ['src'], denied_paths: [] }, context_policy: { required_files: ['src/view.js'] }, validation_requirements: [{ validation_id: 'git-status', type: 'git_inspected' }] };
   const candidate = { provider_id: 'ollama', profile_id: 'local', model_id: 'visual-model', execution_channel: 'ollama-local', inference: { reasoning_effort: null } };
-  const envelope = createExecutionEnvelope({ task, analysis: { vision_required: true, write_mode: 'read_only' }, context, attachments: [attachment], candidate, timeoutMs: 30_000, executionTimeouts: {} });
+  const envelope = createExecutionEnvelope({ task, analysis: { vision_required: true, write_mode: 'read_only' }, context, attachments: [attachment], candidate, timeoutMs: 30_000, executionTimeouts: {}, workspacePath: 'D:\\registered\\workspace' });
   assert.equal(envelope.envelope_version, '0.1'); assert.equal(envelope.destination.model_id, 'visual-model');
   assert.equal(envelope.attachments[0].path, attachment.path); assert.equal(envelope.references.attachment_ids[0], attachment.attachment_id);
+  assert.equal(envelope.workspace_path, 'D:\\registered\\workspace');
   assert.deepEqual(envelope.effective_permissions.actions.allowed, ['read_file']);
   assert.equal(envelope.context_manifest.sections[0].truncated, false);
   assert.ok(!('task' in envelope) && !('project' in envelope));

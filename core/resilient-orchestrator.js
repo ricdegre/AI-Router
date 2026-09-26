@@ -18,6 +18,39 @@ function resourceKey(candidate) { return `${candidate.provider_id}:${candidate.p
 function readOnlyAnalysis(analysis) { return analysis?.write_mode === 'read_only'; }
 const WRITE_ACTIONS = new Set(['create_file', 'modify_file', 'append_file']);
 
+function safeProviderDiagnostic(error) {
+  const details = error?.details;
+  if (!details || typeof details !== 'object') return null;
+  const allowed = ['exit_code', 'signal', 'timeout_type', 'timeout_ms', 'executable', 'cwd', 'process_id', 'arguments', 'claude_config_dir', 'provider_environment_overrides_removed', 'api_key_environment', 'stderr_diagnostic', 'stdout_summary', 'rpc_code', 'rpc_message', 'cause_code', 'process_error_code', 'requested_model', 'actual_model'];
+  const result = Object.fromEntries(allowed.filter((key) => details[key] !== undefined).map((key) => [key, details[key]]));
+  for (const key of ['cause_code', 'process_error_code']) if (typeof result[key] !== 'string' || !/^[A-Z][A-Z0-9_]{0,79}$/.test(result[key])) delete result[key];
+  if (Array.isArray(result.arguments)) result.arguments = result.arguments.filter((item) => typeof item === 'string' && (/^--[a-z][a-z-]*$/i.test(item) || /^--(?:model|effort|input-format|output-format)=.{1,80}$/i.test(item) || item === '-p')).slice(0, 40);
+  if (Array.isArray(result.provider_environment_overrides_removed)) result.provider_environment_overrides_removed = result.provider_environment_overrides_removed.filter((name) => typeof name === 'string' && /^(?:ANTHROPIC|CLAUDE_CODE)_[A-Z0-9_]+$/.test(name)).slice(0, 32);
+  if (result.api_key_environment && typeof result.api_key_environment === 'object') result.api_key_environment = Object.fromEntries(Object.entries(result.api_key_environment).filter(([name, value]) => ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(name) && ['present', 'absent'].includes(value)));
+  if (result.stdout_summary && typeof result.stdout_summary === 'object') {
+    const summary = result.stdout_summary;
+    result.stdout_summary = {
+      event_types: Array.isArray(summary.event_types) ? summary.event_types.filter((item) => typeof item === 'string' && /^[A-Za-z][\w-]{0,40}$/.test(item)).slice(0, 12) : [],
+      result_subtype: typeof summary.result_subtype === 'string' ? summary.result_subtype.slice(0, 80) : null,
+      is_error: typeof summary.is_error === 'boolean' ? summary.is_error : null,
+      actual_model: typeof summary.actual_model === 'string' ? summary.actual_model.slice(0, 120) : null,
+      failure_classification: typeof summary.failure_classification === 'string' && /^[a-z_]{1,60}$/.test(summary.failure_classification) ? summary.failure_classification : null,
+      error_type: typeof summary.error_type === 'string' && /^[\w.-]{1,80}$/.test(summary.error_type) ? summary.error_type : null,
+      error_code: typeof summary.error_code === 'string' && /^[\w.-]{1,80}$/.test(summary.error_code) ? summary.error_code : null,
+      duration_ms: Number.isFinite(summary.duration_ms) ? summary.duration_ms : null,
+      duration_api_ms: Number.isFinite(summary.duration_api_ms) ? summary.duration_api_ms : null,
+      num_turns: Number.isSafeInteger(summary.num_turns) ? summary.num_turns : null,
+      permission_denial_count: Number.isSafeInteger(summary.permission_denial_count) ? summary.permission_denial_count : null
+    };
+  }
+  if (typeof result.stderr_diagnostic === 'string') result.stderr_diagnostic = result.stderr_diagnostic
+    .replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/\bsk-(?:ant|proj|live)?-[A-Za-z0-9_-]{8,}\b/g, '[redacted-key]')
+    .replace(/\b(?:access|refresh|id)[_-]?token\s*[:=]\s*[^\s,;]+/gi, '[redacted-token]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted-email]').slice(0, 700);
+  return Object.keys(result).length ? result : null;
+}
+
 async function verifyActionPostconditions(workspaceRoot, results) {
   const checks = [];
   for (const result of results.filter((item) => ['completed', 'skipped-duplicate', 'recovered'].includes(item.status) && WRITE_ACTIONS.has(item.type))) {
@@ -35,6 +68,13 @@ function failureFrom(error) {
   if (error.code === 'MALFORMED_STRUCTURED_RESPONSE' || error.code === 'INVALID_STRUCTURED_RESPONSE' || error.code === 'UNSUPPORTED_STRUCTURED_RESPONSE') return 'malformed_output';
   if (error.code === 'LOCK_TIMEOUT') return 'lock_contention';
   return error.failureCategory ?? 'execution_failure';
+}
+
+function blockedFailureCode(result) {
+  const text = [result?.summary, ...(result?.observations ?? []), ...(result?.remaining_work ?? []), ...(result?.uncertainty ?? [])].filter(Boolean).join('\n').toLowerCase();
+  if (/source code|source file|exact content|supplied context|missing (?:the )?(?:file|source|evidence)|need(?:s)? (?:the )?(?:file|source|evidence)|not (?:included|provided|available)|cannot inspect enough evidence/.test(text)) return 'CONTEXT_INSUFFICIENT';
+  if (/model (?:is |was )?(?:too weak|too small|insufficient)|insufficient model strength|not capable enough|model capacity/.test(text)) return 'INSUFFICIENT_MODEL_STRENGTH';
+  return 'PROVIDER_BLOCKED';
 }
 
 export class ResilientOrchestrator {
@@ -180,6 +220,7 @@ export class ResilientOrchestrator {
         let providerResult;
         let failureCategory = null;
         let failureCode = null;
+        let providerDiagnostic = null;
         try {
           const taskAnalysis = route.task_analysis ?? route.task?.task_analysis ?? null;
           const context = await this.contextBuilder.build(project.projectId, { ...task, task_analysis: taskAnalysis }, { workspacePath: project.workspacePath, providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
@@ -197,7 +238,7 @@ export class ResilientOrchestrator {
           }
           const timeoutMs = resolveProviderTimeout('inference', { global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
           const executionTimeouts = resolveExecutionTimeouts({ global: this.providerTimeouts, provider: provider.timeoutPolicy ?? provider.descriptor, profile, model: modelDescriptor, requested: task.execution_limits?.provider_timeout_ms });
-          const request = createExecutionEnvelope({ task, analysis: taskAnalysis, context, attachments, candidate, timeoutMs, executionTimeouts, signal: options.signal });
+          const request = createExecutionEnvelope({ task, analysis: taskAnalysis, context, attachments, candidate, timeoutMs, executionTimeouts, signal: options.signal, workspacePath: project.workspacePath });
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, ...executionEnvelopeAudit(request), attempt_context_manifest_hash: attemptManifest.hash, context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0, vision_required: taskAnalysis?.vision_required === true });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
@@ -213,6 +254,7 @@ export class ResilientOrchestrator {
           if (error.code === 'SIMULATED_CRASH') throw error;
           failureCategory = failureFrom(error);
           failureCode = error.code ?? 'PROVIDER_EXECUTION_FAILED';
+          providerDiagnostic = safeProviderDiagnostic(error);
         }
 
         const proposedActions = structured?.proposed_actions ?? [];
@@ -226,7 +268,7 @@ export class ResilientOrchestrator {
         if (!failureCategory && unfinishedWriteAttempt && JSON.stringify(proposedActions) !== JSON.stringify(unfinishedWriteAttempt.proposed_actions ?? [])) {
           failureCategory = 'recovery_failure'; failureCode = 'UNRESTORED_PLAN_CHANGED';
         }
-        if (!failureCategory && structured?.status === 'blocked') { failureCategory = 'provider_blocked'; failureCode = 'PROVIDER_BLOCKED'; }
+        if (!failureCategory && structured?.status === 'blocked') { failureCategory = 'provider_blocked'; failureCode = blockedFailureCode(structured); }
         if (!failureCategory && structured?.status === 'ok' && structured.remaining_work?.length) { failureCategory = 'provider_incomplete'; failureCode = 'REMAINING_WORK_REPORTED'; }
         if (!failureCategory && structured?.status === 'no_change_required' && (analysisOnly || !(task.validation_requirements ?? []).some((item) => item.type !== 'git_inspected'))) {
           failureCategory = 'no_change_unverified'; failureCode = 'NO_CHANGE_EVIDENCE_MISSING';
@@ -404,7 +446,7 @@ export class ResilientOrchestrator {
         await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {
           status: 'failed', proposed_actions: proposedActions, approved_actions: approvedActions,
           rejected_actions: rejectedActions, execution_results: executionResults, validation,
-          failure_category: failureCategory, failure_code: failureCode, summary: structured?.summary ?? failureCode,
+          failure_category: failureCategory, failure_code: failureCode, provider_diagnostic: providerDiagnostic, summary: structured?.summary ?? failureCode,
           escalation_decision: next ? 'escalate' : 'block', next_candidate: next
         });
         await this.circuitBreaker?.recordFailure(candidate.provider_id, candidate.profile_id, candidate.model_id, failureCategory);

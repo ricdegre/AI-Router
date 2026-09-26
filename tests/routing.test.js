@@ -36,6 +36,24 @@ test('routing skips unavailable and capability-incompatible providers', async ()
   assert.ok(result.evaluations.find((item) => item.provider_id === 'chat-only').rejected[0].startsWith('missing-capabilities'));
 });
 
+test('a detailed write specification routes only to strong resources and a workspace-discovery failure stays distinct from offline health', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(new MockProvider('small-local', { strength: 'standard' }));
+  registry.register(new MockProvider('strong-subscription', { strength: 'strong' }));
+  const openai = new MockProvider('chatgpt-subscription', { strength: 'strong' });
+  openai.health = async () => ({ status: 'unavailable', error_code: 'OPENAI_WORKSPACE_DISCOVERY_FAILED' });
+  registry.register(openai);
+  const sections = Array.from({ length: 8 }, (_, index) => `${index + 1}. Requirement ${index + 1}\n${'Preserve localization, routing, selection, permissions, behavior, and validation. '.repeat(5)}`).join('\n');
+  const automatic = await new RoutingPolicy().explain({ objective: `Implement a cross-cutting interface change.\n${sections}`, required_capabilities: ['coding'] }, registry, [
+    profile('weak-profile', 'small-local', 'local'), profile('strong-profile', 'strong-subscription', 'subscription'), profile('chatgpt-profile', 'chatgpt-subscription', 'subscription')
+  ]);
+  assert.equal(automatic.task_analysis.required_strength, 'strong');
+  assert.equal(automatic.selected.profile_id, 'strong-profile');
+  assert.ok(automatic.rejected_candidates.find((item) => item.profile_id === 'weak-profile').rejected.includes('strength-below-strong'));
+  const manual = await new RoutingPolicy().explain({ required_capabilities: ['coding'], manual_provider: 'chatgpt-subscription', manual_profile: 'chatgpt-profile' }, registry, [profile('chatgpt-profile', 'chatgpt-subscription', 'subscription')]);
+  assert.equal(manual.error.reason, 'provider-workspace-discovery-failed');
+});
+
 test('manual override is respected when compatible', async () => {
   const registry = new ProviderRegistry();
   registry.register(new MockProvider('provider-a'));

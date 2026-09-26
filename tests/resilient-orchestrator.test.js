@@ -235,14 +235,32 @@ test('dirty Git workspace policy blocks before provider execution', async (t) =>
 });
 
 test('provider blocked and unsupported no-change evidence never become COMPLETED', async (t) => {
-  const blocked = await fixture(t, [{ provider: 'blocked-provider', profile: 'blocked-profile', execute: async () => ({ structured: response('blocked', 'Cannot inspect enough evidence.') }) }]);
+  const blocked = await fixture(t, [{ provider: 'blocked-provider', profile: 'blocked-profile', execute: async () => ({ structured: { ...response('blocked', 'The screenshot does not contain the source code file.', [], ['Need the exact source file contents.']), uncertainty: ['The source code is not included in supplied context.'] } }) }]);
   const blockedTask = { project_id: blocked.project.projectId, task_id: 'provider-blocked-01', objective: 'Edit the file' };
   assert.equal((await blocked.orchestrator.run(blockedTask, { maxAttempts: 1 })).status, 'blocked');
-  assert.equal((await blocked.dependencies.attemptStore.list(blocked.project.projectId, blockedTask.task_id))[0].failure_code, 'PROVIDER_BLOCKED');
+  assert.equal((await blocked.dependencies.attemptStore.list(blocked.project.projectId, blockedTask.task_id))[0].failure_code, 'CONTEXT_INSUFFICIENT');
   const noChange = await fixture(t, [{ provider: 'nochange-provider', profile: 'nochange-profile', execute: async () => ({ structured: { ...response('no_change_required', 'Already done.'), observations: ['File already has the required value.'] } }) }]);
   const task = { project_id: noChange.project.projectId, task_id: 'nochange-unverified-01', objective: 'Edit status.txt' };
   assert.equal((await noChange.orchestrator.run(task, { maxAttempts: 1 })).status, 'blocked');
   assert.equal((await noChange.dependencies.attemptStore.list(noChange.project.projectId, task.task_id))[0].failure_code, 'NO_CHANGE_EVIDENCE_MISSING');
+});
+
+test('provider failure metadata is persisted with secret redaction but without raw stdout', async (t) => {
+  const setup = await fixture(t, [{ provider: 'diagnostic-provider', profile: 'diagnostic-profile', execute: async () => {
+    throw new ProviderError('CLI failed.', 'PROVIDER_CLI_COMMAND_FAILED', { details: { exit_code: 1, cause_code: 'OPENAI_APP_SERVER_BINARY_MISSING', process_error_code: 'ENOENT', stderr_diagnostic: 'Bearer hidden-secret; sk-ant-private12345', stdout_summary: { event_types: ['system', 'result'], actual_model: 'opus', result_subtype: 'error', failure_classification: 'provider_overloaded', duration_ms: 1200, permission_denial_count: 0, text: 'private task output must not be stored' }, requested_model: 'opus' } });
+  } }]);
+  const task = { project_id: setup.project.projectId, task_id: 'diagnostic-failure-01', objective: 'Diagnose provider metadata safely' };
+  await setup.orchestrator.run(task, { maxAttempts: 1 });
+  const attempt = (await setup.dependencies.attemptStore.list(setup.project.projectId, task.task_id))[0];
+  assert.equal(attempt.provider_diagnostic.exit_code, 1);
+  assert.equal(attempt.provider_diagnostic.cause_code, 'OPENAI_APP_SERVER_BINARY_MISSING');
+  assert.equal(attempt.provider_diagnostic.process_error_code, 'ENOENT');
+  assert.equal(attempt.provider_diagnostic.stdout_summary.actual_model, 'opus');
+  assert.equal(attempt.provider_diagnostic.stdout_summary.failure_classification, 'provider_overloaded');
+  assert.equal(attempt.provider_diagnostic.stdout_summary.duration_ms, 1200);
+  const serialized = JSON.stringify(attempt.provider_diagnostic);
+  assert.doesNotMatch(serialized, /hidden-secret|sk-ant-private12345|private task output/);
+  assert.match(attempt.provider_diagnostic.stderr_diagnostic, /\[redacted\]/);
 });
 
 test('verified no-change and write postconditions are distinct from unrequested validation', async (t) => {

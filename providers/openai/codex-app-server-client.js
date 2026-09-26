@@ -1,12 +1,39 @@
-import { spawn } from 'node:child_process';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdir, rm } from 'node:fs/promises';
+import { access, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { ProviderError, safeProviderError } from '../core/protocol.js';
+import { promisify } from 'node:util';
+import { ProviderError } from '../core/protocol.js';
 import { resolveWithin } from '../../core/paths.js';
 
 const SAFE_PROFILE = /^[a-z0-9][a-z0-9._-]{1,79}$/;
+const execFileAsync = promisify(execFileCallback);
+
+function safeStderr(value) {
+  return String(value ?? '').replace(/Bearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/g, '[redacted-key]')
+    .replace(/\b(?:access|refresh|id)[_-]?token\s*[:=]\s*[^\s,;]+/gi, '[redacted-token]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted-email]')
+    .replace(/[\r\n\t]+/g, ' ').trim().slice(-700);
+}
+
+export async function resolveCodexExecutable(executable, env = process.env, platform = process.platform) {
+  if (platform !== 'win32' || executable !== 'codex') return executable;
+  for (const directory of String(env.Path ?? env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(directory, 'codex.exe');
+    try { await access(candidate); return candidate; } catch { /* Try the next PATH entry. */ }
+  }
+  if (!env.LOCALAPPDATA) return executable;
+  const bin = path.join(env.LOCALAPPDATA, 'OpenAI', 'Codex', 'bin');
+  let installs;
+  try { installs = await readdir(bin, { withFileTypes: true }); } catch { return executable; }
+  const candidates = await Promise.all(installs.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    const candidate = path.join(bin, entry.name, 'codex.exe');
+    try { const info = await stat(candidate); return info.isFile() ? { candidate, modified: info.mtimeMs } : null; } catch { return null; }
+  }));
+  return candidates.filter(Boolean).sort((a, b) => b.modified - a.modified)[0]?.candidate ?? executable;
+}
 
 function appServerError(message, code = 'OPENAI_CODEX_APP_SERVER_ERROR', options = {}) {
   return new ProviderError(message, code, { providerId: 'openai', retryable: options.retryable ?? false, failureCategory: options.failureCategory ?? 'provider_unavailable', details: options.details });
@@ -15,29 +42,47 @@ function appServerError(message, code = 'OPENAI_CODEX_APP_SERVER_ERROR', options
 class AppServerSession extends EventEmitter {
   constructor({ executable, spawnProcess, codexHome }) {
     super(); this.executable = executable; this.spawnProcess = spawnProcess; this.codexHome = codexHome;
-    this.nextId = 1; this.pending = new Map(); this.buffer = ''; this.stderr = ''; this.child = null; this.starting = null;
+    this.nextId = 1; this.pending = new Map(); this.buffer = ''; this.stderr = ''; this.child = null; this.starting = null; this.startFailure = null; this.exitCode = null;
   }
 
   async start() {
-    if (this.child && !this.child.killed) return;
     if (this.starting) return this.starting;
+    if (this.child && !this.child.killed) return;
     this.starting = (async () => {
       await mkdir(this.codexHome, { recursive: true, mode: 0o700 });
       const env = { ...process.env, CODEX_HOME: this.codexHome };
       for (const name of ['CODEX_ACCESS_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_FEDERATION_RULE_ID', 'OPENAI_IDENTITY_TOKEN_FILE']) delete env[name];
-      const child = this.spawnProcess(this.executable, ['app-server', '--stdio'], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const executable = await resolveCodexExecutable(this.executable, env);
+      this.startFailure = null; this.exitCode = null;
+      // Keep App Server workspace discovery inside this profile's isolated home.
+      // Inheriting the router service's cwd can make account/read fail before any
+      // task thread is started, even though the profile's ChatGPT login is valid.
+      const child = this.spawnProcess(executable, ['app-server', '--stdio'], { cwd: this.codexHome, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       this.child = child;
       child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
       child.stdout.on('data', (chunk) => this.#read(chunk));
       child.stderr.on('data', (chunk) => { this.stderr = `${this.stderr}${chunk}`.slice(-4_000); });
-      child.on('error', (error) => this.#failAll(safeProviderError(error, 'openai')));
+      child.on('error', (error) => {
+        this.startFailure = { code: error.code ?? null, message: String(error.message ?? '').slice(0, 300) };
+        const code = error.code === 'ENOENT' ? 'OPENAI_APP_SERVER_BINARY_MISSING' : 'OPENAI_APP_SERVER_PROCESS_START_FAILED';
+        this.#failAll(appServerError('Codex App Server process could not start.', code, { retryable: true, details: { process_error_code: this.startFailure.code } }));
+      });
       child.on('exit', (exitCode) => {
+        this.exitCode = exitCode;
         this.child = null;
         this.#failAll(appServerError(`Codex App Server exited unexpectedly (exit ${exitCode}).`, 'OPENAI_CODEX_APP_SERVER_EXITED', { retryable: true }));
         this.emit('exit', exitCode);
       });
-      await this.request('initialize', { clientInfo: { name: 'ai-router', title: 'AI Router', version: '0.11.0' }, capabilities: { experimentalApi: true } }, 15_000, true);
-      this.send({ method: 'initialized', params: {} });
+      try {
+        await this.request('initialize', { clientInfo: { name: 'ai-router', title: 'AI Router', version: '0.11.0' }, capabilities: { experimentalApi: true } }, 15_000, true);
+        this.send({ method: 'initialized', params: {} });
+      } catch (error) {
+        if (this.child === child) this.child = null;
+        const initializationError = appServerError('Codex App Server initialization failed.', 'OPENAI_APP_SERVER_INITIALIZATION_FAILED', { retryable: true, details: { cause_code: error.code ?? null, cause_details: error.details ?? null, rpc_code: error.details?.rpc_code ?? null, rpc_message: error.details?.rpc_message ?? null, process_error_code: this.startFailure?.code ?? null, exit_code: this.exitCode, process_id: child.pid ?? null, command: `${executable} app-server --stdio`, cwd: this.codexHome, stderr_diagnostic: safeStderr(this.stderr) } });
+        this.#failAll(initializationError);
+        if (!child.killed) child.kill();
+        throw initializationError;
+      }
     })();
     try { await this.starting; } finally { this.starting = null; }
   }
@@ -68,7 +113,13 @@ class AppServerSession extends EventEmitter {
       let message; try { message = JSON.parse(line); } catch { continue; }
       if (message.id !== undefined && this.pending.has(message.id)) {
         const pending = this.pending.get(message.id); this.pending.delete(message.id); clearTimeout(pending.timer);
-        if (message.error) pending.reject(appServerError(`Codex App Server rejected ${pending.method}.`, 'OPENAI_CODEX_APP_SERVER_ERROR', { details: { rpc_code: message.error.code ?? null, rpc_message: String(message.error.message ?? '').slice(0, 300) } }));
+        if (message.error) {
+          const rpcMessage = String(message.error.message ?? '').slice(0, 300);
+          const code = pending.method === 'account/read' && /workspace routing discovery/i.test(rpcMessage)
+            ? 'OPENAI_WORKSPACE_DISCOVERY_FAILED'
+            : pending.method === 'model/list' ? 'OPENAI_MODEL_DISCOVERY_FAILED' : 'OPENAI_CODEX_APP_SERVER_ERROR';
+          pending.reject(appServerError(`Codex App Server rejected ${pending.method}.`, code, { details: { rpc_code: message.error.code ?? null, rpc_message: rpcMessage } }));
+        }
         else pending.resolve(message.result);
         continue;
       }
@@ -86,7 +137,7 @@ function usedTool(item) { return Boolean(item?.type && !['agentMessage', 'reason
 
 export class CodexAppServerClient {
   constructor(options = {}) {
-    this.dataRoot = path.resolve(options.dataRoot); this.executable = options.executable ?? 'codex'; this.spawn = options.spawn ?? spawn;
+    this.dataRoot = path.resolve(options.dataRoot); this.executable = options.executable ?? 'codex'; this.spawn = options.spawn ?? spawn; this.execFile = options.execFile ?? execFileAsync;
     this.sessions = new Map(); this.loginStates = new Map();
   }
 
@@ -108,7 +159,28 @@ export class CodexAppServerClient {
   }
 
   async call({ profileId, method, params = {}, timeoutMs = 15_000 }) { return this.session(profileId).request(method, params, timeoutMs); }
-  account(options) { return this.call({ ...options, method: 'account/read', params: { refreshToken: options.refreshToken ?? true } }); }
+  async account(options) {
+    for (let attempt = 0; ; attempt += 1) {
+      try { return await this.call({ ...options, method: 'account/read', params: { refreshToken: options.refreshToken ?? true } }); }
+      catch (error) {
+        if (attempt > 0 || error.code !== 'OPENAI_WORKSPACE_DISCOVERY_FAILED') throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  }
+  async authStatus(profileId, timeoutMs = 10_000) {
+    const codexHome = this.home(profileId);
+    const env = { ...process.env, CODEX_HOME: codexHome };
+    for (const name of ['CODEX_ACCESS_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_FEDERATION_RULE_ID', 'OPENAI_IDENTITY_TOKEN_FILE']) delete env[name];
+    try {
+      const executable = await resolveCodexExecutable(this.executable, env);
+      const result = await this.execFile(executable, ['login', 'status'], { cwd: codexHome, env, windowsHide: true, timeout: timeoutMs, maxBuffer: 16_384 });
+      const authenticated = /logged in using chatgpt/i.test(`${String(result.stdout ?? '')}\n${String(result.stderr ?? '')}`);
+      return { status: authenticated ? 'authenticated' : 'not-authenticated', auth_mode: authenticated ? 'chatgpt' : null };
+    } catch (error) {
+      return { status: error?.code === 'ETIMEDOUT' ? 'timeout' : 'unavailable', auth_mode: null, error_code: error?.code ?? null };
+    }
+  }
   models(options) { return this.call({ ...options, method: 'model/list', params: { includeHidden: false } }); }
   rateLimits(options) { return this.call({ ...options, method: 'account/rateLimits/read', params: { excludeResetCreditDetails: false, supportsLunaReserve: false } }); }
 
@@ -129,10 +201,19 @@ export class CodexAppServerClient {
     return { status: 'disconnected' };
   }
 
-  async runTurn({ profileId, model, effort = undefined, prompt, attachments = [], outputSchema = undefined, timeoutMs = 180_000, timeoutPolicy = undefined, purpose = 'task' }) {
+  async runTurn({ profileId, model, effort = undefined, prompt, attachments = [], outputSchema = undefined, timeoutMs = 180_000, timeoutPolicy = undefined, purpose = 'task', workspacePath = undefined }) {
     const session = this.session(profileId); await session.start();
     const policy = timeoutPolicy ?? { startup_ms: Math.min(timeoutMs, 30_000), first_token_ms: Math.min(timeoutMs, 90_000), inactivity_ms: Math.min(timeoutMs, 60_000), overall_ms: timeoutMs };
-    const cwd = resolveWithin(this.home(profileId), 'isolated-workspaces', purpose); await mkdir(cwd, { recursive: true, mode: 0o700 });
+    let cwd = resolveWithin(this.home(profileId), 'isolated-workspaces', purpose);
+    if (workspacePath !== undefined) {
+      try {
+        const canonicalWorkspace = await realpath(path.resolve(workspacePath));
+        if (!(await stat(canonicalWorkspace)).isDirectory()) throw new Error('not a directory');
+        cwd = canonicalWorkspace;
+      } catch {
+        throw appServerError('The registered workspace is unavailable to Codex App Server.', 'OPENAI_WORKSPACE_UNAVAILABLE', { details: { workspace_path: String(workspacePath).slice(0, 240) } });
+      }
+    } else await mkdir(cwd, { recursive: true, mode: 0o700 });
     const threadResult = await session.request('thread/start', { model, cwd, approvalPolicy: 'never', sandbox: 'read-only', serviceName: 'ai-router' }, policy.startup_ms);
     const threadId = threadResult?.thread?.id;
     if (!threadId) throw appServerError('Codex App Server did not return a thread ID.', 'OPENAI_CODEX_MALFORMED_RESPONSE');

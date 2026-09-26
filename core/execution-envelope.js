@@ -3,7 +3,7 @@ import { buildStructuredTaskPrompt } from '../providers/core/task-prompt.js';
 
 // Only this resolved, task-scoped object crosses the provider boundary. The
 // private attachment path is transient and is never included in audit metadata.
-export function createExecutionEnvelope({ task, analysis, context, attachments, candidate, timeoutMs, executionTimeouts, signal }) {
+export function createExecutionEnvelope({ task, analysis, context, attachments, candidate, timeoutMs, executionTimeouts, signal, workspacePath }) {
   const semantics = { task_id: task.task_id, project_id: task.project_id, objective: task.objective, instruction: task.prompt ?? '', task_type: task.task_type, risk: task.risk };
   const policy = { actions: task.action_policy ?? {}, cost: task.cost_policy ?? {}, provider_constraints: task.provider_constraints ?? {} };
   const scope = { allowed_paths: task.filesystem_scope?.allowed_paths ?? ['.'], denied_paths: task.filesystem_scope?.denied_paths ?? [] };
@@ -33,7 +33,7 @@ export function createExecutionEnvelope({ task, analysis, context, attachments, 
     // Compatibility projection for the existing adapters; no raw task/project/profile object.
     profile: { profile_id: candidate.profile_id }, profile_id: candidate.profile_id,
     model: candidate.model_id, inference: candidate.inference, prompt: semantics.instruction || context.rendered,
-    context: context.rendered, context_metadata: context.project_inspection,
+    context: context.rendered, context_metadata: context.project_inspection, workspace_path: workspacePath,
     signal, timeout_ms: candidate.inference?.timeout_ms ?? timeoutMs, execution_timeouts: executionTimeouts
   };
   envelope.structured_prompt = buildStructuredTaskPrompt(envelope);

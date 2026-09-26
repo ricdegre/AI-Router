@@ -13,10 +13,30 @@ import { ClaudeCodeProvider, claudeEffortsForModel, claudeVisionForModel, defaul
 import { createRuntimeServices } from '../core/runtime-services.js';
 import { temporaryDirectory } from './helpers.js';
 import { DecisionStateBuilder } from '../decision-engines/core/state-builder.js';
+import { CodexSubscriptionProvider } from '../providers/openai/codex-subscription-provider.js';
 
 function reasoningModel(providerId = 'openai') {
   return createModelDescriptor({ providerId, modelId: 'reasoner', discovered: { display_name: 'Reasoner', local: false, reasoning_support: true, execution_channel: 'subscription-worker', supported_reasoning_efforts: ['low', 'medium', 'high'], default_reasoning_effort: 'medium' } });
 }
+
+test('OpenAI remains routable when Codex 0.155 account/read workspace routing fails but local ChatGPT auth and model discovery succeed', async () => {
+  const provider = new CodexSubscriptionProvider({ appServer: {
+    account: async () => { throw new ProviderError('Codex account/read failed.', 'OPENAI_WORKSPACE_DISCOVERY_FAILED', { details: { rpc_code: -32603, rpc_message: 'workspace routing discovery failed' } }); },
+    authStatus: async () => ({ status: 'authenticated', auth_mode: 'chatgpt' }),
+    models: async () => ({ data: [{ model: 'gpt-5.6-sol', displayName: 'GPT-5.6-Sol' }] }),
+    rateLimits: async () => { throw new ProviderError('Codex rate limits unavailable.', 'OPENAI_CODEX_APP_SERVER_ERROR'); },
+    runTurn: async () => ({ output: 'OK', model: 'gpt-5.6-sol', tool_used: false })
+  } });
+  const health = await provider.health({ profile_id: 'chatgpt' });
+  assert.equal(health.status, 'healthy'); assert.equal(health.authenticated, true); assert.equal(health.workspace_routing.error_code, 'OPENAI_WORKSPACE_DISCOVERY_FAILED');
+  assert.equal(health.workspace_routing.rpc_code, -32603); assert.equal(health.rate_limits_available, false);
+  assert.deepEqual((await provider.discoverModels({ profile_id: 'chatgpt' })).map((model) => model.model_id), ['gpt-5.6-sol']);
+  const unauthenticated = new CodexSubscriptionProvider({ appServer: {
+    account: async () => { throw new ProviderError('discovery failed', 'OPENAI_WORKSPACE_DISCOVERY_FAILED'); },
+    authStatus: async () => ({ status: 'not-authenticated' }), models: async () => ({ data: [] }), rateLimits: async () => null
+  } });
+  assert.equal((await unauthenticated.health({ profile_id: 'chatgpt' })).error_code, 'OPENAI_CHATGPT_LOGIN_REQUIRED');
+});
 
 test('generic inference profiles accept supported effort and reject unsupported effort', () => {
   const model = reasoningModel();
@@ -150,6 +170,16 @@ test('Claude Code serializes CLI commands and reports OAuth refresh contention w
   await Promise.all([provider.runCommand('profile', ['--version'], {}), provider.runCommand('profile', ['auth', 'status'], {}), provider.runCommand('profile', ['-p', '/usage'], {})]);
   assert.equal(peak, 1);
   await assert.rejects(provider.testChat({ profile_id: 'profile', model: 'haiku', message: 'OK', max_output_tokens: 8 }), error => error.code === 'CLAUDE_OAUTH_REFRESH_LOCKED' && error.retryable === true && !JSON.stringify(error.details).includes('OAuth token'));
+});
+
+test('Claude execution distinguishes a structured CLI result failure from a generic command failure', async () => {
+  const worker = { runStreaming: async () => { throw new ProviderError('claude command failed.', 'PROVIDER_CLI_COMMAND_FAILED', { details: { exit_code: 1, stdout_summary: { result_subtype: 'error_during_execution', is_error: true, failure_classification: 'provider_overloaded', actual_model: 'claude-opus-5-5' } } }); } };
+  await assert.rejects(new ClaudeCodeProvider({ worker }).testChat({ profile_id: 'claude', model: 'opus', message: 'OK', max_output_tokens: 8 }), (error) => {
+    assert.equal(error.code, 'CLAUDE_EXECUTION_FAILED');
+    assert.equal(error.details.actual_model, 'claude-opus-5-5');
+    assert.equal(error.details.stdout_summary.failure_classification, 'provider_overloaded');
+    return true;
+  });
 });
 
 test('Claude Code reports the initialized model before unrelated model-usage entries', async () => {

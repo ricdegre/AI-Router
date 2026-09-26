@@ -141,7 +141,7 @@ export class RoutingPolicy {
         if (profile.status === 'unavailable') rejected.push('profile-unavailable');
         if (routingClassification !== 'REAL' && !explicitNonRealOverride) rejected.push(`non-production-profile:${routingClassification}`);
         if (explicitNonRealOverride) { reasons.push('explicit-non-production-profile-override'); warnings.push(`Manual override is using a ${routingClassification} profile; it is excluded from automatic production routing.`); }
-        if (health.status !== 'healthy') rejected.push(`provider-${health.status}`);
+        if (health.status !== 'healthy') rejected.push(health.error_code === 'OPENAI_WORKSPACE_DISCOVERY_FAILED' ? 'provider-workspace-discovery-failed' : `provider-${health.status}`);
         if (task.manual_provider && task.manual_provider !== provider.id) rejected.push('not-manual-provider');
         if (task.manual_profile && task.manual_profile !== profile.profile_id) rejected.push('not-manual-profile');
         if (task.manual_model && task.manual_model !== modelId) rejected.push('not-manual-model');
