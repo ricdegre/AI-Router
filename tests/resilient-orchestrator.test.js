@@ -387,3 +387,20 @@ test('missing or thrown validation fails closed and restores the write', async (
     });
   }
 });
+
+test('automatic routing stops or skips to the selected next candidate instead of re-routing a FAILED task', async (t) => {
+  const timeout = async () => { throw new ProviderError('hung', 'PROVIDER_INACTIVITY_TIMEOUT', { failureCategory: 'timeout' }); };
+  const sameProvider = await fixture(t, [{ provider: 'provider-a', profiles: ['profile-a1', 'profile-a2'], strength: 'strong', execute: timeout }]);
+  const blocked = await sameProvider.orchestrator.run({ project_id: sameProvider.project.projectId, task_id: 'same-provider-timeout-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', preferred_profiles: ['profile-a1', 'profile-a2'] }, { maxAttempts: 2 });
+  assert.equal(blocked.status, 'blocked');
+  assert.deepEqual((await sameProvider.dependencies.attemptStore.list(sameProvider.project.projectId, 'same-provider-timeout-01')).map((item) => item.profile_id), ['profile-a1']);
+  assert.equal((await sameProvider.dependencies.taskStore.get(sameProvider.project.projectId, 'same-provider-timeout-01')).state, 'BLOCKED');
+
+  const skipping = await fixture(t, [
+    { provider: 'provider-a', profiles: ['profile-a1', 'profile-a2'], strength: 'strong', execute: timeout },
+    { provider: 'provider-b', profile: 'profile-b', strength: 'strong', execute: async () => ({ structured: response('ok', 'Provider B completed the analysis.') }) }
+  ]);
+  const completed = await skipping.orchestrator.run({ project_id: skipping.project.projectId, task_id: 'skip-to-next-provider-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', preferred_profiles: ['profile-a1', 'profile-a2', 'profile-b'] }, { maxAttempts: 3 });
+  assert.equal(completed.status, 'completed');
+  assert.deepEqual((await skipping.dependencies.attemptStore.list(skipping.project.projectId, 'skip-to-next-provider-01')).map((item) => item.profile_id), ['profile-a1', 'profile-b']);
+});

@@ -198,13 +198,14 @@ export class ResilientOrchestrator {
       }
       await this.auditLog?.record('route_selected', { project_id: task.project_id, task_id: task.task_id, candidates: candidates.map((candidate) => ({ provider_id: candidate.provider_id, profile_id: candidate.profile_id, model_id: candidate.model_id, execution_channel: candidate.execution_channel, reasoning_effort: candidate.reasoning_effort })) });
 
-      for (let index = 0; index < candidates.length; index += 1) {
+      let startedAttempts = 0;
+      for (let index = 0; index < candidates.length; index += 1, startedAttempts += 1) {
         const candidate = candidates[index];
         const taskRecord = await this.taskStore.get(task.project_id, task.task_id);
         if (taskRecord.state === 'CANCELLED' || options.signal?.aborted) return { status: 'cancelled', route, attempts: await this.attemptStore.list(task.project_id, task.task_id) };
-        if (taskRecord.state !== 'ROUTING') await this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'next-attempt-routing', attempt: priorAttempts.length + index + 1 });
-        await this.taskStore.transition(task.project_id, task.task_id, 'RUNNING', { reason: 'attempt-started', attempt: priorAttempts.length + index + 1 });
-        const preCheckpoint = task.checkpoint_policy?.pre_attempt === false ? null : await this.checkpoint(project, task, priorAttempts.length + index + 1, 'pre-attempt');
+        if (taskRecord.state !== 'ROUTING') await this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'next-attempt-routing', attempt: priorAttempts.length + startedAttempts + 1 });
+        await this.taskStore.transition(task.project_id, task.task_id, 'RUNNING', { reason: 'attempt-started', attempt: priorAttempts.length + startedAttempts + 1 });
+        const preCheckpoint = task.checkpoint_policy?.pre_attempt === false ? null : await this.checkpoint(project, task, priorAttempts.length + startedAttempts + 1, 'pre-attempt');
         if (task.require_clean_workspace && preCheckpoint?.dirty) {
           await this.taskStore.transition(task.project_id, task.task_id, 'FAILED', { reason: 'dirty-workspace' });
           await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'dirty-workspace' });
@@ -470,6 +471,9 @@ export class ResilientOrchestrator {
           await this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'next-candidate', attempt: attempt.attempt_number + 1 });
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'escalation_receipt', { attempt_number: attempt.attempt_number, next_attempt: attempt.attempt_number + 1 });
         }
+        // Continue only with the escalation decision; a FAILED task must not re-route, and skipped candidates must not run.
+        if (!next) break;
+        index = candidates.indexOf(next) - 1;
       }
       const final = await this.taskStore.get(task.project_id, task.task_id);
       if (final.state === 'FAILED') await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'attempts-exhausted' });
