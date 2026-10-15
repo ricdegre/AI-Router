@@ -101,6 +101,14 @@ The source for the VS Code client is in `interfaces/vscode`. Launch it in an Ext
 
 AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
+## Author
+
+Created and maintained by **Richard R Degregorio** ([@ricdegre](https://github.com/ricdegre)).
+
 ## License
 
-MIT. Third-party code is not currently vendored. Future notices will be recorded in `THIRD_PARTY_LICENSES.md` and `ACKNOWLEDGEMENTS.md`.
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Richard R Degregorio.
+
+You may use, copy, modify, and distribute this software, including commercially, provided the copyright notice and license text are kept in all copies or substantial portions. The software is provided "as is", without warranty of any kind; see [LICENSE](LICENSE) for the full terms and liability disclaimer.
+
+AI Router connects to third-party services (for example Claude, ChatGPT/Codex, Gemini, OpenRouter, and Ollama). Use of those services is governed by their own terms, accounts, and limits, which remain the user's responsibility. Third-party code is not currently vendored. Future notices will be recorded in `THIRD_PARTY_LICENSES.md` and `ACKNOWLEDGEMENTS.md`.

@@ -5,6 +5,8 @@
   "version": "0.6.0",
   "publisher": "ai-router-local",
   "private": true,
+  "license": "MIT",
+  "author": "Richard R Degregorio (https://github.com/ricdegre)",
   "type": "commonjs",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
