@@ -94,3 +94,13 @@ test('diagnosis and whole-task no-write instructions stay read-only', () => {
     assert.equal(analysis.write_permission, 'denied');
   }
 });
+
+test('task analysis separates light edits, architecture redesigns, and incidental tests', () => {
+  assert.equal(analyzeTask({ objective: 'Corrige el typo en el título del README' }).complexity, 'low');
+  assert.equal(analyzeTask({ objective: 'Change the button border color' }).complexity, 'low');
+  const redesign = analyzeTask({ objective: 'Rediseña la arquitectura del sistema de autenticación' });
+  assert.equal(redesign.intent, 'architecture'); assert.equal(redesign.required_strength, 'strong');
+  const feature = analyzeTask({ objective: 'Agrega un endpoint REST para exportar tareas a CSV con tests' });
+  assert.equal(feature.intent, 'edit'); assert.equal(feature.complexity, 'medium');
+  assert.equal(analyzeTask({ objective: 'Write unit tests for the parser' }).intent, 'test');
+});

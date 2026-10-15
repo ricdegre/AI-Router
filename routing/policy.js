@@ -9,6 +9,7 @@ import { visionExecutionStatus } from '../providers/core/vision-transport.js';
 
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 const STRENGTH = { basic: 0, standard: 1, strong: 2 };
+const CAPACITY_TIER = { LOCAL: 0, FREE: 1, SUBSCRIPTION_INCLUDED: 2 };
 const EFFORT = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, ultra: 7, ultracode: 8 };
 
 function strongest(...values) {
@@ -56,6 +57,12 @@ function automaticOrder(task, a, b) {
   const strengthDistanceA = Math.max(0, (STRENGTH[a.strength_class] ?? 0) - requiredRank);
   const strengthDistanceB = Math.max(0, (STRENGTH[b.strength_class] ?? 0) - requiredRank);
   if (strengthDistanceA !== strengthDistanceB) return strengthDistanceA - strengthDistanceB;
+  // Light tasks conserve limited subscription quota: local and free capacity go first.
+  if (['trivial', 'low'].includes(task.task_analysis.complexity)) {
+    const tierA = CAPACITY_TIER[a.cost_category] ?? 3;
+    const tierB = CAPACITY_TIER[b.cost_category] ?? 3;
+    if (tierA !== tierB) return tierA - tierB;
+  }
   const desired = EFFORT[desiredEffort(task.task_analysis.complexity)] ?? 3;
   const effortDistanceA = a.reasoning_effort == null ? 1 : Math.abs((EFFORT[a.reasoning_effort] ?? desired) - desired);
   const effortDistanceB = b.reasoning_effort == null ? 1 : Math.abs((EFFORT[b.reasoning_effort] ?? desired) - desired);

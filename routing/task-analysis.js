@@ -20,14 +20,20 @@ function affirmativeOperationText(text) {
     .replace(/(?:^|[.;!?\n])[^\S\r\n]*(?:no|nunca|do not|don't|never|without|sin)[^\S\r\n]+(?:[^\s.;!?\n]+[^\S\r\n]+){0,4}(?:modific\w*|cambi\w*|edit\w*|creat\w*|cre\w*|implement\w*|agreg\w*|a[nñ]ad\w*|quit\w*|elimin\w*|retir\w*|mov\w*|traslad\w*|convert\w*|reorganiz\w*|refactor\w*|chang\w*|updat\w*|writ\w*|toc\w*|touch\w*)[^.;!?\n]*/giu, ' ');
 }
 
+// Small, presentation-only edits that a light model handles well.
+const COSMETIC_PATTERNS = [/\b(?:colou?r|background|fondo|font|fuente|tipograf\w*|padding|margin|margen|spacing|espaciad\w*|typo|errata|ortograf\w*|rename|renombr\w*|label|etiqueta|t[ií]tulo|title|icon|[ií]cono|css|estilos?|styles?|wording|copy|texto del|text of|alineaci[oó]n|align\w*|border|borde)\b/];
+const ARCHITECTURE_ACTION = /(?:redise[ñn]\w*|re-?design\w*|diseñ\w*|design\w*|replante\w*|reestructur\w*|restructur\w*)\s+(?:(?:la|el|the|our|nuestra?)\s+)?(?:arquitectura|architecture|sistema|system)/;
+const INCIDENTAL_TESTS = /\b(?:with|con|and|y|plus|m[aá]s|including|incluyendo)\s+(?:(?:sus|their|its|unit|unitarios?)\s+)?(?:tests?|pruebas?)\b/g;
+
 function inferIntent(input, text) {
   const declared = String(input.intent ?? input.task_type ?? '').toLowerCase();
   if (TASK_INTENTS.includes(declared)) return declared;
   if (contains(text, [/code review|review (?:the )?(?:code|diff|pull request)|revis(?:a|ar) (?:el )?c[oó]digo/])) return 'code_review';
-  if (contains(text, [/debug|diagnos|investigat(?:e|ing).*bug|fix (?:a )?bug|error|fall[oa]/])) return 'debug';
+  if (contains(text, [/debug|diagnos|investigat(?:e|ing).*bug|fix (?:a )?bug|\bbug\b|no responde|no funciona|doesn't work|not working|error|fall[oa]/])) return 'debug';
   if (contains(text, [/whole project|entire project|this project|el proyecto|todo el proyecto|project analysis|analiza.*proyecto/])) return 'project_analysis';
   if (contains(text, [/research|investiga|look up|buscar en (?:la )?web|current official/])) return 'research';
-  if (contains(text, [/\btest(?:s|ing)?\b|prueba(?:s)?/])) return 'test';
+  if (ARCHITECTURE_ACTION.test(text)) return 'architecture';
+  if (contains(text.replace(INCIDENTAL_TESTS, ' '), [/\btest(?:s|ing)?\b|prueba(?:s)?/])) return 'test';
   if (contains(text, [/document|readme|docs|documentaci[oó]n/])) return 'documentation';
   if (contains(text, [/edit|change|modify|implement|add|remove|fix|move|relocat|convert|reorganiz|refactor|update|create|write|modific\w*|cambi\w*|implement\w*|agreg\w*|a[nñ]ad\w*|cre\w*|corrig\w*|arregl\w*|quit\w*|elimin\w*|retir\w*|mov\w*|traslad\w*|convert\w*|reorganiz\w*|reestructur\w*|refactor\w*|actualiz\w*|escrib\w*/])) return 'edit';
   if (contains(text, [/architect|arquitect|system design|diseñ[oa] (?:del )?sistema/])) return 'architecture';
@@ -74,6 +80,7 @@ function inferComplexity(input, intent, scope, writeMode, text) {
   const specificationSections = [...text.matchAll(/^\s*(?:\d{1,2}[.)]|#{1,6})\s+\S/gm)].length;
   if (writeMode === 'write_allowed' && text.length >= 3_000 && specificationSections >= 6) return 'high';
   if (['architecture', 'project_analysis'].includes(intent) || scope === 'project' || contains(text, [/large refactor|major refactor|whole codebase/])) return 'high';
+  if (['edit', 'documentation'].includes(intent) && scope === 'feature' && text.length < 400 && contains(text, COSMETIC_PATTERNS)) return 'low';
   if (['debug', 'refactor', 'code_review'].includes(intent) || ['module', 'feature'].includes(scope)) return 'medium';
   if (scope === 'file') return 'low';
   return scope === 'selection' ? 'trivial' : 'low';

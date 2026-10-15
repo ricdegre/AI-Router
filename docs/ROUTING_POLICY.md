@@ -10,6 +10,8 @@ Candidates are rejected when the provider is unavailable or disabled, the profil
 
 Automatic eligible candidates are ordered by required strength and task complexity, then health and remaining quota, and finally cost/preferences. The policy may prefer local or already-paid capacity only after capability and reasoning requirements are satisfied.
 
+For `trivial` and `low` complexity (for example cosmetic edits such as colors, typos, labels, or CSS), capacity tier is compared right after strength: local, then free, then subscription. This conserves limited subscription quota for work that needs it. Medium and higher complexity keep the original order. Task Analysis treats an explicit redesign of an architecture or system as `architecture`, Spanish and English bug reports as `debug`, and tests mentioned alongside a feature ("with tests", "con tests") as part of the edit rather than a test-only task.
+
 Low-risk tasks default to `basic`, medium-risk tasks to `standard`, and high/critical tasks to `strong`. Callers may declare a more specific minimum. Manual override chooses only a compatible and healthy target; it cannot bypass safety or capability checks.
 
 `route explain` returns every acceptance and rejection reason. No eligible provider produces a structured `NO_ELIGIBLE_PROVIDER` result rather than silently falling back to a paid API.

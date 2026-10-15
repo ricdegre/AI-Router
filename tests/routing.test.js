@@ -263,3 +263,15 @@ test('escalation is bounded and user cancellation never escalates', () => {
   plan.recordAttempt({ provider_id: 'provider-b', profile_id: 'standard', result: 'failure', failure_category: 'user_cancelled' });
   assert.equal(plan.shouldEscalate(), false);
 });
+
+test('light cosmetic edits conserve subscription quota and bugs are not classified as light', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(new MockProvider('premium', { strength: 'strong', capabilities: ['chat', 'coding'] }));
+  registry.register(new MockProvider('free-gateway', { strength: 'strong', capabilities: ['chat', 'coding'] }));
+  const profiles = [profile('premium-sub', 'premium', 'SUBSCRIPTION_INCLUDED'), profile('free-model', 'free-gateway', 'FREE')];
+  const light = await new RoutingPolicy().explain({ objective: 'Cambia el color del background del header a azul' }, registry, profiles);
+  assert.equal(light.task_analysis.complexity, 'low');
+  assert.equal(light.selected.profile_id, 'free-model');
+  const bug = await new RoutingPolicy().explain({ objective: 'Arregla el bug: el botón de guardar no responde' }, registry, profiles);
+  assert.equal(bug.task_analysis.intent, 'debug'); assert.equal(bug.task_analysis.complexity, 'medium');
+});
