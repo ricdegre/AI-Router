@@ -25,8 +25,8 @@ import { ActionMediator } from '../actions/action-mediator.js';
 import { ValidationEngine } from '../validation/validation-engine.js';
 import { ResilientOrchestrator } from './resilient-orchestrator.js';
 import { DeterministicDecisionEngine } from '../decision-engines/deterministic/deterministic-engine.js';
-import { MockJevDecisionEngine } from '../decision-engines/jev/mock-engine.js';
-import { OllamaJevDecisionEngine } from '../decision-engines/jev/ollama-engine.js';
+import { MockTriageDecisionEngine } from '../decision-engines/triage/mock-engine.js';
+import { OllamaTriageDecisionEngine } from '../decision-engines/triage/ollama-engine.js';
 import { DecisionEngineConfigStore } from '../decision-engines/core/config-store.js';
 import { DecisionUsageStore } from '../decision-engines/core/usage-store.js';
 import { DecisionStateBuilder } from '../decision-engines/core/state-builder.js';
@@ -75,10 +75,10 @@ export function createRuntimeServices(config, options = {}) {
   const auditLog = new AuditLog(dataRoot);
   const decisionEngineConfigStore = new DecisionEngineConfigStore(dataRoot);
   const decisionUsageStore = new DecisionUsageStore(dataRoot);
-  const jevEngine = options.jevEngine ?? new MockJevDecisionEngine(options.jevMockOptions);
+  const triageEngine = options.triageEngine ?? new MockTriageDecisionEngine(options.triageMockOptions);
   const routingPolicy = new DecisionRouter({
-    deterministicEngine: new DeterministicDecisionEngine(deterministicRoutingPolicy), jevEngine,
-    ollamaEngine: options.jevOllamaEngine ?? new OllamaJevDecisionEngine(),
+    deterministicEngine: new DeterministicDecisionEngine(deterministicRoutingPolicy), triageEngine,
+    ollamaEngine: options.triageOllamaEngine ?? new OllamaTriageDecisionEngine(),
     configStore: decisionEngineConfigStore, usageStore: decisionUsageStore,
     stateBuilder: new DecisionStateBuilder(), auditLog
   });
@@ -89,7 +89,7 @@ export function createRuntimeServices(config, options = {}) {
     projectRegistry, profileRegistry, providerRegistry, secretStore, memoryManager, descriptorStore, attachmentStore, artpAliasStore, artpCompiler,
     taskStore, attemptStore, executionPlanStore, recoveryJournal,
     auditLog, projectCoordinator, contextBuilder: new ContextBuilder(memoryManager),
-    circuitBreaker, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, jevEngine, profileTestService, readinessStore, vscodeIntegration, providerTimeouts,
+    circuitBreaker, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, triageEngine, profileTestService, readinessStore, vscodeIntegration, providerTimeouts,
     actionMediatorFactory: ({ project, task }) => new ActionMediator({
       workspaceRoot: project.workspacePath, backupRoot: path.join(dataRoot, 'backups', project.projectId),
       maxFileBytes: task.execution_limits?.max_file_bytes, actionPolicy: task.action_policy, filesystemScope: task.filesystem_scope,

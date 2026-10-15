@@ -1,6 +1,6 @@
-# Jev routing questions 0.1
+# Triage routing questions 0.1
 
-Jev never receives the question “which provider should win?” It classifies nine atomic dimensions:
+Triage never receives the question “which provider should win?” It classifies nine atomic dimensions:
 
 | Dimension | Valid answer |
 |---|---|

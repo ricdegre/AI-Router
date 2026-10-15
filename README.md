@@ -19,7 +19,7 @@ This repository currently provides:
 - Provider Protocol 0.1 and a provider/profile registry;
 - a non-invasive Ollama HTTP adapter with model discovery, timeout, and cancellation;
 - model-aware deterministic routing with limits, cost policy, circuit state, and explainable acceptance/rejection;
-- optional Decision Engine Protocol 0.1 with deterministic-only, mocked Jev-assisted, and hybrid modes; hard policy remains authoritative;
+- optional Decision Engine Protocol 0.1 with deterministic-only, shadow, Triage-assisted, and hybrid modes (Triage is the built-in task classifier, mock or local Ollama); hard policy remains authoritative;
 - a structured response protocol that treats model output as untrusted proposals;
 - F09 provider-neutral execution envelopes, native image transport eligibility, mandatory context fail-closed behavior, and a local vision/write verification fixture ([details](docs/f09-multimodal-execution.md));
 - safe paths, controlled text actions, exact stale-protected changesets, private backups, and independent validation;
@@ -36,7 +36,7 @@ This repository currently provides:
 - a thin VS Code extension that connects only to the local AI Router control API and can select a router provider/profile/model;
 - an artificial continuity demo and isolated tests.
 
-OpenRouter execution and the metered Gemini auth-key path are implemented. Gemini stays off until explicit metered opt-in. OpenAI profiles use the official Codex App Server “Sign in with ChatGPT” flow in a separate runtime home per profile; the router never copies global login state or silently uses paid API billing. Claude Code uses the authenticated Claude subscription CLI with explicit model and effort selection, tool-free test inference, and official `/usage` observations; it does not enable Anthropic API billing. Controlled failed writes have recovery snapshots; generalized Git rollback and real TypeSafe/Jev connectivity are not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Jev is optional, mocked, and off by default.
+OpenRouter execution and the metered Gemini auth-key path are implemented. Gemini stays off until explicit metered opt-in. OpenAI profiles use the official Codex App Server “Sign in with ChatGPT” flow in a separate runtime home per profile; the router never copies global login state or silently uses paid API billing. Claude Code uses the authenticated Claude subscription CLI with explicit model and effort selection, tool-free test inference, and official `/usage` observations; it does not enable Anthropic API billing. Controlled failed writes have recovery snapshots; generalized Git rollback is not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Triage, the built-in task classifier, is optional and off by default; it runs as a mock or on a local Ollama model and never calls an external service.
 
 ## Conceptual architecture
 
@@ -99,7 +99,7 @@ The source for the VS Code client is in `interfaces/vscode`. Launch it in an Ext
 
 ## Development status
 
-AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Jev integration](docs/JEV_INTEGRATION.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Triage classifier](docs/TRIAGE_CLASSIFIER.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
 ## Author
 

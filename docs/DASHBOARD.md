@@ -5,7 +5,7 @@ The AI Router dashboard is a dependency-free web interface for operating the exi
 ## Pages
 
 - **Overview** summarizes project, provider, task, continuity, audit, and last-routing state.
-- **Decision Engines** shows Jev as an optional classifier, including mode, health, confidence, latency, fallback, honest usage/cost availability, and the unavailable real-connection placeholder. It is deliberately separate from execution providers.
+- **Decision Engines** shows Triage as an optional classifier, including mode, health, confidence, latency, fallback, honest usage/cost availability, and the unavailable real-connection placeholder. It is deliberately separate from execution providers.
 - **Projects** shows workspace availability, observed Git state, memory readiness, and active tasks. Registration and configured-root scanning are explicit actions.
 - **Providers** reports adapter registration and live health. Enable/disable is persisted as non-secret control state.
 - **Profiles / Accounts** supports multiple identities per provider, provider-aware model discovery and selection, Add/Edit/Delete, enable/disable, disconnect, safe Connect/Reconnect placeholders, Test Connection, and isolated Test Chat. Developer/Test Mode is off by default and hides synthetic identities.
@@ -26,7 +26,7 @@ Live status uses three lightweight polling tiers: active task and lock state eve
 
 Polling never reloads the document or re-renders the current page. It patches only named metrics, status badges, timestamps, and visible data rows whose values changed. Current route, scroll, filters, tabs, drawers, modals, selections, and unsent form values therefore remain intact. If a background request fails, the last successful data stays visible and the top bar reports that it may be stale.
 
-Settings includes a Decision Engine section for instant mode and Jev on/off changes, fallback preference, confidence bounds, timeout, usage categories, and estimated daily/monthly budgets. No restart is required. The Connect Jev button is an explicit placeholder and never requests credentials.
+Settings includes a Decision Engine section for instant mode and Triage on/off changes, fallback preference, confidence bounds, timeout, usage categories, and estimated daily/monthly budgets. No restart is required. The Connect Triage button is an explicit placeholder and never requests credentials.
 
 ## Boundaries
 

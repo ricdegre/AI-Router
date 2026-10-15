@@ -40,11 +40,11 @@ test('polling uses bounded tiers and retains stale data on failure', async () =>
   assert.match(app, /document\.querySelector\('#refresh-button'\)\.addEventListener\('click',\(\)=>refreshCurrent\('manual'\)\)/);
 });
 
-test('dashboard exposes optional Jev controls, status, and auditable route evidence', async () => {
+test('dashboard exposes optional Triage controls, status, and auditable route evidence', async () => {
   const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
-  for (const text of ['Decision Engines', 'Jev Decision Engine', 'Deterministic Only', 'Jev Assisted', 'Hybrid', 'Confidence threshold', 'Initial routing', 'Retry / escalation', 'Action risk', 'Handoff quality', 'Context relevance', 'Real Jev connection not enabled yet.', 'Task analysis', 'Hard rules', 'Jev classification', 'Automatic Routing', 'Manual Resource Selection']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const text of ['Decision Engines', 'Triage Decision Engine', 'Deterministic Only', 'Triage Assisted', 'Hybrid', 'Confidence threshold', 'Initial routing', 'Retry / escalation', 'Action risk', 'Handoff quality', 'Context relevance', 'Real Triage connection not enabled yet.', 'Task analysis', 'Hard rules', 'Triage classification', 'Automatic Routing', 'Manual Resource Selection']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(app, /\/api\/decision-engines\/config/);
-  assert.match(app, /connect-jev/);
+  assert.match(app, /connect-triage/);
 });
 
 test('profiles UI supports multi-account management and isolated connection tests', async () => {

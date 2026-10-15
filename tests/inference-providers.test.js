@@ -136,7 +136,7 @@ test('Claude effort capability follows official per-model mapping and remains se
   assert.deepEqual(parseAntigravityModels('claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)')[0], { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)', effort: null });
 });
 
-test('Claude model plus effort are distinct routes and visible to future Jev recommendations', async () => {
+test('Claude model plus effort are distinct routes and visible to future Triage recommendations', async () => {
   const provider = new MockProvider('anthropic'); provider.descriptor.capabilities.push('coding');
   const registry = new ProviderRegistry(); registry.register(provider);
   const model = createModelDescriptor({ providerId: 'anthropic', modelId: 'sonnet', discovered: { display_name: 'Sonnet 5', local: false, reasoning_support: true, execution_channel: 'claude-code-subscription', supported_reasoning_efforts: ['low', 'medium', 'high', 'xhigh', 'max'], default_reasoning_effort: 'high' } });

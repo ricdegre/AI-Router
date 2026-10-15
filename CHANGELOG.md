@@ -117,12 +117,12 @@ AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain 
 
 ## 0.6.0-pre.0 — Optional decision engines
 
-- Added provider-independent Decision Engine Protocol 0.1 and deterministic-only, Jev-assisted, and hybrid routing modes.
-- Added a fully mocked Jev engine, compact state builder, atomic question set, strict result normalization, confidence policy, health states, and unconditional deterministic safety fallback.
-- Preserved all hard routing rules and demonstrated that Jev cannot bypass availability, capabilities, metered policy, manual overrides, or risk strength.
+- Added provider-independent Decision Engine Protocol 0.1 and deterministic-only, Triage-assisted, and hybrid routing modes.
+- Added a fully mocked Triage engine, compact state builder, atomic question set, strict result normalization, confidence policy, health states, and unconditional deterministic safety fallback.
+- Preserved all hard routing rules and demonstrated that Triage cannot bypass availability, capabilities, metered policy, manual overrides, or risk strength.
 - Added private runtime configuration, immediate dashboard toggles, status card, routing explanation, sanitized auditing, separate `METERED_DECISION` usage, and estimated budget controls.
-- Added a 16-scenario synthetic routing benchmark for plumbing validation only. It makes no claim that mock Jev is superior.
-- Real TypeSafe/Jev connectivity remains intentionally absent.
+- Added a 16-scenario synthetic routing benchmark for plumbing validation only. It makes no claim that mock Triage is superior.
+- No external classifier service is used.
 
 ## 0.5.0 — Local operational control plane
 

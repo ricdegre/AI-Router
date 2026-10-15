@@ -1,23 +1,23 @@
 import { AiRouterError } from '../../core/errors.js';
-import { JEV_ROUTING_QUESTIONS } from './questions.js';
+import { TRIAGE_ROUTING_QUESTIONS } from './questions.js';
 
-const choices = Object.fromEntries(JEV_ROUTING_QUESTIONS.filter((item) => item.choices).map((item) => [item.id, item.choices]));
-const probabilities = new Set(JEV_ROUTING_QUESTIONS.filter((item) => item.type === 'probability').map((item) => item.id));
-const scores = new Set(JEV_ROUTING_QUESTIONS.filter((item) => item.type === 'score').map((item) => item.id));
+const choices = Object.fromEntries(TRIAGE_ROUTING_QUESTIONS.filter((item) => item.choices).map((item) => [item.id, item.choices]));
+const probabilities = new Set(TRIAGE_ROUTING_QUESTIONS.filter((item) => item.type === 'probability').map((item) => item.id));
+const scores = new Set(TRIAGE_ROUTING_QUESTIONS.filter((item) => item.type === 'score').map((item) => item.id));
 
 function unit(value, label) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) throw new AiRouterError(`${label} must be between 0 and 1.`, 'INVALID_DECISION_ENGINE_RESULT');
   return value;
 }
 
-export function normalizeJevResult(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AiRouterError('Jev result must be an object.', 'INVALID_DECISION_ENGINE_RESULT');
-  const normalized = { engine: 'jev' };
-  for (const question of JEV_ROUTING_QUESTIONS) {
+export function normalizeTriageResult(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AiRouterError('Triage result must be an object.', 'INVALID_DECISION_ENGINE_RESULT');
+  const normalized = { engine: 'triage' };
+  for (const question of TRIAGE_ROUTING_QUESTIONS) {
     const answer = input[question.id];
-    if (!answer || typeof answer !== 'object') throw new AiRouterError(`Jev result is missing ${question.id}.`, 'INVALID_DECISION_ENGINE_RESULT');
-    if (choices[question.id] && !choices[question.id].includes(answer.value)) throw new AiRouterError(`Jev returned an invalid ${question.id}.`, 'INVALID_DECISION_ENGINE_RESULT');
-    if (probabilities.has(question.id) && typeof answer.value !== 'boolean') throw new AiRouterError(`Jev returned an invalid ${question.id}.`, 'INVALID_DECISION_ENGINE_RESULT');
+    if (!answer || typeof answer !== 'object') throw new AiRouterError(`Triage result is missing ${question.id}.`, 'INVALID_DECISION_ENGINE_RESULT');
+    if (choices[question.id] && !choices[question.id].includes(answer.value)) throw new AiRouterError(`Triage returned an invalid ${question.id}.`, 'INVALID_DECISION_ENGINE_RESULT');
+    if (probabilities.has(question.id) && typeof answer.value !== 'boolean') throw new AiRouterError(`Triage returned an invalid ${question.id}.`, 'INVALID_DECISION_ENGINE_RESULT');
     if (scores.has(question.id)) unit(answer.value, question.id);
     normalized[question.id] = { value: answer.value };
     if (answer.confidence != null) normalized[question.id].confidence = unit(answer.confidence, `${question.id} confidence`);

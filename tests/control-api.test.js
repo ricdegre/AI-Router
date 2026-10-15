@@ -146,7 +146,7 @@ test('decision engine can be toggled at runtime without credentials or restart',
   assert.equal(route.decision_engine.decision_source, 'hybrid');
   await api.handlePost('/api/decision-engines/config', { enabled: false });
   const off = await api.handleGet('/api/routing/explain', new URLSearchParams('risk=low&capability=coding'));
-  assert.equal(off.decision_engine.decision_source, 'deterministic'); assert.equal(off.decision_engine.jev_called, false);
+  assert.equal(off.decision_engine.decision_source, 'deterministic'); assert.equal(off.decision_engine.triage_called, false);
   await assert.rejects(() => api.handlePost('/api/decision-engines/config', { api_key: 'forbidden' }), { code: 'INVALID_DECISION_ENGINE_CONFIG' });
 });
 

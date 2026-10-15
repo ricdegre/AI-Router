@@ -13,9 +13,9 @@ function response(confidence = 0.94, overrides = {}) {
   };
 }
 
-export class MockJevDecisionEngine extends DecisionEngine {
+export class MockTriageDecisionEngine extends DecisionEngine {
   constructor(options = {}) {
-    super({ id: 'jev', name: 'Jev Decision Engine', type: 'mock-classifier', enabled: options.enabled ?? true });
+    super({ id: 'triage', name: 'Triage Decision Engine', type: 'mock-classifier', enabled: options.enabled ?? true });
     this.behavior = options.behavior ?? 'success';
     this.latencyMs = options.latencyMs ?? 2;
     this.result = options.result ?? null;
@@ -31,9 +31,9 @@ export class MockJevDecisionEngine extends DecisionEngine {
   async available() { return this.enabled && !['unavailable', 'rate-limited'].includes(this.behavior); }
   async evaluate() {
     this.calls += 1;
-    if (this.behavior === 'unavailable') throw new AiRouterError('Mock Jev is unavailable.', 'DECISION_ENGINE_UNAVAILABLE');
-    if (this.behavior === 'rate-limited') throw new AiRouterError('Mock Jev is rate limited.', 'DECISION_ENGINE_RATE_LIMITED');
-    if (this.behavior === 'timeout') { await sleep(this.latencyMs); throw new AiRouterError('Mock Jev timed out.', 'DECISION_ENGINE_TIMEOUT'); }
+    if (this.behavior === 'unavailable') throw new AiRouterError('Mock Triage is unavailable.', 'DECISION_ENGINE_UNAVAILABLE');
+    if (this.behavior === 'rate-limited') throw new AiRouterError('Mock Triage is rate limited.', 'DECISION_ENGINE_RATE_LIMITED');
+    if (this.behavior === 'timeout') { await sleep(this.latencyMs); throw new AiRouterError('Mock Triage timed out.', 'DECISION_ENGINE_TIMEOUT'); }
     if (this.behavior === 'malformed') return { task_complexity: { value: 'impossible' } };
     await sleep(this.latencyMs);
     if (this.result) return this.result;

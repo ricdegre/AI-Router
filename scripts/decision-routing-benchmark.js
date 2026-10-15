@@ -11,7 +11,7 @@ class BenchmarkProvider extends ProviderAdapter {
 }
 
 const dataset = JSON.parse(await readFile(new URL('../tests/fixtures/routing-benchmark.json', import.meta.url), 'utf8'));
-const modes = ['deterministic_only', 'jev_assisted', 'hybrid'];
+const modes = ['deterministic_only', 'triage_assisted', 'hybrid'];
 const root = await mkdtemp(path.join(os.tmpdir(), 'ai-router-benchmark-'));
 const rows = [];
 try {
@@ -28,5 +28,5 @@ try {
     rows.push({ scenario: scenario.id, mode, selected_tier: result.selected?.strength_class ?? null, selected_provider: result.selected?.provider_id ?? null, confidence: result.decision_engine.confidence ?? null, policy_violations: result.rejected_candidates.filter((item) => item.eligible).length, fallback: result.decision_engine.fallback, decision_latency_ms: Number((performance.now() - started).toFixed(2)) });
   }
   const summary = modes.map((mode) => { const group = rows.filter((row) => row.mode === mode); return { mode, runs: group.length, routes_found: group.filter((row) => row.selected_provider).length, fallback_rate: group.filter((row) => row.fallback).length / group.length, policy_violations: group.reduce((sum, row) => sum + row.policy_violations, 0), average_latency_ms: Number((group.reduce((sum, row) => sum + row.decision_latency_ms, 0) / group.length).toFixed(2)) }; });
-  console.log(JSON.stringify({ benchmark_version: '0.1', purpose: 'plumbing-validation-only', claim_of_jev_superiority: false, scenarios: dataset.length, summary, rows }, null, 2));
+  console.log(JSON.stringify({ benchmark_version: '0.1', purpose: 'plumbing-validation-only', claim_of_triage_superiority: false, scenarios: dataset.length, summary, rows }, null, 2));
 } finally { await rm(root, { recursive: true, force: true }); }

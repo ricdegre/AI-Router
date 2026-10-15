@@ -1,6 +1,6 @@
-export const JEV_QUESTION_SET_VERSION = '0.1';
+export const TRIAGE_QUESTION_SET_VERSION = '0.1';
 
-export const JEV_ROUTING_QUESTIONS = Object.freeze([
+export const TRIAGE_ROUTING_QUESTIONS = Object.freeze([
   { id: 'task_complexity', type: 'choice', choices: ['trivial', 'normal', 'difficult', 'expert'] },
   { id: 'required_strength', type: 'choice', choices: ['local', 'standard', 'strong'] },
   { id: 'high_blast_radius', type: 'probability' },
