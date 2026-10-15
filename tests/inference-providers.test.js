@@ -166,10 +166,25 @@ test('Claude Code serializes CLI commands and reports OAuth refresh contention w
     options.onOutput({ stream: 'stdout', chunk: JSON.stringify({ type: 'result', is_error: true, result: 'Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh' }) });
     throw new ProviderError('claude command failed.', 'PROVIDER_CLI_COMMAND_FAILED', { details: { exit_code: 1 } });
   } };
-  const provider = new ClaudeCodeProvider({ worker });
+  const provider = new ClaudeCodeProvider({ worker, oauthLockRetryDelayMs: 0 });
   await Promise.all([provider.runCommand('profile', ['--version'], {}), provider.runCommand('profile', ['auth', 'status'], {}), provider.runCommand('profile', ['-p', '/usage'], {})]);
   assert.equal(peak, 1);
   await assert.rejects(provider.testChat({ profile_id: 'profile', model: 'haiku', message: 'OK', max_output_tokens: 8 }), error => error.code === 'CLAUDE_OAUTH_REFRESH_LOCKED' && error.retryable === true && !JSON.stringify(error.details).includes('OAuth token'));
+});
+
+test('Claude Code retries a transient OAuth refresh lock before succeeding', async () => {
+  let calls = 0;
+  const worker = { runStreaming: async (_profile, _args, options) => {
+    calls += 1;
+    if (calls === 1) {
+      options.onOutput({ stream: 'stdout', chunk: JSON.stringify({ type: 'result', is_error: true, result: 'Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh' }) });
+      throw new ProviderError('claude command failed.', 'PROVIDER_CLI_COMMAND_FAILED', { details: { exit_code: 1 } });
+    }
+    return { stdout: JSON.stringify({ subtype: 'success', result: 'OK', modelUsage: { 'claude-opus-5-5': { inputTokens: 10, outputTokens: 1 } } }) };
+  } };
+  const provider = new ClaudeCodeProvider({ worker, oauthLockRetryDelayMs: 0 });
+  const result = await provider.testChat({ profile_id: 'profile', model: 'opus', message: 'OK', max_output_tokens: 8 });
+  assert.equal(result.response, 'OK'); assert.equal(calls, 2);
 });
 
 test('Claude execution distinguishes a structured CLI result failure from a generic command failure', async () => {
