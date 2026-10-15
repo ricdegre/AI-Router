@@ -275,3 +275,20 @@ test('light cosmetic edits conserve subscription quota and bugs are not classifi
   const bug = await new RoutingPolicy().explain({ objective: 'Arregla el bug: el botón de guardar no responde' }, registry, profiles);
   assert.equal(bug.task_analysis.intent, 'debug'); assert.equal(bug.task_analysis.complexity, 'medium');
 });
+
+test('medium code changes skip small local models but keep larger local and subscription models', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(new MockProvider('ollama', { strength: 'strong', capabilities: ['chat', 'coding', 'local'] }));
+  registry.register(new MockProvider('premium', { strength: 'strong', capabilities: ['chat', 'coding'] }));
+  const local = (id, size) => createModelDescriptor({ providerId: 'ollama', modelId: id, discovered: { local: true, parameter_size: size, execution_channel: 'ollama-local' } });
+  const profiles = [
+    profile('qwen-small', 'ollama', 'local', { routing_classification: 'REAL', models: [local('qwen3.5:9b', '9.7B')], selected_model_id: 'qwen3.5:9b' }),
+    profile('gemma-large', 'ollama', 'local', { routing_classification: 'REAL', models: [local('gemma4:26b', '25.2B')], selected_model_id: 'gemma4:26b' }),
+    profile('premium-sub', 'premium', 'SUBSCRIPTION_INCLUDED')
+  ];
+  const bug = await new RoutingPolicy().explain({ objective: 'Arregla el bug: el botón de guardar no responde' }, registry, profiles);
+  assert.ok(bug.evaluations.find((item) => item.profile_id === 'qwen-small').rejected.includes('local-model-too-small-for-medium-code:9.7B'));
+  assert.notEqual(bug.selected.profile_id, 'qwen-small');
+  const light = await new RoutingPolicy().explain({ objective: 'Cambia el color del background del header a azul' }, registry, profiles);
+  assert.ok(light.evaluations.find((item) => item.profile_id === 'qwen-small').eligible);
+});

@@ -10,6 +10,20 @@ import { visionExecutionStatus } from '../providers/core/vision-transport.js';
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 const STRENGTH = { basic: 0, standard: 1, strong: 2 };
 const CAPACITY_TIER = { LOCAL: 0, FREE: 1, SUBSCRIPTION_INCLUDED: 2 };
+// Small local models handle cosmetic edits but are unreliable for medium bugs and features.
+const MIN_LOCAL_PARAMS_FOR_MEDIUM_CODE = 20;
+
+function parameterBillions(value) {
+  const match = /^([\d.]+)\s*([BM])$/i.exec(String(value ?? '').trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  return match[2].toUpperCase() === 'M' ? amount / 1000 : amount;
+}
+
+function mediumCodeWrite(task) {
+  const analysis = task.task_analysis;
+  return analysis.complexity === 'medium' && analysis.write_mode === 'write_allowed' && ['edit', 'debug', 'refactor', 'test'].includes(analysis.intent);
+}
 const EFFORT = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, ultra: 7, ultracode: 8 };
 
 function strongest(...values) {
@@ -193,6 +207,8 @@ export class RoutingPolicy {
         const requiredStrength = modelConstraints.minimum_strength ?? task.minimum_strength;
         if ((STRENGTH[strength] ?? -1) < (STRENGTH[requiredStrength] ?? 0)) rejected.push(`strength-below-${requiredStrength}`);
         else reasons.push(`strength-${strength}-meets-${requiredStrength}`);
+        const parameters = parameterBillions(resolvedModelValue(model, 'parameter_size'));
+        if (cost.category === 'LOCAL' && parameters != null && parameters < MIN_LOCAL_PARAMS_FOR_MEDIUM_CODE && mediumCodeWrite(task)) rejected.push(`local-model-too-small-for-medium-code:${parameters}B`);
 
         const contextSize = resolvedModelValue(model, 'context_size');
         if (modelConstraints.minimum_context_tokens && (!contextSize || contextSize < modelConstraints.minimum_context_tokens)) rejected.push('model-context-below-constraint');
