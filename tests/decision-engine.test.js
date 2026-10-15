@@ -87,3 +87,49 @@ test('decision state and audit omit secrets, full prompts, and source files', as
   const events = await f.services.auditLog.list({ type: 'decision_engine_routing' }); const serialized = JSON.stringify(events);
   assert.doesNotMatch(serialized, /private full prompt|do-not-copy/); assert.match(serialized, /question_set_version/);
 });
+
+const { OllamaJevDecisionEngine } = await import('../decision-engines/jev/ollama-engine.js');
+
+function ollamaReply(overrides = {}) {
+  const answer = (value, extra = {}) => ({ value, confidence: 0.9, ...extra });
+  return { task_complexity: answer('trivial'), required_strength: answer('local'), high_blast_radius: answer(false, { probability: 0.05 }), needs_deep_reasoning: answer(false, { probability: 0.1 }), underspecified: answer(false, { probability: 0.1 }), local_suitability: answer(0.95), coding_specialization: answer(0.5), web_required: answer(false, { probability: 0.02 }), filesystem_required: answer(true, { probability: 0.9 }), overall_confidence: 0.9, ...overrides };
+}
+
+async function ollamaFixture(t, fetch) {
+  const root = await temporaryDirectory(t, 'decision-engine-ollama-');
+  const providers = [new MockProvider('local', { strength: 'standard' }), new MockProvider('strong', { strength: 'strong', capabilities: ['chat', 'coding', 'filesystem'] })];
+  const jevOllamaEngine = new OllamaJevDecisionEngine({ fetch });
+  const services = createRuntimeServices({ dataRoot: path.join(root, 'data'), projectRoots: [], sourceRoot: root }, { registerOllama: false, providers, jevOllamaEngine });
+  await services.profileRegistry.register(profile('local-profile', 'local'));
+  await services.profileRegistry.register(profile('strong-profile', 'strong', 'subscription'));
+  return { services, profiles: await services.profileRegistry.list() };
+}
+
+test('shadow mode calls Jev and records its opinion without changing the deterministic route', async (t) => {
+  const f = await fixture(t); const baseline = await route(f);
+  await configure(f, { mode: 'shadow' });
+  const shadow = await route(f);
+  assert.equal(f.jevEngine.calls, 1); assert.equal(shadow.decision_engine.routing_mode, 'shadow'); assert.equal(shadow.decision_engine.decision_source, 'deterministic');
+  assert.deepEqual([shadow.selected.profile_id, shadow.selected.model_id], [baseline.selected.profile_id, baseline.selected.model_id]);
+  assert.equal(typeof shadow.decision_engine.shadow.agrees, 'boolean'); assert.ok(shadow.decision_engine.shadow.would_select);
+  const audit = await f.services.auditLog.list({}); assert.ok(audit.some((event) => event.type === 'decision_engine_routing' && event.shadow?.would_select));
+});
+
+test('Jev Ollama transport classifies through a loopback structured-output request in shadow mode', async (t) => {
+  const requests = [];
+  const fetch = async (url, init) => { requests.push({ url: String(url), body: JSON.parse(init.body) }); return { ok: true, json: async () => ({ message: { content: JSON.stringify(ollamaReply()) }, prompt_eval_count: 321 }) }; };
+  const f = await ollamaFixture(t, fetch);
+  await f.services.decisionEngineConfigStore.update({ mode: 'shadow', enabled: true, transport: 'ollama', model_id: 'qwen3.5:9b', timeout_ms: 5_000 });
+  const result = await f.services.routingPolicy.explain({ objective: 'Change the header background color', required_capabilities: ['coding'] }, f.services.providerRegistry, f.profiles);
+  assert.equal(requests.length, 1); assert.equal(requests[0].url, 'http://127.0.0.1:11434/api/chat');
+  assert.equal(requests[0].body.model, 'qwen3.5:9b'); assert.equal(requests[0].body.stream, false); assert.equal(requests[0].body.options.temperature, 0); assert.ok(requests[0].body.format.required.includes('task_complexity'));
+  assert.equal(result.decision_engine.status, 'READY'); assert.equal(result.decision_engine.shadow.jev_complexity, 'trivial'); assert.equal(result.decision_engine.decision_source, 'deterministic');
+});
+
+test('Jev Ollama failures and non-loopback URLs never stop deterministic routing', async (t) => {
+  const f = await ollamaFixture(t, async () => { throw new TypeError('fetch failed'); });
+  await assert.rejects(f.services.decisionEngineConfigStore.update({ transport: 'ollama', ollama_base_url: 'http://example.com:11434' }), { code: 'INVALID_DECISION_ENGINE_CONFIG' });
+  await f.services.decisionEngineConfigStore.update({ mode: 'shadow', enabled: true, transport: 'ollama', model_id: 'qwen3.5:9b' });
+  const result = await f.services.routingPolicy.explain({ objective: 'Synthetic routing task', required_capabilities: ['coding'] }, f.services.providerRegistry, f.profiles);
+  assert.ok(result.selected); assert.equal(result.decision_engine.fallback, true); assert.equal(result.decision_engine.fallback_reason, 'DECISION_ENGINE_UNAVAILABLE');
+});

@@ -26,6 +26,7 @@ import { ValidationEngine } from '../validation/validation-engine.js';
 import { ResilientOrchestrator } from './resilient-orchestrator.js';
 import { DeterministicDecisionEngine } from '../decision-engines/deterministic/deterministic-engine.js';
 import { MockJevDecisionEngine } from '../decision-engines/jev/mock-engine.js';
+import { OllamaJevDecisionEngine } from '../decision-engines/jev/ollama-engine.js';
 import { DecisionEngineConfigStore } from '../decision-engines/core/config-store.js';
 import { DecisionUsageStore } from '../decision-engines/core/usage-store.js';
 import { DecisionStateBuilder } from '../decision-engines/core/state-builder.js';
@@ -77,6 +78,7 @@ export function createRuntimeServices(config, options = {}) {
   const jevEngine = options.jevEngine ?? new MockJevDecisionEngine(options.jevMockOptions);
   const routingPolicy = new DecisionRouter({
     deterministicEngine: new DeterministicDecisionEngine(deterministicRoutingPolicy), jevEngine,
+    ollamaEngine: options.jevOllamaEngine ?? new OllamaJevDecisionEngine(),
     configStore: decisionEngineConfigStore, usageStore: decisionUsageStore,
     stateBuilder: new DecisionStateBuilder(), auditLog
   });

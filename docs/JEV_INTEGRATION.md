@@ -2,9 +2,14 @@
 
 Jev is **optional and off by default**. AI Router 0.6 pre-releases include architecture, private configuration, a deterministic mock, normalization, confidence handling, budgets, health, dashboard controls, auditing, tests, and a synthetic benchmark. They do not include a real TypeSafe/Jev network transport.
 
+## Local Ollama transport
+
+Set `transport: "ollama"` and `model_id` to an installed Ollama model (for example `qwen3.5:9b`). `ollama_base_url` defaults to `http://127.0.0.1:11434` and must be a loopback http URL. Jev sends the compact decision state (no source files, secrets, or full prompts) to `/api/chat` with a JSON schema in `format`, temperature 0, and no streaming. The reply is still validated by `normalizeJevResult`. Local inference has no monetary cost. Local models can take several seconds, so raise `timeout_ms` (up to 30000) when using this transport; on timeout or any error routing falls back to the deterministic result. Recommended rollout: run `shadow` first, review the agreement rate in the audit log, then consider `hybrid`.
+
 Modes:
 
 - `deterministic_only`: Jev is never called.
+- `shadow`: Jev is called and its classification, the route Jev-assisted mode would pick, and whether it agrees with the deterministic route are recorded in the decision result and the `decision_engine_routing` audit event. The deterministic route is always used.
 - `jev_assisted`: hard policy filters candidates, Jev classifies the task, and AI Router selects from the eligible set.
 - `hybrid`: the deterministic score incorporates a smaller Jev adjustment after hard filtering.
 
