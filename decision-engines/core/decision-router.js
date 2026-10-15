@@ -1,22 +1,37 @@
 import { AiRouterError } from '../../core/errors.js';
 import { JEV_ROUTING_QUESTIONS, JEV_QUESTION_SET_VERSION } from '../jev/questions.js';
 import { normalizeJevResult } from '../jev/normalize.js';
+import { automaticOrder } from '../../routing/policy.js';
 
 const strengthRank = { basic: 0, local: 0, standard: 1, strong: 2 };
+const STRENGTH_NAMES = ['basic', 'standard', 'strong'];
+const COMPLEXITY_ORDER = ['trivial', 'low', 'medium', 'high', 'expert'];
+const JEV_COMPLEXITY = { trivial: 'trivial', normal: 'medium', difficult: 'high', expert: 'expert' };
+
+// Translate Jev's answers into the policy's own terms; hybrid never goes below the deterministic analysis.
+function jevTask(task, classification, mode) {
+  const analysis = task.task_analysis;
+  let complexity = JEV_COMPLEXITY[classification.task_complexity.value] ?? analysis.complexity;
+  let strength = STRENGTH_NAMES[strengthRank[classification.required_strength.value] ?? 0];
+  if (mode === 'hybrid') {
+    complexity = COMPLEXITY_ORDER[Math.max(COMPLEXITY_ORDER.indexOf(complexity), COMPLEXITY_ORDER.indexOf(analysis.complexity))];
+    strength = STRENGTH_NAMES[Math.max(strengthRank[strength], strengthRank[task.minimum_strength] ?? 0)];
+  }
+  return { ...task, minimum_strength: strength, task_analysis: { ...analysis, complexity } };
+}
 
 function fallbackResult(deterministic, config, reason, extra = {}) {
   return { ...deterministic, decision_engine: { protocol_version: '0.1', routing_mode: config.mode, jev_enabled: config.enabled, jev_called: extra.jev_called ?? false, status: extra.status ?? (config.enabled ? 'DEGRADED' : 'DISABLED'), decision_source: 'deterministic', fallback: true, fallback_engine: 'deterministic', fallback_reason: reason, ...extra } };
 }
 
+// Re-rank only the candidates hard policy already accepted, with the same ordering rules the router uses.
 function applyClassification(deterministic, classification, mode) {
-  const desired = strengthRank[classification.required_strength.value] ?? 0;
-  const local = classification.local_suitability.value;
-  const accepted = deterministic.accepted_candidates.map((candidate) => {
-    let influence = 0;
-    if ((strengthRank[candidate.strength_class] ?? 0) >= desired) influence -= mode === 'jev_assisted' ? 4 : 2;
-    if (candidate.cost_category === 'LOCAL') influence += Math.round((0.5 - local) * (mode === 'jev_assisted' ? 10 : 5));
-    return { ...candidate, deterministic_score: candidate.score, decision_engine_adjustment: influence, score: candidate.score + influence };
-  }).sort((a, b) => a.score - b.score || a.profile_id.localeCompare(b.profile_id) || String(a.model_id).localeCompare(String(b.model_id)));
+  const task = jevTask(deterministic.task, classification, mode);
+  const deterministicRank = new Map(deterministic.accepted_candidates.map((candidate, index) => [candidate, index]));
+  // Candidates weaker than Jev's required strength stay eligible (hard policy accepted them) but rank last.
+  const below = (candidate) => ((strengthRank[candidate.strength_class] ?? 0) < strengthRank[task.minimum_strength] ? 1 : 0);
+  const accepted = [...deterministic.accepted_candidates].sort((a, b) => below(a) - below(b) || automaticOrder(task, a, b))
+    .map((candidate, index) => ({ ...candidate, deterministic_rank: deterministicRank.get(candidate), decision_engine_adjustment: index - deterministicRank.get(candidate) }));
   return { ...deterministic, selected: accepted[0] ?? null, accepted_candidates: accepted, evaluations: deterministic.evaluations.map((item) => accepted.find((candidate) => candidate.provider_id === item.provider_id && candidate.profile_id === item.profile_id && candidate.model_id === item.model_id && candidate.reasoning_effort === item.reasoning_effort) ?? item) };
 }
 

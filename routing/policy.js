@@ -66,7 +66,7 @@ function quotaRemaining(value) {
 
 function desiredEffort(complexity) { return ({ trivial: 'low', low: 'low', medium: 'medium', high: 'high', expert: 'max' })[complexity] ?? 'medium'; }
 
-function automaticOrder(task, a, b) {
+export function automaticOrder(task, a, b) {
   const requiredRank = STRENGTH[task.minimum_strength] ?? 0;
   const strengthDistanceA = Math.max(0, (STRENGTH[a.strength_class] ?? 0) - requiredRank);
   const strengthDistanceB = Math.max(0, (STRENGTH[b.strength_class] ?? 0) - requiredRank);

@@ -133,3 +133,16 @@ test('Jev Ollama failures and non-loopback URLs never stop deterministic routing
   const result = await f.services.routingPolicy.explain({ objective: 'Synthetic routing task', required_capabilities: ['coding'] }, f.services.providerRegistry, f.profiles);
   assert.ok(result.selected); assert.equal(result.decision_engine.fallback, true); assert.equal(result.decision_engine.fallback_reason, 'DECISION_ENGINE_UNAVAILABLE');
 });
+
+test('Jev-assisted ranking reuses the policy order with Jev complexity, and hybrid never lowers the deterministic analysis', async (t) => {
+  const answer = (value) => ({ value, confidence: 0.95 });
+  const result = (complexity, strength, local) => ({ task_complexity: answer(complexity), required_strength: answer(strength), high_blast_radius: { value: false, confidence: 0.95 }, needs_deep_reasoning: { value: false, confidence: 0.95 }, underspecified: { value: false, confidence: 0.95 }, local_suitability: answer(local), coding_specialization: answer(0.5), web_required: { value: false, confidence: 0.95 }, filesystem_required: { value: true, confidence: 0.95 }, overall_confidence: 0.95 });
+  const expert = await fixture(t, { result: result('expert', 'strong', 0.1) }); await configure(expert, { mode: 'jev_assisted' });
+  assert.equal((await route(expert)).selected.profile_id, 'strong-profile');
+  const trivial = await fixture(t, { result: result('trivial', 'local', 0.95) }); await configure(trivial, { mode: 'jev_assisted' });
+  assert.equal((await route(trivial, { risk: 'medium' })).selected.profile_id, 'local-profile');
+  const hybrid = await fixture(t, { result: result('trivial', 'local', 0.95) }); await configure(hybrid, { mode: 'hybrid' });
+  const hybridResult = await route(hybrid, { objective: 'Fix the bug: the save button does not respond' });
+  const baseline = await route(await fixture(t), { objective: 'Fix the bug: the save button does not respond' });
+  assert.equal(hybridResult.decision_engine.decision_source, 'hybrid'); assert.equal(hybridResult.selected.profile_id, baseline.selected.profile_id);
+});
