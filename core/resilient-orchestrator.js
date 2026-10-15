@@ -388,9 +388,13 @@ export class ResilientOrchestrator {
         const postCheckpoint = task.checkpoint_policy?.post_attempt === false ? null : await this.checkpoint(project, task, attempt.attempt_number, 'post-attempt', validation?.results?.map((result) => `${result.validation_id}:${result.passed}`) ?? []);
         const escalationAllowed = !task.escalation_policy || (task.escalation_policy.enabled !== false && (task.escalation_policy.categories ?? []).includes(failureCategory));
         const next = failureCategory && (!escalationAllowed || !recoverySafe || unrestoredPriorWrites) ? null : route.routing_mode === 'manual' ? null
-          : ['timeout', 'provider_unavailable', 'execution_failure'].includes(failureCategory)
+          : ['timeout', 'provider_unavailable'].includes(failureCategory)
             ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id) ?? null
-            : candidates[index + 1] ?? null;
+            // An execution failure can be model-specific: prefer another provider, else another model or profile of the same one.
+            : failureCategory === 'execution_failure'
+              ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id)
+                ?? candidates.slice(index + 1).find((item) => item.model_id !== candidate.model_id || item.profile_id !== candidate.profile_id) ?? null
+              : candidates[index + 1] ?? null;
         if (!failureCategory) {
           if (structured.status === 'partial') {
             await this.attemptStore.finish(task.project_id, task.task_id, attempt.attempt_number, {

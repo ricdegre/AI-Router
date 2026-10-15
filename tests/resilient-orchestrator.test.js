@@ -404,3 +404,14 @@ test('automatic routing stops or skips to the selected next candidate instead of
   assert.equal(completed.status, 'completed');
   assert.deepEqual((await skipping.dependencies.attemptStore.list(skipping.project.projectId, 'skip-to-next-provider-01')).map((item) => item.profile_id), ['profile-a1', 'profile-b']);
 });
+
+test('an execution failure falls back to another model of the same provider when no other provider is eligible', async (t) => {
+  let secondCalls = 0;
+  const setup = await fixture(t, [{ provider: 'provider-a', profiles: ['profile-a1', 'profile-a2'], strength: 'strong', execute: async (request) => {
+    if (request.profile?.profile_id === 'profile-a1' || request.profile_id === 'profile-a1') throw new ProviderError('model not found', 'OLLAMA_HTTP_ERROR', { failureCategory: 'execution_failure' });
+    secondCalls += 1; return { structured: response('ok', 'Second model completed the analysis.') };
+  } }]);
+  const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'same-provider-model-fallback-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', preferred_profiles: ['profile-a1', 'profile-a2'] }, { maxAttempts: 2 });
+  assert.equal(result.status, 'completed'); assert.equal(secondCalls, 1);
+  assert.deepEqual((await setup.dependencies.attemptStore.list(setup.project.projectId, 'same-provider-model-fallback-01')).map((item) => item.profile_id), ['profile-a1', 'profile-a2']);
+});

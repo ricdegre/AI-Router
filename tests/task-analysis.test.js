@@ -104,3 +104,8 @@ test('task analysis separates light edits, architecture redesigns, and incidenta
   assert.equal(feature.intent, 'edit'); assert.equal(feature.complexity, 'medium');
   assert.equal(analyzeTask({ objective: 'Write unit tests for the parser' }).intent, 'test');
 });
+
+test('one-line changes are light work', () => {
+  assert.equal(analyzeTask({ objective: 'Make a one-line change in status.txt' }).complexity, 'low');
+  assert.equal(analyzeTask({ objective: 'Cambia una sola línea del archivo de configuración' }).complexity, 'low');
+});

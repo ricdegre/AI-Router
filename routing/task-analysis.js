@@ -21,7 +21,7 @@ function affirmativeOperationText(text) {
 }
 
 // Small, presentation-only edits that a light model handles well.
-const COSMETIC_PATTERNS = [/\b(?:colou?r|background|fondo|font|fuente|tipograf\w*|padding|margin|margen|spacing|espaciad\w*|typo|errata|ortograf\w*|rename|renombr\w*|label|etiqueta|t[ií]tulo|title|icon|[ií]cono|css|estilos?|styles?|wording|copy|texto del|text of|alineaci[oó]n|align\w*|border|borde)\b/];
+const COSMETIC_PATTERNS = [/\b(?:colou?r|background|fondo|font|fuente|tipograf\w*|padding|margin|margen|spacing|espaciad\w*|typo|errata|ortograf\w*|rename|renombr\w*|label|etiqueta|t[ií]tulo|title|icon|[ií]cono|css|estilos?|styles?|wording|copy|texto del|text of|alineaci[oó]n|align\w*|border|borde)\b/, /\b(?:one[- ]line|single[- ]line|una (?:sola )?l[ií]nea)\b/];
 const ARCHITECTURE_ACTION = /(?:redise[ñn]\w*|re-?design\w*|diseñ\w*|design\w*|replante\w*|reestructur\w*|restructur\w*)\s+(?:(?:la|el|the|our|nuestra?)\s+)?(?:arquitectura|architecture|sistema|system)/;
 const INCIDENTAL_TESTS = /\b(?:with|con|and|y|plus|m[aá]s|including|incluyendo)\s+(?:(?:sus|their|its|unit|unitarios?)\s+)?(?:tests?|pruebas?)\b/g;
 

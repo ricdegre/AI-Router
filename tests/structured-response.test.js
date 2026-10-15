@@ -59,3 +59,12 @@ test('model descriptor keeps facts, overrides, and heuristics separate', () => {
   assert.equal(resolvedModelValue(model, 'coding_suitability'), 'confirmed');
   assert.equal(resolvedModelValue(model, 'strength_class'), 'standard');
 });
+
+test('the provider JSON schema requires a target for file actions but not for Git status or validation commands', async () => {
+  const { STRUCTURED_RESPONSE_JSON_SCHEMA } = await import('../providers/core/structured-response.js');
+  const [fileAction, targetless] = STRUCTURED_RESPONSE_JSON_SCHEMA.properties.proposed_actions.items.anyOf;
+  assert.ok(fileAction.required.includes('target')); assert.ok(fileAction.properties.type.enum.includes('modify_file'));
+  assert.ok(!targetless.required.includes('target')); assert.deepEqual(targetless.properties.type.enum, ['inspect_git_status', 'run_validation_command']);
+  const missingTarget = JSON.stringify({ schema_version: '0.1', status: 'ok', summary: 'Done.', observations: [], proposed_actions: [{ action_id: 'complete-demo-status', type: 'modify_file', parameters: {} }], validation_requested: [], remaining_work: [], uncertainty: [], handoff_notes: [] });
+  assert.throws(() => parseStructuredResponse(missingTarget), { code: 'INVALID_ACTION_PROTOCOL' });
+});
