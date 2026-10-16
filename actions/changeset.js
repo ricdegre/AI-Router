@@ -18,10 +18,14 @@ export function applyExactReplacement(source, patch) {
   const edits = Array.isArray(patch.edits) ? patch.edits : [{ search: patch.search, replacement: patch.replacement }];
   if (!edits.length || edits.length > 50) throw new AiRouterError('Changeset must contain between 1 and 50 edits.', 'INVALID_CHANGESET');
   let updated = source;
-  for (const edit of edits) {
-    if (typeof edit?.search !== 'string' || edit.search.length === 0 || typeof edit.replacement !== 'string') {
+  // Models write LF; a CRLF file (common on Windows) would never match, so adapt the edit to the file's line endings.
+  const crlf = source.includes('\r\n');
+  for (const original of edits) {
+    if (typeof original?.search !== 'string' || original.search.length === 0 || typeof original.replacement !== 'string') {
       throw new AiRouterError('Changeset search and replacement must be strings.', 'INVALID_CHANGESET');
     }
+    const toFile = (text) => (crlf && !text.includes('\r') ? text.replace(/\n/g, '\r\n') : text);
+    const edit = updated.includes(original.search) ? original : { search: toFile(original.search), replacement: toFile(original.replacement) };
     let count = 0;
     let index = updated.indexOf(edit.search);
     while (index >= 0) {
