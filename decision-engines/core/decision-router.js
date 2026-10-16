@@ -85,5 +85,13 @@ export class DecisionRouter {
     } finally { clearTimeout(timer); }
   }
   async select(task, providerRegistry, profiles) { const result = await this.explain(task, providerRegistry, profiles); if (!result.selected) throw new AiRouterError(result.error.message, result.error.code, { evaluations: result.evaluations }); return result; }
-  async status() { const config = await this.configStore.load(); const usage = await this.usageStore.summary(); const engine = this.engineFor(config) ?? this.triageEngine; const health = !config.enabled || config.mode === 'deterministic_only' ? { status: 'DISABLED' } : !this.engineFor(config) ? { status: 'UNCONFIGURED' } : await engine.health(); return { protocol_version: '0.1', engine: engine.descriptor(), enabled: config.enabled, mode: config.mode, transport: config.transport, model_id: config.model_id, ollama_base_url: config.ollama_base_url, confidence_threshold: config.confidence_threshold, minimum_confidence: config.minimum_confidence, fallback_enabled: config.fallback_enabled, fallback_engine: config.fallback_engine, health, last_decision: this.lastDecision, usage, budgets: config.budgets, real_connection_available: config.transport === 'ollama' && Boolean(this.ollamaEngine) }; }
+  // Decisions made by any process (CLI, VS Code, another panel) are in the audit log; prefer the newest.
+  async latestDecision() {
+    const events = await this.auditLog?.list({ type: 'decision_engine_routing' }).catch(() => []) ?? [];
+    const event = events.at(-1);
+    const fromAudit = event ? { at: event.at, routing_mode: event.routing_mode, latency_ms: event.latency_ms ?? null, confidence: event.confidence ?? null, fallback_reason: event.fallback_reason ?? null, shadow: event.shadow ?? null, final_route: event.final_route ?? null } : null;
+    if (!this.lastDecision) return fromAudit;
+    return fromAudit && fromAudit.at > this.lastDecision.at ? fromAudit : this.lastDecision;
+  }
+  async status() { const config = await this.configStore.load(); const usage = await this.usageStore.summary(); const engine = this.engineFor(config) ?? this.triageEngine; const health = !config.enabled || config.mode === 'deterministic_only' ? { status: 'DISABLED' } : !this.engineFor(config) ? { status: 'UNCONFIGURED' } : await engine.health(); return { protocol_version: '0.1', engine: engine.descriptor(), enabled: config.enabled, mode: config.mode, transport: config.transport, model_id: config.model_id, ollama_base_url: config.ollama_base_url, confidence_threshold: config.confidence_threshold, minimum_confidence: config.minimum_confidence, fallback_enabled: config.fallback_enabled, fallback_engine: config.fallback_engine, health, last_decision: await this.latestDecision(), usage, budgets: config.budgets, real_connection_available: config.transport === 'ollama' && Boolean(this.ollamaEngine) }; }
 }

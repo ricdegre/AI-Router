@@ -146,3 +146,11 @@ test('Triage-assisted ranking reuses the policy order with Triage complexity, an
   const baseline = await route(await fixture(t), { objective: 'Fix the bug: the save button does not respond' });
   assert.equal(hybridResult.decision_engine.decision_source, 'hybrid'); assert.equal(hybridResult.selected.profile_id, baseline.selected.profile_id);
 });
+
+test('status reports the latest decision recorded by any process through the audit log', async (t) => {
+  const f = await fixture(t); await configure(f, { mode: 'shadow' });
+  await route(f);
+  f.services.routingPolicy.lastDecision = null;
+  const status = await f.services.routingPolicy.status();
+  assert.ok(status.last_decision?.at); assert.equal(status.last_decision.routing_mode, 'shadow'); assert.ok(status.last_decision.shadow?.would_select);
+});

@@ -42,7 +42,7 @@ test('polling uses bounded tiers and retains stale data on failure', async () =>
 
 test('dashboard exposes optional Triage controls, status, and auditable route evidence', async () => {
   const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
-  for (const text of ['Decision Engines', 'Triage Decision Engine', 'Deterministic Only', 'Triage Assisted', 'Hybrid', 'Confidence threshold', 'Initial routing', 'Retry / escalation', 'Action risk', 'Handoff quality', 'Context relevance', 'Real Triage connection not enabled yet.', 'Task analysis', 'Hard rules', 'Triage classification', 'Automatic Routing', 'Manual Resource Selection']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const text of ['Decision Engines', 'Triage Decision Engine', 'Deterministic Only', 'Triage Assisted', 'Hybrid', 'Confidence threshold', 'Initial routing', 'Retry / escalation', 'Action risk', 'Handoff quality', 'Context relevance', 'never calls an external service', 'Task analysis', 'Hard rules', 'Triage classification', 'Automatic Routing', 'Manual Resource Selection']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(app, /\/api\/decision-engines\/config/);
   assert.match(app, /Configure in Settings/); assert.doesNotMatch(app, /connect-triage/);
 });
