@@ -26,8 +26,8 @@ test('task status reflects persisted progress and terminal outcomes', () => {
   assert.equal(taskSnapshot(base, { taskId: 'task-1' }).status, 'WAITING_FOR_PROVIDER');
   assert.equal(taskSnapshot({ ...base, execution_plan: { current_step: 'ACTIONS' } }, { readOnly: true }).status, 'RUNNING');
   assert.equal(taskSnapshot({ ...base, execution_plan: { current_step: 'ACTIONS' } }, { readOnly: false }).status, 'APPLYING_CHANGES');
-  const completed = taskSnapshot({ ...base, state: { ...base.state, state: 'COMPLETED', updated_at: '2026-09-24T00:01:00Z' }, attempts: [{ provider_id: 'ollama', model_id: 'gemma4:26b', summary: 'Wholesale review complete.', validation: { passed: true } }] }, { taskId: 'task-1', readOnly: true });
-  assert.equal(completed.status, 'COMPLETED'); assert.equal(completed.result, 'Wholesale review complete.'); assert.deepEqual(completed.changedFiles, []); assert.equal(completed.durationMs, 60000); assert.equal(completed.terminal, true);
+  const completed = taskSnapshot({ ...base, state: { ...base.state, state: 'COMPLETED', updated_at: '2026-09-24T00:01:00Z' }, attempts: [{ provider_id: 'ollama', model_id: 'gemma4:26b', summary: 'Products review complete.', validation: { passed: true } }] }, { taskId: 'task-1', readOnly: true });
+  assert.equal(completed.status, 'COMPLETED'); assert.equal(completed.result, 'Products review complete.'); assert.deepEqual(completed.changedFiles, []); assert.equal(completed.durationMs, 60000); assert.equal(completed.terminal, true);
   const write = taskSnapshot({ ...base, state: { state: 'COMPLETED' }, workspace_changes: { changedFiles: ['?? USER_ACCEPTANCE_TEST.txt'] }, attempts: [{ execution_results: [{ status: 'completed', target: 'USER_ACCEPTANCE_TEST.txt' }] }] }, { taskId: 'write-1' });
   assert.deepEqual(write.changedFiles, ['USER_ACCEPTANCE_TEST.txt']);
   assert.equal(taskSnapshot({ ...base, state: { state: 'FAILED' } }).status, 'FAILED');
@@ -72,20 +72,20 @@ test('tracking window resolves completed backend state and lost polling without 
 });
 
 test('active editor context is accepted only for files inside the workspace', () => {
-  assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'file', fsPath: 'D:\\Workspace\\PROJECTOS\\SND-YDB\\src\\main.js' }), 'src\\main.js');
-  assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'file', fsPath: 'C:\\Users\\user\\Documents\\wholesale.html' }), null);
-  assert.equal(workspaceRelativeFile('D:\\Workspace\\PROJECTOS\\SND-YDB', { scheme: 'untitled', fsPath: 'D:\\Workspace\\draft.txt' }), null);
+  assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'file', fsPath: 'D:\\Projects\\demo-shop\\src\\main.js' }), 'src\\main.js');
+  assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'file', fsPath: 'C:\\Users\\user\\Documents\\products.html' }), null);
+  assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'untitled', fsPath: 'D:\\Workspace\\draft.txt' }), null);
 });
 
 test('workspace binding compares full Windows paths, not project names', () => {
-  const registered = 'D:\\Workspace\\PROJECTOS\\SND-YDB';
-  const copy = 'D:\\PROJECTOS - Copy\\SND-YDB';
-  const projects = [{ projectId: 'snd-ydb', displayName: 'SND-YDB', workspacePath: registered }];
-  assert.equal(sameWorkspacePath('d:/ai-workspace/projectos/snd-ydb/', registered), true);
+  const registered = 'D:\\Projects\\demo-shop';
+  const copy = 'D:\\Projects - Copy\\demo-shop';
+  const projects = [{ projectId: 'demo-shop', displayName: 'demo-shop', workspacePath: registered }];
+  assert.equal(sameWorkspacePath('d:/projects/demo-shop/', registered), true);
   assert.equal(sameWorkspacePath(copy, registered), false);
-  assert.equal(sameWorkspacePath('SND-YDB', registered), false);
-  assert.deepEqual(workspaceBinding('d:/ai-workspace/projectos/snd-ydb/', projects).status, 'MATCH');
-  assert.deepEqual(workspaceBinding(copy, projects, 'snd-ydb'), { vscodePath: copy, registeredPath: registered, projectId: 'snd-ydb', status: 'WORKSPACE MISMATCH' });
+  assert.equal(sameWorkspacePath('demo-shop', registered), false);
+  assert.deepEqual(workspaceBinding('d:/projects/demo-shop/', projects).status, 'MATCH');
+  assert.deepEqual(workspaceBinding(copy, projects, 'demo-shop'), { vscodePath: copy, registeredPath: registered, projectId: 'demo-shop', status: 'WORKSPACE MISMATCH' });
   assert.equal(workspaceBinding(copy, projects).registeredPath, null, 'same display name cannot identify a project');
 });
 
@@ -106,11 +106,11 @@ test('VS Code client talks only to AI Router and verifies state-changing request
 
 test('client reuses only an exact registered path and rejects a divergent registration', async () => {
   const calls = [];
-  const existing = new RouterClient('http://127.0.0.1:43127', async (url) => { calls.push(url); return new Response(JSON.stringify([{ projectId: 'match', workspacePath: 'D:\\Workspace\\PROJECTOS\\SND-YDB' }]), { headers: { 'content-type': 'application/json' } }); });
-  assert.equal((await existing.ensureProject('d:/ai-workspace/projectos/snd-ydb/', 'SND-YDB')).projectId, 'match');
+  const existing = new RouterClient('http://127.0.0.1:43127', async (url) => { calls.push(url); return new Response(JSON.stringify([{ projectId: 'match', workspacePath: 'D:\\Projects\\demo-shop' }]), { headers: { 'content-type': 'application/json' } }); });
+  assert.equal((await existing.ensureProject('d:/projects/demo-shop/', 'demo-shop')).projectId, 'match');
   assert.equal(calls.length, 1);
-  const divergent = new RouterClient('http://127.0.0.1:43127', async (url) => new Response(JSON.stringify(url.endsWith('/api/projects') ? [] : { project: { projectId: 'wrong', workspacePath: 'D:\\Workspace\\PROJECTOS\\SND-YDB' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce' } }));
-  await assert.rejects(() => divergent.ensureProject('D:\\PROJECTOS - Copy\\SND-YDB', 'SND-YDB'), { code: 'WORKSPACE_MISMATCH' });
+  const divergent = new RouterClient('http://127.0.0.1:43127', async (url) => new Response(JSON.stringify(url.endsWith('/api/projects') ? [] : { project: { projectId: 'wrong', workspacePath: 'D:\\Projects\\demo-shop' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce' } }));
+  await assert.rejects(() => divergent.ensureProject('D:\\Projects - Copy\\demo-shop', 'demo-shop'), { code: 'WORKSPACE_MISMATCH' });
 });
 
 test('VS Code client reports router errors and never falls back to a provider endpoint', async () => {
@@ -183,7 +183,7 @@ test('VS Code routes a long Unicode instruction through the full-body local expl
   const calls = [];
   const fetch = async (url, options = {}) => { calls.push({ url, options }); return new Response(JSON.stringify({ selected: { profile_id: 'claude' } }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce' } }); };
   const client = new RouterClient('http://127.0.0.1:43127', fetch);
-  const fullPrompt = `SND/YDB — navegación Wholesale\n${'Preservar Catálogo mayorista, selección activa y bilingüismo.\n'.repeat(140)}`;
+  const fullPrompt = `Demo shop — navegación Products\n${'Preservar Catálogo de productos, selección activa y bilingüismo.\n'.repeat(140)}`;
   await client.explain(fullPrompt, { routing_mode: 'manual', provider_id: 'anthropic', profile_id: 'claude', model_id: 'opus', reasoning_effort: 'medium' }, [{ mime_type: 'image/png' }]);
   const explainCall = calls.find(call => call.url.endsWith('/api/routing/explain'));
   assert.ok(explainCall);
@@ -225,7 +225,7 @@ test('extension activates, registers every command, and handles every webview ac
       executeCommand(id, ...args) { return commands.get(id)(...args); }
     },
     workspace: {
-      workspaceFolders: [{ name: 'SND-YDB', uri: { fsPath: 'D:\\Workspace\\PROJECTOS\\SND-YDB' } }],
+      workspaceFolders: [{ name: 'demo-shop', uri: { fsPath: 'D:\\Projects\\demo-shop' } }],
       getConfiguration() { return { get(name, fallback) { return configuration[name] ?? fallback; } }; }
     },
     window: {
@@ -239,9 +239,9 @@ test('extension activates, registers every command, and handles every webview ac
   };
   class FakeClient {
     async post() { return { status: 'ok' }; }
-    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY', blockers: [] }; if (path === '/api/projects') return [{ projectId: 'snd-ydb', workspacePath: 'D:\\Workspace\\PROJECTOS\\SND-YDB' }]; return {}; }
+    async get(path) { if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY', blockers: [] }; if (path === '/api/projects') return [{ projectId: 'demo-shop', workspacePath: 'D:\\Projects\\demo-shop' }]; return {}; }
     async explain() { return { selected: { provider_id: 'ollama', model_id: 'qwen' } }; }
-    async ensureProject(workspacePath) { ensuredWorkspace = workspacePath; return { projectId: 'snd-ydb' }; }
+    async ensureProject(workspacePath) { ensuredWorkspace = workspacePath; return { projectId: 'demo-shop' }; }
     async createTask(_project, _objective, _instruction, _selection, options) { createOptions = options; return { descriptor: { task_id: 'read-only-task' } }; }
     async previewArtp() { return { compact_view: { descriptor: 'ARTP/1' }, expanded_view: { vision_required: false }, semantic_hash: 'semantic', context_manifest: { hash: 'manifest' }, canonical_task: { alias_bindings: [] } }; }
     async resume() { throw Object.assign(new Error('resume response was interrupted'), { code: 'NETWORK_ERROR' }); }
@@ -263,7 +263,7 @@ test('extension activates, registers every command, and handles every webview ac
   await messageHandler({ type: 'run', instruction: 'Inspect only', selection: {}, readOnly: true });
   await messageHandler({ type: 'preview', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
   await messageHandler({ type: 'run', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
-  assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, undefined); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'workspace' && item.status === 'MATCH' && item.registeredPath === 'D:\\Workspace\\PROJECTOS\\SND-YDB')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'taskStatus'));
+  assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, undefined); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'workspace' && item.status === 'MATCH' && item.registeredPath === 'D:\\Projects\\demo-shop')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'taskStatus'));
   assert.ok(messages.some(item => item.type === 'taskStatus' && item.task.status === 'COMPLETED' && item.task.result === 'Read-only inspection complete.')); assert.ok(logs.some(line => line.includes('task.resume.response_lost')));
   assert.match(statusBar.text, /Completed/); assert.match(statusBar.tooltip, /service: connected/); assert.doesNotMatch(statusBar.text, /connected/i);
   assert.equal(messages.filter(item => item.type === 'artpPreview').length, 2); assert.equal(createOptions.readOnly, true);
@@ -398,13 +398,13 @@ test('optional Focus Mode auto-open requires an exact registered workspace match
 test('a different registered workspace blocks writes but permits a read-only task with a warning', async () => {
   const messages = []; const errors = []; let provider; let created = 0; let registered = 0; let createdObjective; let createdInstruction; let explainedObjective;
   const disposable = () => ({ dispose() {} });
-  const openPath = 'D:\\PROJECTOS - Copy\\SND-YDB';
-  const registeredPath = 'D:\\Workspace\\PROJECTOS\\SND-YDB';
+  const openPath = 'D:\\Projects - Copy\\demo-shop';
+  const registeredPath = 'D:\\Projects\\demo-shop';
   const vscode = {
     StatusBarAlignment: { Left: 1 }, Uri: { parse: value => value, joinPath: (...values) => values.join('/') },
     env: { async openExternal() { return true; } },
     commands: { registerCommand() { return disposable(); } },
-    workspace: { workspaceFolders: [{ name: 'SND-YDB', uri: { fsPath: openPath } }], getConfiguration() { return { get(_name, fallback) { return fallback; } }; } },
+    workspace: { workspaceFolders: [{ name: 'demo-shop', uri: { fsPath: openPath } }], getConfiguration() { return { get(_name, fallback) { return fallback; } }; } },
     window: {
       activeTextEditor: null, createOutputChannel() { return { appendLine() {}, clear() {}, show() {}, dispose() {} }; },
       createStatusBarItem() { return { show() {}, dispose() {}, text: '' }; },
@@ -413,7 +413,7 @@ test('a different registered workspace blocks writes but permits a read-only tas
     }
   };
   class FakeClient {
-    async get(path) { if (path === '/api/projects') return [{ projectId: 'original', displayName: 'SND-YDB', workspacePath: registeredPath }]; if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY' }; return {}; }
+    async get(path) { if (path === '/api/projects') return [{ projectId: 'original', displayName: 'demo-shop', workspacePath: registeredPath }]; if (path === '/api/profiles') return []; if (path === '/api/readiness') return { status: 'READY' }; return {}; }
     async post() { return {}; }
     async ensureProject(workspacePath) { registered += 1; return { projectId: 'copy', workspacePath }; }
     async explain(objective) { explainedObjective = objective; return { selected: { provider_id: 'ollama', profile_id: 'gemma4', model_id: 'gemma4:26b' } }; }
@@ -436,11 +436,11 @@ test('a different registered workspace blocks writes but permits a read-only tas
     assert.ok(errors.some(item => item.includes('WORKSPACE_MISMATCH')));
     await api.runTask('Inspect only', null, true);
     assert.equal(created, 1); assert.equal(registered, 1);
-    const longPrompt = `SND/YDB — reorganiza el sidebar de Wholesale\n${'Preserva rutas, datos, permisos y traducciones ES/EN.\n'.repeat(110)}`;
+    const longPrompt = `Demo shop — reorganiza el sidebar de Products\n${'Preserva rutas, datos, permisos y traducciones ES/EN.\n'.repeat(110)}`;
     await api.runTask(longPrompt, null, true);
     assert.equal(created, 2);
     assert.equal(explainedObjective, longPrompt);
-    assert.equal(createdObjective, 'SND/YDB — reorganiza el sidebar de Wholesale');
+    assert.equal(createdObjective, 'Demo shop — reorganiza el sidebar de Products');
     assert.ok(createdInstruction.startsWith(longPrompt));
   } finally { for (const item of context.subscriptions) item.dispose?.(); }
 });

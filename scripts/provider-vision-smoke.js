@@ -32,9 +32,11 @@ function bluePng() {
   const row = Buffer.from([0, ...Array.from({ length: 16 }, () => [0, 40, 255]).flat()]);
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(Buffer.concat(Array.from({ length: 16 }, () => row)))), chunk('IEND', Buffer.alloc(0))]);
 }
+const protectedWorkspaces = (process.env.AI_ROUTER_PROTECTED_WORKSPACES || '').split(';').map(item => item.trim().toLowerCase()).filter(Boolean);
+const isProtected = (workspacePath) => protectedWorkspaces.some(item => workspacePath.toLowerCase().startsWith(item));
 await api('/api/health');
 const project = (await api('/api/projects')).find((item) => item.projectId === projectId);
-if (!project || /SND-YDB/i.test(project.workspacePath)) throw new Error('A non-SND fixture is required.');
+if (!project || isProtected(project.workspacePath)) throw new Error('A fixture project outside AI_ROUTER_PROTECTED_WORKSPACES is required.');
 const profile = (await api('/api/profiles')).find((item) => item.profile_id === profileId);
 if (!profile || profile.provider_id !== 'ollama' || profile.routing_classification !== 'REAL' || profile.cost_category !== 'LOCAL' || profile.models?.find((item) => item.model_id === profile.selected_model_id)?.discovered_facts?.vision !== true) throw new Error('A REAL, local vision-capable Ollama profile is required.');
 const digest = () => readFile(path.join(project.workspacePath, 'README.md')).then((bytes) => createHash('sha256').update(bytes).digest('hex'));

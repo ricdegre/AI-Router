@@ -49,4 +49,4 @@ If the launcher cannot detect an unusual or portable VS Code installation, use *
 - A real isolated E2E task and fallback test pass.
 - Only after the Dashboard says `READY FOR REAL PROJECTS` should a real project be registered.
 
-SND/YDB are deliberately excluded from this procedure until readiness passes and the user explicitly registers them.
+Real user projects are deliberately excluded from this procedure until readiness passes and the user explicitly registers them.

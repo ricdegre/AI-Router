@@ -46,14 +46,14 @@ test('project inspection prioritizes source paths named in the task objective ov
   await writeFile(path.join(workspace, 'README.md'), '# General project overview\n');
   await writeFile(path.join(workspace, 'package.json'), '{"name":"generic-project"}');
   await writeFile(path.join(workspace, 'next.config.ts'), 'export default {};');
-  await writeFile(path.join(workspace, 'app', 'admin', 'wholesale-workspace.tsx'), 'export const wholesaleNavigation = true;');
-  await writeFile(path.join(workspace, 'app', 'admin', 'wholesale-sidebar.css'), '.wholesale-sidebar { display: flex; }');
+  await writeFile(path.join(workspace, 'app', 'admin', 'products-workspace.tsx'), 'export const productsNavigation = true;');
+  await writeFile(path.join(workspace, 'app', 'admin', 'products-sidebar.css'), '.products-sidebar { display: flex; }');
   const { project } = await new ProjectRegistry(runtime).register(workspace); const memory = new MemoryManager(runtime); await memory.initialize(project);
-  const context = await new ContextBuilder(memory, { defaultBudgetChars: 12_000 }).build(project.projectId, { task_id: 'focus-files', objective: 'Move Wholesale navigation into a sidebar submenu' }, { workspacePath: workspace });
-  assert.ok(context.project_inspection.included_files.includes('app/admin/wholesale-workspace.tsx'));
-  assert.ok(context.project_inspection.included_files.includes('app/admin/wholesale-sidebar.css'));
-  assert.match(context.rendered, /wholesaleNavigation/);
-  assert.match(context.rendered, /wholesale-sidebar/);
+  const context = await new ContextBuilder(memory, { defaultBudgetChars: 12_000 }).build(project.projectId, { task_id: 'focus-files', objective: 'Move Products navigation into a sidebar submenu' }, { workspacePath: workspace });
+  assert.ok(context.project_inspection.included_files.includes('app/admin/products-workspace.tsx'));
+  assert.ok(context.project_inspection.included_files.includes('app/admin/products-sidebar.css'));
+  assert.match(context.rendered, /productsNavigation/);
+  assert.match(context.rendered, /products-sidebar/);
 });
 
 test('visual task context combines workspace evidence with attachment metadata but no private source', async (t) => {

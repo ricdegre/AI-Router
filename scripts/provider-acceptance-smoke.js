@@ -16,9 +16,11 @@ async function api(route, body) {
   if (!response.ok) throw Object.assign(new Error(result.message || 'AI Router request failed.'), { code: result.error, details: result.details });
   return result;
 }
+const protectedWorkspaces = (process.env.AI_ROUTER_PROTECTED_WORKSPACES || '').split(';').map(item => item.trim().toLowerCase()).filter(Boolean);
+const isProtected = (workspacePath) => protectedWorkspaces.some(item => workspacePath.toLowerCase().startsWith(item));
 await api('/api/health');
 const project = (await api('/api/projects')).find(item => item.projectId === projectId);
-if (!project || /SND-YDB/i.test(project.workspacePath)) throw new Error('A registered non-SND fixture project is required.');
+if (!project || isProtected(project.workspacePath)) throw new Error('A registered fixture project outside AI_ROUTER_PROTECTED_WORKSPACES is required.');
 const readmePath = path.join(project.workspacePath, 'README.md');
 const digest = () => readFile(readmePath).then(bytes => createHash('sha256').update(bytes).digest('hex'));
 const before = await digest();

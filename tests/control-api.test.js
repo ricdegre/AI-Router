@@ -90,7 +90,7 @@ test('control API stages image bytes privately and audits only bounded metadata'
 
 test('long multilingual task instructions persist intact with an image in manual and automatic modes', async (t) => {
   const { api, project, services } = await fixture(t);
-  const title = 'SND/YDB — MOVE WHOLESALE NAVIGATION INTO SIDEBAR SUBMENU';
+  const title = 'Demo shop — MOVE PRODUCTS NAVIGATION INTO SIDEBAR SUBMENU';
   const longPrompt = `${title}\n\nOBJETIVO:\nModificar navegación bilingüe ES / EN.\n${'Preservar rutas, permisos, selección activa y datos existentes.\n'.repeat(120)}\nNo hagas push.`;
   assert.ok(longPrompt.length > 2_000);
   const bytes = Buffer.alloc(24); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes); bytes.write('IHDR', 12, 'ascii'); bytes.writeUInt32BE(8, 16); bytes.writeUInt32BE(9, 20);

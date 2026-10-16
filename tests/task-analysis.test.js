@@ -39,7 +39,7 @@ test('a long write specification with many explicit sections requires strong exe
 
 test('a long Spanish navigation edit is not misclassified by preservation mentions of selection or architecture', () => {
   const sections = Array.from({ length: 8 }, (_, index) => `${index + 1}. Requisito ${index + 1}\nPreservar rutas, selección activa, permisos, traducciones y arquitectura existente. ${'No tocar Productos y servicios ni datos no relacionados. '.repeat(10)}\n`).join('\n');
-  const analysis = analyzeTask({ objective: 'SND/YDB — MOVE WHOLESALE NAVIGATION INTO SIDEBAR SUBMENU', instruction: `Modificar la navegación de Wholesale y convertir Operaciones Wholesale en un submenu.\n\n${sections}`, task_type: 'coding', attachments: [{ type: 'image' }] });
+  const analysis = analyzeTask({ objective: 'Demo shop — MOVE PRODUCTS NAVIGATION INTO SIDEBAR SUBMENU', instruction: `Modificar la navegación de Products y convertir Operaciones Products en un submenu.\n\n${sections}`, task_type: 'coding', attachments: [{ type: 'image' }] });
   assert.equal(analysis.intent, 'edit');
   assert.equal(analysis.scope, 'feature');
   assert.equal(analysis.write_mode, 'write_allowed');
@@ -68,7 +68,7 @@ test('visual tasks preserve independent read-only and write-enabled intent', () 
 });
 
 test('write scope limits do not turn an explicitly requested edit into read-only', () => {
-  const analysis = analyzeTask({ objective: 'Implement nested Wholesale sidebar navigation', instruction: 'Do not change unrelated routes, data, logic, or styles.' });
+  const analysis = analyzeTask({ objective: 'Implement nested Products sidebar navigation', instruction: 'Do not change unrelated routes, data, logic, or styles.' });
   assert.equal(analysis.intent, 'edit'); assert.equal(analysis.write_mode, 'write_allowed');
   assert.equal(analyzeTask({ objective: 'Explain the page without changing any files' }).write_mode, 'read_only');
 });
