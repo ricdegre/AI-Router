@@ -4,7 +4,7 @@ const { randomUUID, createHash } = require('node:crypto');
 const { RouterClient } = require('./router-client');
 const { workspaceRelativeFile, sameWorkspacePath, workspaceBinding } = require('./workspace-context');
 const { taskSnapshot, trackTask } = require('./task-tracking');
-const { selectCurrentTask } = require('./current-task-selection');
+const { selectCurrentTask, latestWorkspaceTask, lastTaskSummary } = require('./current-task-selection');
 
 function outputLine(channel, label, value) { channel.appendLine(`${label}: ${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}`); }
 function safeError(error) { return { code: error?.code || 'ERROR', status: error?.status ?? null, message: error?.message || 'Unknown error' }; }
@@ -78,7 +78,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
           ++trackingGeneration; trackingKey = null; currentTask = null;
           const saved = context.workspaceState?.update?.('aiRouter.currentTask', null);
           if (saved?.catch) void saved.catch(error => log('task.state.persist.failed', safeError(error)));
-          return showTask({ status: 'READY', taskId: null });
+          return showTask({ status: 'READY', taskId: null, lastTask: lastTaskSummary(latestWorkspaceTask(tasks, binding.projectId, binding.registeredPath)) });
         }
         const taskId = selected.descriptor.task_id;
         if (['ROUTING', 'RUNNING', 'WAITING_VALIDATION', 'ESCALATING'].includes(selected.state?.state)) sessionTaskId = taskId;

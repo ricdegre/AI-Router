@@ -41,6 +41,7 @@
     state.className = ['COMPLETED'].includes(task.status) ? 'ok' : ['FAILED', 'BLOCKED', 'VALIDATION_FAILED', 'TRACKING_LOST'].includes(task.status) ? 'bad' : '';
     const details = document.querySelector('#taskDetails'); details.replaceChildren();
     const row = (label, value, technical = false) => { if (value === null || value === undefined || value === '') return; const item = document.createElement('div'); if (technical) item.className = 'technical-detail'; const name = document.createElement('strong'); name.textContent = `${label}: `; item.append(name, document.createTextNode(String(value))); details.append(item); };
+    if (task.status === 'READY') row('Last task', task.lastTask);
     row('Task', task.taskId, true); if (task.persistedState && task.persistedState !== task.status) row('Recorded state', task.persistedState, true); row('Stage', task.stage); row('Provider', task.provider); row('Model', task.model);
     if (focusMode) document.querySelector('#advancedTaskId').textContent = task.taskId ? `Task ID: ${task.taskId}` : 'No task yet';
     row('Elapsed', Number.isFinite(task.durationMs) ? `${Math.floor(task.durationMs / 60000)}m ${Math.floor((task.durationMs % 60000) / 1000)}s` : null);
