@@ -109,3 +109,10 @@ test('one-line changes are light work', () => {
   assert.equal(analyzeTask({ objective: 'Make a one-line change in status.txt' }).complexity, 'low');
   assert.equal(analyzeTask({ objective: 'Cambia una sola línea del archivo de configuración' }).complexity, 'low');
 });
+
+test('mentioning web in page copy does not require web access, but asking to search the web does', () => {
+  assert.ok(!analyzeTask({ objective: "Cambia el texto del contador: reemplaza 'landing pages generadas' por 'sitios web generados'." }).required_capabilities.includes('web'));
+  assert.ok(!analyzeTask({ objective: 'Fix the layout of the web page header' }).required_capabilities.includes('web'));
+  assert.ok(analyzeTask({ objective: 'Busca en la web la versión actual de Vite y actualiza la dependencia' }).required_capabilities.includes('web'));
+  assert.ok(analyzeTask({ objective: 'Search the web for the current official Supabase auth docs' }).required_capabilities.includes('web'));
+});
