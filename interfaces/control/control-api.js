@@ -62,6 +62,9 @@ export class ControlApi {
     this.settingsStore = settingsStore;
     this.modelCache = new Map();
     this.providerCache = { at: 0, value: [] };
+    // Provider health, doctor, and Git inspection spawn CLIs or git; share recent results across pages.
+    this.doctorCache = { at: 0, value: null };
+    this.projectsCache = { at: 0, value: null };
   }
 
   async initialize() {
@@ -90,9 +93,10 @@ export class ControlApi {
     };
   }
 
-  async projects() {
+  async projects(force = false) {
+    if (!force && this.projectsCache.value && Date.now() - this.projectsCache.at < 30_000) return this.projectsCache.value;
     const projects = await this.services.projectRegistry.refreshStatuses();
-    return Promise.all(projects.map(async (project) => {
+    const value = await Promise.all(projects.map(async (project) => {
       let memory = null; let memoryStatus = 'not-initialized'; let memoryError = null;
       try { memory = await this.services.memoryManager.summary(project.projectId); memoryStatus = 'valid'; }
       catch (error) { memoryStatus = error.code === 'ENOENT' ? 'not-initialized' : 'invalid'; memoryError = error.code ?? 'MEMORY_READ_FAILED'; }
@@ -103,6 +107,8 @@ export class ControlApi {
       catch (error) { taskError = error.code ?? 'TASK_READ_FAILED'; }
       return { ...project, memory_initialized: Boolean(memory), memory_status: memoryStatus, memory_error: memoryError, git: git.isRepository ? createCheckpointMetadata(git) : git, active_task: tasks.find((task) => !['COMPLETED', 'CANCELLED'].includes(task.state)) ?? null, task_error: taskError };
     }));
+    this.projectsCache = { at: Date.now(), value };
+    return value;
   }
 
   async providers(force = false) {
@@ -119,31 +125,28 @@ export class ControlApi {
     if (profileId) requiredId(profileId, 'Profile ID');
     const cacheKey = `${providerId ?? '*'}:${profileId ?? '-'}:${detailed ? 'detailed' : 'basic'}`;
     const cached = this.modelCache.get(cacheKey);
-    if (!force && cached && Date.now() - cached.at < 30_000) return cached.value;
+    // Discovery spawns provider CLIs; the Models page offers an explicit refresh for fresher data.
+    if (!force && cached && Date.now() - cached.at < 300_000) return cached.value;
     const models = [];
     const providers = this.services.providerRegistry.list().filter((provider) => !providerId || provider.id === providerId);
     if (providerId && providers.length === 0) {
       return [{ provider_id: providerId, model_id: null, availability: 'unavailable', error_code: 'MODEL_PROVIDER_NOT_REGISTERED' }];
     }
-    for (const provider of providers) {
-      if (!provider.enabled) {
-        if (providerId) models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: 'PROVIDER_DISABLED' });
-        continue;
-      }
+    // Providers are independent, so discover them in parallel and keep registry order.
+    const perProvider = await Promise.all(providers.map(async (provider) => {
+      if (!provider.enabled) return providerId ? [{ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: 'PROVIDER_DISABLED' }] : [];
       const adapter = this.services.providerRegistry.get(provider.id);
-      if (typeof adapter.discoverModels !== 'function') {
-        if (providerId) models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: 'MODEL_DISCOVERY_NOT_SUPPORTED' });
-        continue;
-      }
-      try { models.push(...(await adapter.discoverModels({ detailed, profile_id: profileId })).map((model) => decorateModelForProfiles({ ...model, availability: model.availability ?? 'available' }))); }
-      catch (error) { models.push({ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: error.code ?? 'MODEL_DISCOVERY_FAILED' }); }
-    }
+      if (typeof adapter.discoverModels !== 'function') return providerId ? [{ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: 'MODEL_DISCOVERY_NOT_SUPPORTED' }] : [];
+      try { return (await adapter.discoverModels({ detailed, profile_id: profileId, force })).map((model) => decorateModelForProfiles({ ...model, availability: model.availability ?? 'available' })); }
+      catch (error) { return [{ provider_id: provider.id, model_id: null, availability: 'unavailable', error_code: error.code ?? 'MODEL_DISCOVERY_FAILED' }]; }
+    }));
+    for (const list of perProvider) models.push(...list);
     this.modelCache.set(cacheKey, { at: Date.now(), value: models });
     return models;
   }
 
   async profiles(query) {
-    const [profiles, settings, statuses] = await Promise.all([this.services.profileRegistry.list(query.get('provider') || undefined), this.settingsStore.load(), this.services.providerRegistry.status()]);
+    const [profiles, settings, statuses] = await Promise.all([this.services.profileRegistry.list(query.get('provider') || undefined), this.settingsStore.load(), this.providers().then((list) => list.map((item) => ({ provider_id: item.id, health: item.health })))]);
     const providers = new Map(this.services.providerRegistry.list().map((item) => [item.id, item]));
     const health = new Map(statuses.map((item) => [item.provider_id, item.health]));
     const visible = settings.developer_test_mode && query.get('include_test') === 'true' ? profiles : profiles.filter((profile) => !isSyntheticProfile(profile, providers.get(profile.provider_id)));
@@ -157,7 +160,7 @@ export class ControlApi {
   }
 
   async readiness() {
-    const [stored, providers, profiles, doctor] = await Promise.all([this.services.readinessStore.load(), this.providers(true), this.services.profileRegistry.list(), this.doctor()]);
+    const [stored, providers, profiles, doctor] = await Promise.all([this.services.readinessStore.load(), this.providers(), this.services.profileRegistry.list(), this.doctor()]);
     const healthy = new Set(providers.filter((item) => item.enabled && item.health.status === 'healthy').map((item) => item.id));
     const descriptors = new Map(providers.map((item) => [item.id, item]));
     const resources = profiles.filter((profile) => profile.enabled && profile.selected_model_id && healthy.has(profile.provider_id)).flatMap((profile) => {
@@ -223,7 +226,12 @@ export class ControlApi {
     return Promise.all(projects.map(async (project) => ({ project_id: project.projectId, display_name: project.displayName, ...(await this.services.projectCoordinator.inspect(project.projectId)) })));
   }
 
-  async doctor() { return runDoctor({ config: this.config, ...this.services, version: this.version }); }
+  async doctor(force = false) {
+    if (!force && this.doctorCache.value && Date.now() - this.doctorCache.at < 15_000) return this.doctorCache.value;
+    const value = await runDoctor({ config: this.config, ...this.services, version: this.version });
+    this.doctorCache = { at: Date.now(), value };
+    return value;
+  }
 
   async handleGet(pathname, query) {
     if (pathname === '/api/health') return { status: 'ok', local_only: true };
@@ -238,8 +246,8 @@ export class ControlApi {
     if (pathname === '/api/decision-engines/status') return this.services.routingPolicy.status();
     if (pathname === '/api/decision-engines/config') return this.services.decisionEngineConfigStore.load();
     if (pathname === '/api/locks') return this.locks();
-    if (pathname === '/api/audit') return (await this.services.auditLog.list(queryFilters(query))).slice(-500).reverse();
-    if (pathname === '/api/doctor') return this.doctor();
+    if (pathname === '/api/audit') return (await this.services.auditLog.list(queryFilters(query))).slice(-Math.min(500, Math.max(1, Number(query.get('limit')) || 500))).reverse();
+    if (pathname === '/api/doctor') return this.doctor(query.get('refresh') === 'true');
     if (pathname === '/api/settings') return this.settingsStore.load();
     if (pathname === '/api/readiness') return this.readiness();
     if (pathname === '/api/integrations/vscode') return this.services.vscodeIntegration.inspect();
@@ -261,6 +269,8 @@ export class ControlApi {
   }
 
   async handlePost(pathname, body) {
+    // Any change can affect projects or diagnostics; do not serve them from cache afterwards.
+    this.projectsCache.at = 0; this.doctorCache.at = 0;
     if (pathname === '/api/artp/preview') {
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !['descriptor', 'draft_id', 'attachment_ids'].includes(key))) throw new AiRouterError('ARTP preview accepts only descriptor and draft attachment references.', 'ARTP_PREVIEW_INVALID');
       return this.services.artpTaskService.preview(body);

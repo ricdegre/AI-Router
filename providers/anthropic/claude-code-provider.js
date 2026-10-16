@@ -142,7 +142,7 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     try {
       const auth = await this.inspectAuth(profile_id, timeout_ms);
       if (!auth.authenticated) return { status: 'auth-pending', auth_mode: 'claude-subscription-cli', user_action: 'Run claude auth login and choose the Claude subscription account. Do not choose Console/API billing.', auth_command: 'claude auth login', execution_channel: 'claude-code-subscription', cli: auth.cli };
-      const models = await this.discoverModels({ profile_id, timeout_ms, skipAuth: true });
+      const models = await this.discoverModels({ profile_id, timeout_ms, skipAuth: true, force: true });
       return { status: 'connected', auth_mode: 'claude-subscription-cli', plan_type: auth.plan_type, account_type: auth.auth_method, model_count: models.length, model_availability: 'official-cli-validated', rate_limits_available: true, execution_channel: 'claude-code-subscription', cli: auth.cli };
     } catch (error) {
       if (error.code !== 'PROVIDER_CLI_NOT_INSTALLED') throw error;
@@ -155,7 +155,16 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     try { const auth = await this.inspectAuth(profile_id, timeout_ms); return { status: auth.authenticated ? 'healthy' : 'unavailable', reachable: auth.authenticated, authenticated: auth.authenticated, plan_type: auth.plan_type, cli: auth.cli, execution_channel: 'claude-code-subscription' }; }
     catch (error) { return { status: 'unavailable', reachable: false, error_code: error.code }; }
   }
-  async discoverModels({ profile_id, timeout_ms, skipAuth = false }) {
+  // Discovery runs several Claude Code commands (~20 s); the model list rarely changes, so reuse it for 30 minutes.
+  async discoverModels(options = {}) {
+    const key = `${options.profile_id ?? 'provider-discovery'}:${options.skipAuth ? 'no-auth' : 'auth'}`;
+    const cached = this.discoveryCache?.get(key);
+    if (!options.force && cached && Date.now() - cached.at < 1_800_000) return cached.value;
+    const value = await this.discoverModelsUncached(options);
+    (this.discoveryCache ??= new Map()).set(key, { at: Date.now(), value });
+    return value;
+  }
+  async discoverModelsUncached({ profile_id, timeout_ms, skipAuth = false }) {
     profile_id ??= 'provider-discovery';
     if (!skipAuth) {
       const auth = await this.inspectAuth(profile_id, timeout_ms);
@@ -180,7 +189,7 @@ export class ClaudeCodeProvider extends ProviderAdapter {
       const auth = await this.inspectAuth(profile_id, timeout_ms);
       if (!auth.authenticated) return { profile_id, provider_id: this.descriptor.id, auth: { mode: 'claude-subscription-cli', status: 'required' }, reachable: false, health: { status: 'unavailable' }, cli: auth.cli, models: [], model_list_available: false, usage: { available: false }, limits: { available: false }, plan_type: auth.plan_type };
       const [models, limits] = await Promise.all([
-        this.discoverModels({ profile_id, timeout_ms, skipAuth: true }),
+        this.discoverModels({ profile_id, timeout_ms, skipAuth: true, force: true }),
         this.limits({ profile_id, timeout_ms }).catch((error) => ({ available: false, availability: 'unavailable', error_code: error.code ?? 'CLAUDE_USAGE_UNAVAILABLE' }))
       ]);
       return { profile_id, provider_id: this.descriptor.id, auth: { mode: 'claude-subscription-cli', status: 'valid', method: auth.auth_method }, reachable: true, health: { status: 'healthy' }, cli: auth.cli, models: models.map((model) => model.model_id), model_details: models, model_list_available: true, usage: limits, limits, plan_type: auth.plan_type, execution_channel: 'claude-code-subscription' };
