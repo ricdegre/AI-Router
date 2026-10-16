@@ -59,3 +59,20 @@ test('a new clean baseline applies only to tasks created afterward', async (t) =
   const missing = await detectWorkspaceDrift({ ...base, descriptor: descriptor('too-early', '2025-12-31T00:00:00.000Z') });
   assert.ok(missing.reasons.includes('checkpoint-reference-unavailable'));
 });
+
+test('a task records its own baseline at creation, so a commit made after the previous task does not block it', async (t) => {
+  const { recordTaskBaseline } = await import('../core/task-baseline.js');
+  const root = await temporaryDirectory(t);
+  const workspace = path.join(root, 'workspace');
+  await createGitRepository(workspace);
+  await writeFile(path.join(workspace, 'app.txt'), 'v1\n');
+  git(workspace, ['add', 'app.txt']); git(workspace, ['commit', '-m', 'Before previous task']);
+  const checkpoints = [{ ...createCheckpointMetadata(inspectGit(workspace)), task_id: 'previous-task', recordedAt: '2026-01-01T00:00:00.000Z' }];
+  await writeFile(path.join(workspace, 'app.txt'), 'v2\n');
+  git(workspace, ['add', 'app.txt']); git(workspace, ['commit', '-m', 'User checkpoint commit']);
+  const memoryManager = { addCheckpoint: async (_projectId, checkpoint) => { checkpoints.push(checkpoint); } };
+  const descriptor = { task_id: 'next-task', created_at: new Date().toISOString(), memory_version: '0.1', filesystem_scope: { workspace_path: workspace } };
+  await recordTaskBaseline(memoryManager, { projectId: 'p', workspacePath: workspace }, descriptor);
+  const drift = await detectWorkspaceDrift({ descriptor, project: { workspacePath: workspace }, memory: { memory_schema_version: '0.1', checkpoints }, attempts: [], pendingActions: [] });
+  assert.equal(drift.classification, 'SAFE'); assert.equal(drift.checkpoint.task_id, 'next-task');
+});

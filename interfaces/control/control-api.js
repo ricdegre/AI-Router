@@ -4,6 +4,7 @@ import { runDoctor } from '../../core/doctor.js';
 import { runTaskDoctor } from '../../core/task-doctor.js';
 import { descriptorFromTask } from '../../core/task-execution-descriptor.js';
 import { inspectGit, createCheckpointMetadata } from '../../checkpoints/git-checkpoint.js';
+import { recordTaskBaseline } from '../../core/task-baseline.js';
 import { AiRouterError } from '../../core/errors.js';
 import { ControlSettingsStore } from '../../core/control-settings-store.js';
 import { isSyntheticProfile } from '../../core/profile-test-service.js';
@@ -417,6 +418,7 @@ export class ControlApi {
           provider_constraints: body?.provider_constraints ?? {}, model_constraints: body?.model_constraints ?? {}
         }, project);
         await this.services.descriptorStore.create(descriptor); const state = await this.services.taskStore.create(descriptor); await this.services.executionPlanStore.create(descriptor);
+        await recordTaskBaseline(this.services.memoryManager, project, descriptor);
         await this.services.auditLog.record('task_created', { project_id: project.projectId, task_id: taskId, attachment_count: descriptor.attachments.length, attachments: descriptor.attachments.map((item) => ({ attachment_id: item.attachment_id, type: item.type, mime_type: item.mime_type, width: item.width, height: item.height, size_bytes: item.size_bytes })) }); return { descriptor, state };
       } catch (error) { if (claimedAttachments.length) await this.services.attachmentStore.removeTask(project.projectId, taskId); throw error; }
     }

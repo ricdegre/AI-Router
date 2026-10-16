@@ -1,3 +1,4 @@
+import { recordTaskBaseline } from '../core/task-baseline.js';
 import { stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { descriptorFromTask } from '../core/task-execution-descriptor.js';
@@ -67,6 +68,7 @@ export class ArtpTaskService {
       await this.services.descriptorStore.create(descriptor);
       const state = await this.services.taskStore.create(descriptor);
       await this.services.executionPlanStore.create(descriptor);
+      await recordTaskBaseline(this.services.memoryManager, project, descriptor);
       await this.services.auditLog.record('artp_task_created', { project_id: project.projectId, task_id: taskId, semantic_hash: artp.semantic_hash, descriptor_hash: artp.descriptor_hash, base_manifest_hash: artp.base_manifest_hash, alias_bindings: artp.alias_bindings });
       return { descriptor, state, idempotent_replay: false };
     } catch (error) {
