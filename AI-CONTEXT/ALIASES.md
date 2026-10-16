@@ -47,6 +47,6 @@ Referencias estructuradas versionadas por Git para agentes directos; NO son alia
 
 ## @RECOVERY
 - Tipo: REFERENCE.
-- Incluye: docs/HANDOFF-RECOVERY-2026-10-13.md y docs/REINSTALL_AND_RECOVERY.md.
+- Incluye: docs/REINSTALL_AND_RECOVERY.md. La nota personal de recuperación del 2026-10-13 es privada: está fuera del repo, en notes/ dentro del dataRoot del runtime (no versionada).
 - Propósito: antecedentes y seguimiento de recuperación.
-- Límite: nota fechada sin seguimiento al baseline; conservarla. Sus conexiones exitosas posteriores actualizan pendientes iniciales. Revalidar antes de afirmar readiness actual.
+- Límite: la nota privada puede no existir en otra máquina; no es requisito. Sus conexiones exitosas posteriores actualizan pendientes iniciales. Revalidar antes de afirmar readiness actual.
