@@ -292,7 +292,8 @@ test('duplicate IDs, conflicting targets, and unavailable recovery all fail befo
   const write = (id) => ({ action_id: id, type: 'modify_file', target: 'status.txt', parameters: { patch: { kind: 'exact_replace', expected_sha256: contentHash('OLD'), search: 'OLD', replacement: 'NEW' } } });
   for (const [index, actions, limits, expectedCode] of [
     [1, [write('same'), write('same')], {}, 'ACTION_PLAN_CONFLICT'],
-    [2, [write('first'), write('second')], {}, 'ACTION_PLAN_CONFLICT'],
+    // Same-file edits are combined in order; the second search no longer matches, so the plan fails preflight.
+    [2, [write('first'), write('second')], {}, 'PATCH_SOURCE_NOT_FOUND'],
     [3, [write('single')], { max_file_bytes: 2 }, 'RECOVERY_SNAPSHOT_UNAVAILABLE']
   ]) {
     await t.test(`case ${index}`, async (st) => {
@@ -430,4 +431,16 @@ test('a file edit without expected_sha256 uses the hash of the version the model
   await writeFile(path.join(stale.workspace, 'status.txt'), 'STATUS=PENDING\n');
   const blocked = await stale.orchestrator.run({ project_id: stale.project.projectId, task_id: 'hashless-stale-01', objective: 'Change PENDING to DONE in status.txt', preferred_profiles: ['profile-a'], required_capabilities: ['coding'] }, { maxAttempts: 1 });
   assert.notEqual(blocked.status, 'completed'); assert.equal(await readFile(path.join(stale.workspace, 'status.txt'), 'utf8'), 'STATUS=PENDING (edited meanwhile)\n');
+});
+
+test('several edits to one file in a plan are applied in order as one changeset', async (t) => {
+  const edit = (id, search, replacement) => ({ action_id: id, type: 'modify_file', target: 'App.tsx', parameters: { patch: { kind: 'exact_replace', search, replacement } } });
+  const setup = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', execute: async () => ({ structured: response('ok', 'Added route.', [
+    edit('add-import', "import Login from './Login';", "import Login from './Login';\nimport Reset from './Reset';"),
+    edit('add-route', '<Route path="*" />', '<Route path="/reset" />\n<Route path="*" />')
+  ]) }) }]);
+  await writeFile(path.join(setup.workspace, 'App.tsx'), "import Login from './Login';\n<Route path=\"*\" />\n");
+  const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'multi-edit-01', objective: 'Add a reset route in App.tsx', preferred_profiles: ['profile-a'], required_capabilities: ['coding'] }, { maxAttempts: 1 });
+  assert.equal(result.status, 'completed');
+  assert.equal(await readFile(path.join(setup.workspace, 'App.tsx'), 'utf8'), "import Login from './Login';\nimport Reset from './Reset';\n<Route path=\"/reset\" />\n<Route path=\"*\" />\n");
 });

@@ -236,3 +236,12 @@ test('Gemini API metered channel is registered disabled by default', async (t) =
   const descriptor = services.providerRegistry.list().find((provider) => provider.id === 'gemini');
   assert.equal(descriptor.execution_channels[0].id, 'gemini-api-metered'); assert.equal(descriptor.execution_channels[0].metered, true);
 });
+
+test('Claude sends long prompts through stdin instead of the command line', async () => {
+  const calls = [];
+  const worker = { runStreaming: async (_profile, args, options) => { calls.push({ args, options }); return { stdout: JSON.stringify({ type: 'result', subtype: 'success', result: '{}' }) }; } };
+  const provider = new ClaudeCodeProvider({ worker });
+  await provider.execute({ profile: { profile_id: 'p' }, model: 'opus', test_prompt: 'x'.repeat(40_000) }).catch(() => {});
+  assert.ok(calls[0].args.includes('--input-format')); assert.ok(!calls[0].args.some((arg) => arg.length > 1_000));
+  assert.ok(calls[0].options.stdin.includes('x'.repeat(100)));
+});

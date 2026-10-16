@@ -104,6 +104,8 @@ function modelDescriptor(providerId, model) {
   } });
 }
 
+const STDIN_PROMPT_THRESHOLD = 8_000;
+
 export class ClaudeCodeProvider extends ProviderAdapter {
   constructor(options = {}) {
     super({ id: 'anthropic', name: 'Anthropic', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['claude-subscription-cli'], execution_channels: [{ id: 'claude-code-subscription', name: 'Claude Code Subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false, input_modalities: ['text', 'image'] }], inference_controls: ['reasoning_effort'] });
@@ -189,13 +191,15 @@ export class ClaudeCodeProvider extends ProviderAdapter {
   async execute(request) {
     const prompt = request.test_prompt ?? request.structured_prompt ?? buildStructuredTaskPrompt(request);
     const imageInput = (request.attachments ?? []).length > 0;
-    const args = imageInput ? ['-p', '--input-format', 'stream-json'] : ['-p', prompt];
+    // Windows limits a command line to ~32K characters; long prompts go through stdin like image input.
+    const streamInput = imageInput || prompt.length > STDIN_PROMPT_THRESHOLD;
+    const args = streamInput ? ['-p', '--input-format', 'stream-json'] : ['-p', prompt];
     args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'plan', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config');
     if (request.inference?.reasoning_effort) args.push('--effort', request.inference.reasoning_effort);
     let stdin;
-    if (imageInput) {
+    if (streamInput) {
       const content = [{ type: 'text', text: prompt }];
-      for (const attachment of request.attachments) content.push({ type: 'image', source: { type: 'base64', media_type: attachment.mime_type, data: (await readVerifiedImage(attachment, this.descriptor.id)).toString('base64') } });
+      for (const attachment of request.attachments ?? []) content.push({ type: 'image', source: { type: 'base64', media_type: attachment.mime_type, data: (await readVerifiedImage(attachment, this.descriptor.id)).toString('base64') } });
       stdin = `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
     }
     const execute = typeof this.worker.runStreaming === 'function' ? this.worker.runStreaming.bind(this.worker) : this.worker.run.bind(this.worker);

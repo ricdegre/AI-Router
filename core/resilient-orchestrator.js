@@ -90,6 +90,29 @@ function withSeenContentHashes(actions, manifest) {
   });
 }
 
+// Models often split one file change into several edits (an import, then a route). Combine modify_file
+// actions on the same target into one ordered changeset instead of rejecting the plan as conflicting.
+function mergeSameFileEdits(actions) {
+  const merged = []; const byTarget = new Map();
+  for (const action of actions) {
+    const patch = action?.type === 'modify_file' ? action.parameters?.patch : null;
+    const replace = patch?.kind === 'exact_replace' && typeof patch.search === 'string';
+    const first = replace ? byTarget.get(action.target) : null;
+    if (first && first.action_id !== action.action_id && first.parameters.patch.expected_sha256 === patch.expected_sha256) {
+      const target = first.parameters.patch;
+      target.edits ??= [{ search: target.search, replacement: target.replacement }];
+      target.edits.push({ search: patch.search, replacement: patch.replacement });
+      continue;
+    }
+    if (replace) {
+      const copy = { ...action, parameters: { ...action.parameters, patch: { ...patch } } };
+      byTarget.set(action.target, copy); merged.push(copy); continue;
+    }
+    merged.push(action);
+  }
+  return merged;
+}
+
 export class ResilientOrchestrator {
   constructor(dependencies) {
     Object.assign(this, dependencies);
@@ -272,7 +295,7 @@ export class ResilientOrchestrator {
           providerDiagnostic = safeProviderDiagnostic(error);
         }
 
-        const proposedActions = withSeenContentHashes(structured?.proposed_actions ?? [], attemptManifest);
+        const proposedActions = mergeSameFileEdits(withSeenContentHashes(structured?.proposed_actions ?? [], attemptManifest));
         let approvedActions = [];
         let rejectedActions = [];
         let executionResults = [];
@@ -300,7 +323,8 @@ export class ResilientOrchestrator {
           await this.auditLog?.record('actions_proposed', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, action_ids: proposedActions.map((action) => action.action_id) });
           const mediator = this.actionMediatorFactory?.({ project, task, attempt });
           const actionLimit = task.execution_limits?.max_actions_per_attempt ?? 20;
-          if (proposedActions.length > actionLimit) {
+          // The limit applies to what the model proposed, before same-file edits are combined.
+          if ((structured?.proposed_actions ?? []).length > actionLimit) {
             rejectedActions = proposedActions;
             executionResults = proposedActions.map((action) => ({ action_id: action.action_id ?? null, type: action.type ?? null, target: action.target ?? null, status: 'rejected', result: null, error: { code: 'ACTION_LIMIT_EXCEEDED', message: 'Provider proposed more actions than the descriptor permits.' } }));
             await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { proposed_actions: proposedActions, approved_actions: [], rejected_actions: rejectedActions, execution_results: executionResults });
