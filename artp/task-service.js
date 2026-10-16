@@ -58,7 +58,7 @@ export class ArtpTaskService {
         action_policy: { allowed: preview.effective_policy.allowed_operations, denied: preview.effective_policy.forbidden_operations.filter((item) => READ.includes(item) || ['create_file', 'modify_file', 'append_file', 'run_validation_command'].includes(item)) },
         filesystem_scope: { workspace_path: project.workspacePath, allowed_paths: semantic.scope.allowed_paths, denied_paths: semantic.scope.denied_paths },
         validation_requirements: preview.expanded_view.validation_requirements, acceptance_criteria: semantic.completion_criteria,
-        context_policy: { required_files: requiredFiles, budget_chars: 16_000 },
+        context_policy: { required_files: requiredFiles, budget_chars: 48_000 },
         manual_provider: route.provider_id ?? null, manual_profile: route.profile_id ?? null, manual_model: route.model_id ?? null,
         manual_execution_channel: route.execution_channel ?? null, manual_reasoning_effort: route.reasoning_effort ?? null,
         allow_metered: false, cost_policy: { allow_metered: false }, artp
