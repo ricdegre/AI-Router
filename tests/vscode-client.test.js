@@ -519,8 +519,8 @@ test('Windows one-click launchers use only the fixed local extension manager', a
 
 test('with no active task the panel can show the latest workspace task as context', () => {
   const { latestWorkspaceTask, lastTaskSummary } = require('../interfaces/vscode/current-task-selection.js');
-  const task = (id, state, at, objective = 'Add account page') => ({ descriptor: { task_id: id, project_id: 'p', objective, updated_at: at, filesystem_scope: { workspace_path: 'D:\work' } }, state: { state, updated_at: at } });
+  const task = (id, state, at, objective = 'Add account page') => ({ descriptor: { task_id: id, project_id: 'p', objective, updated_at: at, filesystem_scope: { workspace_path: 'D:/work' } }, state: { state, updated_at: at } });
   const tasks = [task('old', 'COMPLETED', '2026-10-01T00:00:00Z'), task('new', 'BLOCKED', '2026-10-02T00:00:00Z'), task('gone', 'CANCELLED', '2026-10-03T00:00:00Z')];
-  assert.equal(lastTaskSummary(latestWorkspaceTask(tasks, 'p', 'D:\work')), 'BLOCKED · Add account page');
-  assert.equal(latestWorkspaceTask(tasks, 'other', 'D:\work'), null);
+  assert.equal(lastTaskSummary(latestWorkspaceTask(tasks, 'p', 'D:/work')), 'BLOCKED · Add account page');
+  assert.equal(latestWorkspaceTask(tasks, 'other', 'D:/work'), null);
 });
