@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Routed light tasks (cosmetic or one-line edits) to local and free capacity before subscriptions, and kept medium code changes off local models under 20B parameters.
+- Improved task analysis for Spanish bug reports, explicit architecture redesigns, and features that mention tests.
+- Added the Triage task classifier with a `shadow` routing mode and a loopback-only Ollama transport, ranking with the router's own ordering.
+- Fixed automatic fallback re-entering ROUTING from FAILED, running skipped candidates, and refusing same-provider model fallback after model-specific failures.
+- Fixed `INVALID_ACTION_PROTOCOL` from local models by requiring `target` for file actions in the provider JSON schema.
+- Retried Claude Code OAuth refresh-lock contention before failing.
+- Set the MIT copyright holder and added portable agent continuity files (`AGENTS.md`, `AI-CONTEXT/`, `PROGRESS/`).
+
 ## 0.12.0-pre.0
 
 - Added private, bounded PNG/JPEG/WebP task attachments with staging, task isolation, retention cleanup, and metadata-only descriptors and audit records.

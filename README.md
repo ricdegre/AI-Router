@@ -1,12 +1,49 @@
 # AI Router
 
-AI Router is an early-stage, provider-independent continuity platform for AI-assisted project work.
+**Switch between any AI model without losing your project's context.**
 
-AI tools often preserve context inside one private conversation, account, or provider. When that resource becomes unavailable, reaches a limit, or is inappropriate for the next task, work continuity breaks. AI Router is being built so another compatible agent can safely continue from shared operational state without needing the previous agent's private chat history.
+AI Router is a local, provider-independent continuity and routing layer for AI-assisted software work. It keeps project memory, task state, and handoffs outside any single chat, so when one model runs out of quota, fails, or is simply the wrong fit, another model (cloud, subscription, or local) continues from the same state.
 
 > **MODEL CAN CHANGE. PROJECT MEMORY MUST NOT.**
 
-## Current scope
+![Node.js 20+](https://img.shields.io/badge/node-%E2%89%A520-339933) ![License: MIT](https://img.shields.io/badge/license-MIT-blue) ![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange) ![Tests: 330 passing](https://img.shields.io/badge/tests-330%20passing-brightgreen)
+
+## The problem
+
+AI coding tools keep context inside one private conversation and one account. When that model hits a usage limit, goes down, or is overkill for a small change, you have to ask it for a summary, paste it into another tool, and hope nothing important is lost. Every switch costs time and context.
+
+## What AI Router does
+
+- **Shared project memory.** Context, decisions, constraints, the current task, and the latest handoff live in private, human-readable files outside the chat, so any agent can pick up where the last one stopped.
+- **Routes work, not just prompts.** Each task is analyzed (intent, scope, complexity, risk, required capabilities) and sent to the cheapest model that can do it well: a color or typo change goes to a free or local model, a bug fix or feature to a strong subscription model, an architecture redesign to the strongest reasoning setting.
+- **Automatic fallback.** If a model times out, fails, or runs out of quota, the task is handed to another eligible model with the same durable state, without repeating actions that already ran.
+- **Safe by design.** Model output is treated as an untrusted proposal: file changes go through a mediated action protocol with stale-content protection, backups, independent validation, and crash-safe resume.
+- **No surprise bills.** Subscription and free capacity are preferred; metered API usage stays off unless you explicitly allow it.
+- **Optional Triage classifier.** A small local model can classify each task in *shadow* mode, recording its opinion next to the deterministic route before it is ever allowed to influence routing.
+
+## How a task is routed
+
+```mermaid
+flowchart LR
+    T[Task from VS Code, CLI, or dashboard] --> A[Task analysis<br/>intent · scope · complexity · risk]
+    A --> P[Hard policy<br/>health · capabilities · cost · limits]
+    P --> O[Ordering<br/>strength fit · capacity tier · effort]
+    O --> X[Execute on selected model]
+    X -->|failure or quota| F[Fallback to next eligible model<br/>same memory and checkpoints]
+    X --> V[Independent validation] --> H[Handoff and memory update]
+    Tr[Triage classifier<br/>shadow mode] -.->|records opinion| O
+```
+
+| Example task | Analysis | Typical route |
+|---|---|---|
+| Change the header background color | edit · low | Local model (Ollama) or free model |
+| Fix the save button bug | debug · medium | Strong subscription model, medium effort |
+| Add a CSV export endpoint with tests | edit · medium | Strong subscription model, medium effort |
+| Redesign the authentication architecture | architecture · high | Strongest model, high effort |
+
+Supported providers today: Claude Code (subscription), ChatGPT/Codex (subscription), Google Antigravity (subscription), OpenRouter (free and metered), Gemini API (opt-in, metered), and Ollama (local). New providers plug in through a versioned provider protocol.
+
+## Current scope in detail
 
 This repository currently provides:
 
