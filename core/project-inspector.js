@@ -60,6 +60,28 @@ async function inventory(root, options = {}) {
   return { files, excludedDirectories: [...excludedDirectories], excludedFiles };
 }
 
+function taskText(task) { return `${task.objective ?? ''}\n${task.prompt ?? ''}\n${task.instruction ?? ''}`; }
+
+// Files the task names explicitly (full relative path, or a unique file name) are context the model cannot work without.
+function namedFiles(files, task) {
+  const text = taskText(task).replaceAll('\\', '/');
+  const tokens = new Set(text.split(/[\s'"`()[\]{},;:]+/u).map((token) => token.replace(/[.!?]+$/u, '')).filter(Boolean));
+  const named = new Set(files.filter((file) => tokens.has(file)));
+  const byName = new Map();
+  for (const file of files) { const name = path.posix.basename(file); byName.set(name, [...(byName.get(name) ?? []), file]); }
+  for (const [name, matches] of byName) if (matches.length === 1 && name.includes('.') && tokens.has(name)) named.add(matches[0]);
+  return named;
+}
+
+// Prefer the whole file; when it does not fit, center the window on text quoted in the task.
+function namedExcerpt(content, task, available) {
+  if (content.length <= available) return { excerpt: content, start: 0 };
+  const quoted = [...taskText(task).matchAll(/['"`‘’“”]([^'"`‘’“”\n]{4,200})['"`‘’“”]/gu)].map((match) => match[1]);
+  const hit = quoted.map((needle) => content.indexOf(needle)).find((index) => index >= 0);
+  const start = hit == null ? 0 : Math.max(0, Math.min(content.length - available, hit - Math.floor(available / 2)));
+  return { excerpt: content.slice(start, start + available), start };
+}
+
 export async function inspectProject(workspacePath, task = {}, options = {}) {
   const root = path.resolve(workspacePath); const budgetChars = options.budgetChars ?? 10_000;
   const found = await inventory(root, options);
@@ -68,8 +90,9 @@ export async function inspectProject(workspacePath, task = {}, options = {}) {
   const terms = termsFor(task);
   const focusTerms = new Set(String(task.objective ?? '').toLowerCase().split(/[^a-z0-9áéíóúñ_]+/u).filter((term) => term.length >= 4));
   const ranked = files.filter((file) => !(options.excludeFiles ?? []).includes(file)).map((file) => ({ file, score: scoreFile(file, terms, focusTerms) })).sort((a, b) => b.score - a.score || a.file.localeCompare(b.file));
-  const selected = ranked.slice(0, options.maxInspectedFiles ?? 24);
-  const treeLimit = Math.min(3_500, Math.floor(budgetChars * 0.3));
+  const named = namedFiles(files, task);
+  const selected = [...ranked.filter(({ file }) => named.has(file)), ...ranked.filter(({ file }) => !named.has(file)).slice(0, options.maxInspectedFiles ?? 24)];
+  const treeLimit = Math.min(named.size ? 1_500 : 3_500, Math.floor(budgetChars * 0.3));
   const tree = files.slice(0, 300).join('\n').slice(0, treeLimit);
   const sections = [`PROJECT FILE INVENTORY (${files.length} text files; generated/vendor/binary/secret paths excluded)\n${tree}`];
   let used = sections[0].length; const includedFiles = []; const includedFileMetadata = [];
@@ -78,8 +101,9 @@ export async function inspectProject(workspacePath, task = {}, options = {}) {
     try {
       const content = await readFile(path.join(root, file), 'utf8');
       if (content.includes('\0')) { continue; }
-      const excerpt = content.slice(0, Math.min(1_600, available));
-      sections.push(`FILE: ${file}\n${excerpt}`); includedFiles.push(file); includedFileMetadata.push({ path: file, sha256: createHash('sha256').update(content).digest('hex'), mode: excerpt.length === content.length ? 'full' : 'extract', range: { start_char: 0, end_char: excerpt.length }, chars: excerpt.length, mandatory: false, reason: 'project inspection relevance' }); used += file.length + excerpt.length + 8;
+      const isNamed = named.has(file);
+      const { excerpt, start } = isNamed ? namedExcerpt(content, task, available) : { excerpt: content.slice(0, Math.min(1_600, available)), start: 0 };
+      sections.push(`FILE: ${file}${start ? ` (from character ${start})` : ''}\n${excerpt}`); includedFiles.push(file); includedFileMetadata.push({ path: file, sha256: createHash('sha256').update(content).digest('hex'), mode: excerpt.length === content.length ? 'full' : 'extract', range: { start_char: start, end_char: start + excerpt.length }, chars: excerpt.length, mandatory: isNamed, reason: isNamed ? 'named in task' : 'project inspection relevance' }); used += file.length + excerpt.length + 8;
     } catch {}
   }
   const rendered = sections.join('\n\n');
