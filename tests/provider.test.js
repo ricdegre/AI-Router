@@ -87,3 +87,12 @@ test('Ollama detailed discovery separates reported data from heuristics', async 
   assert.equal(model.heuristic_classification.coding_suitability, 'likely');
   assert.equal(model.heuristic_classification.strength_class, 'standard');
 });
+
+test('Ollama execution sizes num_ctx to the prompt instead of relying on the small server default', async () => {
+  const bodies = [];
+  const provider = new OllamaProvider({ fetch: async (_url, init) => { bodies.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ model: 'qwen3.5:9b', message: { content: 'ok' }, done: true }) }; } });
+  await provider.execute({ model: 'qwen3.5:9b', messages: [{ role: 'user', content: 'x'.repeat(60_000) }] });
+  await provider.execute({ model: 'qwen3.5:9b', messages: [{ role: 'user', content: 'short' }] });
+  assert.ok(bodies[0].options.num_ctx >= 24_576 && bodies[0].options.num_ctx <= 32_768);
+  assert.equal(bodies[1].options.num_ctx, 8_192);
+});

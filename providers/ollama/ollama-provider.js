@@ -5,6 +5,15 @@ import { parseStructuredResponse, STRUCTURED_RESPONSE_JSON_SCHEMA } from '../cor
 import { resolveProviderTimeout, validateProviderTimeouts } from '../../core/provider-timeout-policy.js';
 import { readVerifiedImage } from '../core/image-payload.js';
 
+// Ollama silently truncates prompts beyond num_ctx, and its default can be as low as 4K tokens.
+// Size the window to the prompt plus room for the answer, within the model's own limit.
+function contextWindowFor(messages, request) {
+  const promptChars = messages.reduce((total, message) => total + String(message.content ?? '').length, 0);
+  const needed = Math.ceil(promptChars / 3) + (request.options?.num_predict ?? 4_096);
+  const modelLimit = Number.isInteger(request.model_context_size) ? request.model_context_size : 32_768;
+  return Math.min(modelLimit, Math.max(8_192, Math.ceil(needed / 1_024) * 1_024));
+}
+
 export class OllamaProvider extends ProviderAdapter {
   constructor(options = {}) {
     super({
@@ -183,7 +192,7 @@ export class OllamaProvider extends ProviderAdapter {
         ...(request.format !== undefined ? { format: request.format } : {}),
         ...(request.think !== undefined ? { think: request.think } : {}),
         ...(request.keep_alive !== undefined ? { keep_alive: request.keep_alive } : {}),
-        ...(request.options ? { options: request.options } : {})
+        options: { ...(request.options ?? {}), num_ctx: request.options?.num_ctx ?? contextWindowFor(messages, request) }
       }
     });
     return {

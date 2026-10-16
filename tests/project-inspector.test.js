@@ -29,3 +29,11 @@ test('a unique file name is enough, and small named files are sent whole', async
   const metadata = result.included_file_metadata.find((item) => item.path === 'src/pages/Small.tsx');
   assert.equal(metadata.mode, 'full'); assert.equal(metadata.mandatory, true);
 });
+
+test('several large named files all fit whole within the project inspection budget', async (t) => {
+  const root = await workspace(t);
+  const body = (name) => Array.from({ length: 300 }, (_, index) => `export const ${name}${index} = ${index};`).join('\n');
+  for (const name of ['One', 'Two', 'Three']) await writeFile(path.join(root, 'src', 'pages', `${name}.tsx`), body(name));
+  const result = await inspectProject(root, { objective: 'Update src/pages/One.tsx, src/pages/Two.tsx and src/pages/Three.tsx' }, { budgetChars: 32_000 });
+  for (const name of ['One', 'Two', 'Three']) assert.equal(result.included_file_metadata.find((item) => item.path === `src/pages/${name}.tsx`)?.mode, 'full');
+});

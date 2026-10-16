@@ -19,7 +19,8 @@ function relevantExcerpt(content, terms, limit) {
 export class ContextBuilder {
   constructor(memoryManager, options = {}) {
     this.memoryManager = memoryManager;
-    this.defaultBudgetChars = options.defaultBudgetChars ?? 16_000;
+    // Still capped per model by its context window; 16K characters starved multi-file tasks.
+    this.defaultBudgetChars = options.defaultBudgetChars ?? 48_000;
   }
 
   async safeRead(projectId, name) {
@@ -58,7 +59,7 @@ export class ContextBuilder {
       requiredSources.push(`FILE: ${name}\nSHA-256: ${sha256(content)}\nEXACT CONTENT:\n${content}`);
       fileManifest.push({ path: name, sha256: sha256(content), chars: content.length, mode: 'full', mandatory: true, reason: plan.reasons?.[`file:${name}`] ?? 'required file' });
     }
-    const projectInspection = options.workspacePath ? await inspectProject(options.workspacePath, task, { budgetChars: Math.min(10_000, Math.max(3_000, Math.floor(budgetChars * 0.65))), scope: plan.scope, excludeFiles: plan.required_files }) : null;
+    const projectInspection = options.workspacePath ? await inspectProject(options.workspacePath, task, { budgetChars: Math.min(32_000, Math.max(3_000, Math.floor(budgetChars * 0.65))), scope: plan.scope, excludeFiles: plan.required_files }) : null;
     const latestCheckpoint = memory.checkpoints.at(-1) ?? null;
     const candidates = [
       ['task', JSON.stringify({ task_id: task.task_id, objective: task.objective, instruction: task.prompt ?? '', acceptance_criteria: task.acceptance_criteria ?? [], requested_action_type: task.requested_action_type ?? null }, null, 2)],
