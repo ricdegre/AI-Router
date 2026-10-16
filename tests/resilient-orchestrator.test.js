@@ -415,3 +415,19 @@ test('an execution failure falls back to another model of the same provider when
   assert.equal(result.status, 'completed'); assert.equal(secondCalls, 1);
   assert.deepEqual((await setup.dependencies.attemptStore.list(setup.project.projectId, 'same-provider-model-fallback-01')).map((item) => item.profile_id), ['profile-a1', 'profile-a2']);
 });
+
+test('a file edit without expected_sha256 uses the hash of the version the model saw, and stays stale-protected', async (t) => {
+  const edit = { action_id: 'rename-counter', type: 'modify_file', target: 'status.txt', parameters: { patch: { kind: 'exact_replace', search: 'PENDING', replacement: 'DONE' } } };
+  const fresh = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', execute: async () => ({ structured: response('ok', 'Edited status.', [edit]) }) }]);
+  await writeFile(path.join(fresh.workspace, 'status.txt'), 'STATUS=PENDING\n');
+  const done = await fresh.orchestrator.run({ project_id: fresh.project.projectId, task_id: 'hashless-edit-01', objective: 'Change PENDING to DONE in status.txt', preferred_profiles: ['profile-a'], required_capabilities: ['coding'] }, { maxAttempts: 1 });
+  assert.equal(done.status, 'completed'); assert.equal(await readFile(path.join(fresh.workspace, 'status.txt'), 'utf8'), 'STATUS=DONE\n');
+
+  const stale = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', execute: async () => {
+    await writeFile(path.join(stale.workspace, 'status.txt'), 'STATUS=PENDING (edited meanwhile)\n');
+    return { structured: response('ok', 'Edited status.', [edit]) };
+  } }]);
+  await writeFile(path.join(stale.workspace, 'status.txt'), 'STATUS=PENDING\n');
+  const blocked = await stale.orchestrator.run({ project_id: stale.project.projectId, task_id: 'hashless-stale-01', objective: 'Change PENDING to DONE in status.txt', preferred_profiles: ['profile-a'], required_capabilities: ['coding'] }, { maxAttempts: 1 });
+  assert.notEqual(blocked.status, 'completed'); assert.equal(await readFile(path.join(stale.workspace, 'status.txt'), 'utf8'), 'STATUS=PENDING (edited meanwhile)\n');
+});

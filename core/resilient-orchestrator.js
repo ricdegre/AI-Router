@@ -77,6 +77,19 @@ function blockedFailureCode(result) {
   return 'PROVIDER_BLOCKED';
 }
 
+// Models cannot compute SHA-256. When a file edit omits expected_sha256, use the hash of the version the
+// model was shown; the mediator still rejects the edit if the file changed since then.
+function withSeenContentHashes(actions, manifest) {
+  const seen = new Map((manifest?.files ?? []).map((file) => [file.path, file.sha256]));
+  return actions.map((action) => {
+    const hash = seen.get(action?.target);
+    if (!hash) return action;
+    if (action.type === 'modify_file' && action.parameters?.patch && typeof action.parameters.patch === 'object' && action.parameters.patch.expected_sha256 == null) return { ...action, parameters: { ...action.parameters, patch: { kind: 'exact_replace', ...action.parameters.patch, expected_sha256: hash } } };
+    if (action.type === 'append_file' && action.parameters && action.parameters.expected_sha256 == null) return { ...action, parameters: { ...action.parameters, expected_sha256: hash } };
+    return action;
+  });
+}
+
 export class ResilientOrchestrator {
   constructor(dependencies) {
     Object.assign(this, dependencies);
@@ -222,12 +235,13 @@ export class ResilientOrchestrator {
         let failureCategory = null;
         let failureCode = null;
         let providerDiagnostic = null;
+        let attemptManifest = null;
         try {
           const taskAnalysis = route.task_analysis ?? route.task?.task_analysis ?? null;
           const context = await this.contextBuilder.build(project.projectId, { ...task, task_analysis: taskAnalysis }, { workspacePath: project.workspacePath, providerContextTokens: candidate.context_size, budgetChars: task.context_policy?.budget_chars });
           if (task.attachments?.length && !this.attachmentStore) throw new AiRouterError('Attachment store is unavailable.', 'ATTACHMENT_NOT_FOUND');
           const attachments = await this.attachmentStore?.resolve(task.project_id, task.task_id, task.attachments ?? []) ?? [];
-          const attemptManifest = createAttemptContextManifest({ task, attempt, candidate, context, attachments });
+          attemptManifest = createAttemptContextManifest({ task, attempt, candidate, context, attachments });
           await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { context_manifest: attemptManifest });
           const provider = this.providerRegistry.get(candidate.provider_id);
           const profile = profiles.find((item) => item.profile_id === candidate.profile_id);
@@ -258,7 +272,7 @@ export class ResilientOrchestrator {
           providerDiagnostic = safeProviderDiagnostic(error);
         }
 
-        const proposedActions = structured?.proposed_actions ?? [];
+        const proposedActions = withSeenContentHashes(structured?.proposed_actions ?? [], attemptManifest);
         let approvedActions = [];
         let rejectedActions = [];
         let executionResults = [];
