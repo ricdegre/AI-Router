@@ -6,7 +6,7 @@ AI Router is a local, provider-independent continuity and routing layer for AI-a
 
 > **MODEL CAN CHANGE. PROJECT MEMORY MUST NOT.**
 
-![Node.js 20+](https://img.shields.io/badge/node-%E2%89%A520-339933) ![License: MIT](https://img.shields.io/badge/license-MIT-blue) ![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange) ![Tests: 330 passing](https://img.shields.io/badge/tests-330%20passing-brightgreen)
+![Node.js 20+](https://img.shields.io/badge/node-%E2%89%A520-339933) ![License: MIT](https://img.shields.io/badge/license-MIT-blue) ![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange) ![Tests: 343 passing](https://img.shields.io/badge/tests-343%20passing-brightgreen)
 
 ## The problem
 
@@ -77,7 +77,7 @@ OpenRouter execution and the metered Gemini auth-key path are implemented. Gemin
 
 ## Conceptual architecture
 
-AI Router separates public source code from private runtime state. The core coordinates a project registry, shared project memory, handoffs, Git checkpoint metadata, and future provider adapters. Interfaces such as the CLI and a future VS Code panel call the core rather than embedding orchestration logic themselves.
+AI Router separates public source code from private runtime state. The core coordinates a project registry, shared project memory, handoffs, Git checkpoint metadata, and future provider adapters. Interfaces such as the CLI, the local control panel, and the VS Code extension call the core rather than embedding orchestration logic themselves.
 
 The system is intended to **route work, not just prompts**. Current deterministic routing considers health, capabilities, risk strength, cost category, local/subscription/metered status, user preferences, and manual overrides.
 
