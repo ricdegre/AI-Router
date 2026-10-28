@@ -73,7 +73,7 @@ test('tracking window resolves completed backend state and lost polling without 
 
 test('active editor context is accepted only for files inside the workspace', () => {
   assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'file', fsPath: 'D:\\Projects\\demo-shop\\src\\main.js' }), 'src\\main.js');
-  assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'file', fsPath: 'C:\\Users\\user\\Documents\\products.html' }), null);
+  assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'file', fsPath: 'C:\\Users\\person\\Documents\\products.html' }), null);
   assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'untitled', fsPath: 'D:\\Workspace\\draft.txt' }), null);
 });
 
