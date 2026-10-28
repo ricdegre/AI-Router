@@ -121,3 +121,9 @@ test('vision words count only as whole words', () => {
   for (const objective of ['Rename the revision field', 'Add a supervision note', 'Wrap the call to capturar errores']) assert.equal(analyzeTask({ objective }).vision_required, false, objective);
   for (const objective of ['Match the screenshot', 'Fix the image size', 'Revisa la captura', 'Usa las imágenes']) assert.equal(analyzeTask({ objective }).vision_required, true, objective);
 });
+
+test('execution-time tasks analyze the instruction they carry as prompt', () => {
+  const instruction = 'Read-only: do not modify any files, just review.';
+  assert.equal(analyzeTask({ objective: 'Update README', prompt: instruction }).write_mode, analyzeTask({ objective: 'Update README', instruction }).write_mode);
+  assert.equal(analyzeTask({ objective: 'Update README', prompt: instruction }).write_mode, 'read_only');
+});

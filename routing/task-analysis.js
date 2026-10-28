@@ -8,7 +8,7 @@ export const TASK_COMPLEXITIES = Object.freeze(['trivial', 'low', 'medium', 'hig
 const STRENGTH_BY_COMPLEXITY = Object.freeze({ trivial: 'basic', low: 'basic', medium: 'standard', high: 'strong', expert: 'strong' });
 const ROUTABLE_CAPABILITIES = new Set(['coding', 'long_context', 'vision', 'web', 'tool_use']);
 
-function textOf(input) { return `${input.objective ?? ''}\n${input.instruction ?? ''}`.toLowerCase(); }
+function textOf(input) { return `${input.objective ?? ''}\n${input.instruction ?? input.prompt ?? ''}`.toLowerCase(); }
 function contains(text, patterns) { return patterns.some((pattern) => pattern.test(text)); }
 function affirmativeScopeText(text) {
   return text.replace(/(?:^|[.;!?\n])[^\S\r\n]*(?:no|nunca|do not|don't|never|without|sin)[^\S\r\n]+(?:[^\s.;!?\n]+[^\S\r\n]+){0,3}(?:anali[zc]\w*|analy[sz]\w*|revis\w*|review\w*|inspect\w*|inspeccion\w*)[^.;!?\n]*/giu, ' ');
