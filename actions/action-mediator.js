@@ -61,6 +61,8 @@ export class ActionMediator {
       const absolute = path.resolve(this.workspaceRoot, target);
       if (!isPathWithin(this.workspaceRoot, absolute)) throw new AiRouterError('Action target is outside the workspace.', 'PATH_OUTSIDE_ROOT');
       target = path.relative(this.workspaceRoot, absolute).replaceAll('\\', '/');
+      // Git metadata (hooks, config) can run code on the user's next git command; Windows ignores trailing dots and spaces.
+      if (target.split('/').some((segment) => segment.replace(/[. ]+$/, '').toLowerCase() === '.git')) throw new AiRouterError('Actions cannot target Git metadata.', 'ACTION_SCOPE_REJECTED');
     }
     if (target && this.filesystemScope) {
       const relative = target.toLowerCase();

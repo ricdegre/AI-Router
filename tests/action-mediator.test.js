@@ -84,3 +84,14 @@ test('mediator enforces descriptor filesystem sub-scopes', async (t) => {
   assert.equal((await mediator.execute({ action_id: 'read-no', type: 'read_file', target: 'denied/no.txt' })).error.code, 'ACTION_SCOPE_REJECTED');
   assert.equal((await mediator.execute({ action_id: 'create-no', type: 'create_file', target: 'allowed/new.txt', parameters: { content: 'x' } })).error.code, 'ACTION_POLICY_REJECTED');
 });
+
+test('actions cannot read or write Git metadata', async (t) => {
+  const { workspace, mediator } = await fixture(t);
+  await mkdir(path.join(workspace, '.git', 'hooks'), { recursive: true });
+  for (const [type, target] of [['create_file', '.git/hooks/pre-commit'], ['create_file', 'sub/.GIT/config'], ['create_file', '.git./hooks/post-checkout'], ['read_file', '.git/config'], ['list_directory', '.git']]) {
+    const result = await mediator.execute({ action_id: 'git-meta', type, target, parameters: { content: '#!/bin/sh\n' } });
+    assert.equal(result.status, 'rejected', target); assert.equal(result.error.code, 'ACTION_SCOPE_REJECTED');
+  }
+  assert.deepEqual(await readdir(path.join(workspace, '.git', 'hooks')), []);
+  assert.equal((await mediator.execute({ action_id: 'gitignore', type: 'create_file', target: '.gitignore', parameters: { content: 'node_modules/\n' } })).status, 'completed');
+});
