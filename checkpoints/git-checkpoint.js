@@ -3,7 +3,7 @@ import path from 'node:path';
 import { AiRouterError } from '../core/errors.js';
 
 function git(workspace, args) {
-  return spawnSync('git', ['-C', workspace, ...args], {
+  return spawnSync('git', ['-c', 'core.fsmonitor=false', '-C', workspace, ...args], {
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: 1024 * 1024
