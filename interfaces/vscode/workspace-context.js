@@ -31,8 +31,9 @@ function workspaceBinding(vscodePath, projects, rememberedProjectId = null) {
 
 function workspaceRelativeFile(workspacePath, uri) {
   if (!uri || uri.scheme !== 'file' || !uri.fsPath) return null;
-  const relative = path.relative(workspacePath, uri.fsPath);
-  if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) return null;
+  const platformPath = /^(?:[a-zA-Z]:[\\/]|\\\\)/.test(String(workspacePath)) ? path.win32 : path.posix;
+  const relative = platformPath.relative(workspacePath, uri.fsPath);
+  if (!relative || platformPath.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${platformPath.sep}`)) return null;
   return relative;
 }
 
