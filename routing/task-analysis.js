@@ -97,7 +97,7 @@ function deriveCapabilities(input, intent, scope, writeMode, text) {
   if (scope === 'project' || scope === 'multi-project' || intent === 'architecture') capabilities.add('long_context');
   // Only an explicit request to search or browse needs web access; "web" in page copy or file names does not.
   if (intent === 'research' || contains(text, [/\b(?:search|browse|look up|check|busca\w*|navega\w*|consulta\w*|revisa\w*)\s+(?:(?:on|in|en)\s+)?(?:the\s+|la\s+)?(?:web|internet)\b|\b(?:online|en l[ií]nea)\s+(?:search|b[uú]squeda)|current official/])) capabilities.add('web');
-  if ((input.attachments ?? []).some((attachment) => attachment?.type === 'image') || contains(text, [/image|screenshot|vision|imagen|captura/])) capabilities.add('vision');
+  if ((input.attachments ?? []).some((attachment) => attachment?.type === 'image') || contains(text, [/\b(?:images?|screenshots?|vision|imagen|im[aá]genes|capturas?)\b/])) capabilities.add('vision');
   return [...capabilities];
 }
 

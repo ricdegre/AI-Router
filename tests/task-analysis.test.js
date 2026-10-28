@@ -116,3 +116,8 @@ test('mentioning web in page copy does not require web access, but asking to sea
   assert.ok(analyzeTask({ objective: 'Busca en la web la versión actual de Vite y actualiza la dependencia' }).required_capabilities.includes('web'));
   assert.ok(analyzeTask({ objective: 'Search the web for the current official Supabase auth docs' }).required_capabilities.includes('web'));
 });
+
+test('vision words count only as whole words', () => {
+  for (const objective of ['Rename the revision field', 'Add a supervision note', 'Wrap the call to capturar errores']) assert.equal(analyzeTask({ objective }).vision_required, false, objective);
+  for (const objective of ['Match the screenshot', 'Fix the image size', 'Revisa la captura', 'Usa las imágenes']) assert.equal(analyzeTask({ objective }).vision_required, true, objective);
+});
