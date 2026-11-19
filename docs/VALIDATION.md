@@ -1,5 +1,22 @@
 # Validation Record
 
+Entries are dated records of what was run at the time. Only the first section describes the current release; everything below it is kept as history.
+
+## Current state: 0.12.0-pre.0, 2026-11-19
+
+- Full automated suite (`npm test`): 358 passed, 0 failed, 0 skipped on Linux with Node 22, at commit `02d050e`. The same suite also runs on Windows, the primary platform.
+- The suite uses mocks and temporary directories only. It contacts no provider and needs no account.
+- Not yet validated end to end: a real task that falls back between two different subscription providers, cancelling a real running task, the Codex read-only sandbox on native Windows, and Codex timeouts on long turns. These need the real CLIs and consume quota.
+
+## Live validation notes, October–November 2026
+
+- 2026-10-15, isolated disposable copy of a test project (no remote, no secrets): a one-line text change was completed by local `qwen3.5:9b` in 29 seconds with an exact one-line diff. Provider fallback was observed (local model, then OpenRouter unavailable, then Claude).
+- 2026-10-16, same kind of isolated project, one feature change across three files: Claude reached the 5-minute overall timeout and ChatGPT completed the task through fallback; the project built and ran afterwards.
+- 2026-10-17, clean clone without providers: `npm test`, `status`, `demo`, `demo:vscode-fallback`, and dashboard start-up (health `ok`) passed.
+- 2026-11-19: the Antigravity stdin `stream-json` input and output format was confirmed against the real `agy` CLI on the owner's Windows machine.
+
+These runs found defects that were then fixed with regression tests; they are single observations, not a benchmark.
+
 ## Provider-ready continuity block — 2026-09-21
 
 - Full automated suite: 30 passed, 0 failed.
@@ -7,7 +24,7 @@
 - Route explanation: selected the healthy local Ollama profile for a low-risk coding task and reported capability, strength, health, cost, and local-preference reasons.
 - Secret and public-path scans: required before release commits.
 
-## Ollama discovery and smoke test
+## Ollama discovery and smoke test (2026-09-21)
 
 The development host did not expose an `ollama` executable on the process `PATH`, but the standard loopback HTTP endpoint was reachable. Read-only discovery found four installed models and no currently loaded model.
 
@@ -39,6 +56,6 @@ All live work was confined to synthetic repositories under the private runtime r
 - Drift tests passed for clean state, working-tree review, changed Git commit, moved project path, memory version mismatch, and changed touched-file hash.
 - CLI task operations passed for list, show, attempts, validate, resume explain, terminal resume, and task doctor.
 - Live synthetic task doctor: `COMPLETED`, workspace drift `SAFE`, journal chain valid with 15 events, no pending effects, and no active lock.
-- Global `ai-router doctor`: `ok`, version 0.4.0, no active project locks.
+- Global `ai-router doctor`: `ok`, version 0.4.0 (the release at that time), no active project locks.
 
 No real user project, cloud account, paid API, Ollama configuration, model installation, or GPU setting was used or modified in this block.
