@@ -25,7 +25,7 @@ export function applyExactReplacement(source, patch) {
       throw new AiRouterError('Changeset search and replacement must be strings.', 'INVALID_CHANGESET');
     }
     const toFile = (text) => (crlf && !text.includes('\r') ? text.replace(/\n/g, '\r\n') : text);
-    const edit = updated.includes(original.search) ? original : { search: toFile(original.search), replacement: toFile(original.replacement) };
+    const edit = { search: updated.includes(original.search) ? original.search : toFile(original.search), replacement: toFile(original.replacement) };
     let count = 0;
     let index = updated.indexOf(edit.search);
     while (index >= 0) {

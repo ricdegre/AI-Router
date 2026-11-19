@@ -16,3 +16,9 @@ test('replacement text is inserted literally', () => {
   const result = applyExactReplacement(source, { kind: 'exact_replace', expected_sha256: contentHash(source), search: 'PRICE', replacement: "'$&' + '$1'" });
   assert.equal(result.content, "price = '$&' + '$1';\n");
 });
+
+test('a single-line match in a CRLF file still gets CRLF in a multi-line replacement', () => {
+  const source = 'a();\r\nb();\r\n';
+  const result = applyExactReplacement(source, { kind: 'exact_replace', expected_sha256: contentHash(source), search: 'a();', replacement: 'a();\nx();' });
+  assert.equal(result.content, 'a();\r\nx();\r\nb();\r\n');
+});
