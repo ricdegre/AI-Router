@@ -1,6 +1,5 @@
 import { chmod, link, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { tmpdir } from 'node:os';
 import { isPathWithin } from '../core/paths.js';
 import { randomUUID } from 'node:crypto';
 import { resolveSafePath } from '../core/safe-path.js';
@@ -24,9 +23,11 @@ function ensureText(buffer) {
   return buffer.toString('utf8');
 }
 
-async function writeAtomic(filePath, content, stagingRoot, mode) {
-  await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
-  const temporary = path.join(stagingRoot, `${randomUUID()}.tmp`);
+// Staged next to the target so the final link/rename never crosses volumes (the data root may live on another drive).
+function stagingPath(filePath) { return `${filePath}.${randomUUID()}.ai-router-tmp`; }
+
+async function writeAtomic(filePath, content, mode) {
+  const temporary = stagingPath(filePath);
   try {
     await writeFile(temporary, content, { flag: 'wx', encoding: 'utf8', mode: 0o600 });
     await chmod(temporary, mode);
@@ -132,12 +133,9 @@ export class ActionMediator {
       if (dryRun) return { would_create: action.target, size: Buffer.byteLength(content), sha256: contentHash(content) };
       if (action.parameters.create_parents) await mkdir(path.dirname(safe.path), { recursive: true });
       await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
-      // Stage outside the workspace, then expose the complete bytes with a
-      // no-overwrite hard link. A crash during staging cannot leave a partial
-      // workspace file; a cross-volume link fails without writing the target.
-      const stagingRoot = path.join(this.backupRoot ?? tmpdir(), 'ai-router-staging');
-      await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
-      const staged = path.join(stagingRoot, `${randomUUID()}.tmp`);
+      // Stage the complete bytes, then expose them with a no-overwrite hard link:
+      // a crash during staging cannot leave a partial file under the target name.
+      const staged = stagingPath(safe.path);
       try {
         await writeFile(staged, content, { flag: 'wx', encoding: 'utf8', mode: 0o600 });
         await link(staged, safe.path);
@@ -157,7 +155,7 @@ export class ActionMediator {
         if (dryRun) return { would_modify: action.target, ...patched, content: undefined };
         const backup = await this.backup(action.action_id, action.target, source);
         await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
-        await writeAtomic(safe.path, patched.content, path.join(this.backupRoot ?? tmpdir(), 'ai-router-staging'), info.mode);
+        await writeAtomic(safe.path, patched.content, info.mode);
         await this.faultInjector?.('during-action-after-write', { action, target: safe.path });
         return { modified: action.target, summary: patched.summary, before_sha256: patched.before_sha256, after_sha256: patched.after_sha256, backup };
       }
@@ -168,7 +166,7 @@ export class ActionMediator {
       if (dryRun) return { would_append: action.target, before_sha256: contentHash(source), after_sha256: contentHash(updated) };
       const backup = await this.backup(action.action_id, action.target, source);
       await this.faultInjector?.('during-action-before-write', { action, target: safe.path });
-      await writeAtomic(safe.path, updated, path.join(this.backupRoot ?? tmpdir(), 'ai-router-staging'), info.mode);
+      await writeAtomic(safe.path, updated, info.mode);
       await this.faultInjector?.('during-action-after-write', { action, target: safe.path });
       return { appended: action.target, before_sha256: contentHash(source), after_sha256: contentHash(updated), backup };
     });

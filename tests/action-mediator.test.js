@@ -95,3 +95,12 @@ test('actions cannot read or write Git metadata', async (t) => {
   assert.deepEqual(await readdir(path.join(workspace, '.git', 'hooks')), []);
   assert.equal((await mediator.execute({ action_id: 'gitignore', type: 'create_file', target: '.gitignore', parameters: { content: 'node_modules/\n' } })).status, 'completed');
 });
+
+test('writes are staged beside the target, never in the runtime root, and leave no temporary file', async (t) => {
+  const { workspace, backups, mediator } = await fixture(t);
+  assert.equal((await mediator.execute({ action_id: 'create-one', type: 'create_file', target: 'note.txt', parameters: { content: 'one\n' } })).status, 'completed');
+  assert.equal((await mediator.execute({ action_id: 'append-one', type: 'append_file', target: 'note.txt', parameters: { content: 'two\n', expected_sha256: contentHash('one\n') } })).status, 'completed');
+  assert.equal(await readFile(path.join(workspace, 'note.txt'), 'utf8'), 'one\ntwo\n');
+  assert.deepEqual(await readdir(workspace), ['note.txt']);
+  assert.equal((await readdir(backups)).includes('ai-router-staging'), false);
+});
