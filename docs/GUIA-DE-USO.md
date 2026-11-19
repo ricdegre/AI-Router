@@ -92,6 +92,8 @@ VS Code no tiene botón para cancelar. En el panel: **Tasks** → abre la tarea 
 | `BLOCKED` | Los modelos no pudieron proponer un cambio seguro, o pediste algo protegido | Lee **Error**. Escribe la tarea más concreta, nombra el archivo y vuelve a lanzarla. |
 | `FAILED` | Fallaron todos los proveedores | **Profiles / Accounts** → **Test Chat** en cada perfil. |
 | `TRACKING_LOST` | VS Code perdió el seguimiento; la tarea puede seguir | Pulsa **Refresh**. |
+| `BLOCKED` después de pasar por varios proveedores | La tarea era demasiado grande: Claude agotó sus 5 minutos y los demás no pudieron completarla | Pártela en tareas más pequeñas, de uno a tres archivos cada una, y lánzalas una por una. No se cambió ningún archivo. |
+| `TRACKING_LOST` y **Refresh** no responde | La consulta de estado tarda hasta 30 segundos cuando el proyecto ya tiene muchas tareas | Espera un minuto y pulsa **Refresh** otra vez. No pulses **Run Task** de nuevo. |
 | `COMPLETED` pero el código falla | El modelo se equivocó | Deshaz con Git, o lanza otra tarea que describa el fallo exacto. |
 | El modelo local tarda más de 3 minutos | `qwen3.5:9b` se atasca a veces con archivos grandes | Repite la tarea, o elige `claude` en modo manual. |
 
