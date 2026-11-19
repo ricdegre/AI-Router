@@ -120,6 +120,7 @@ export class CliWorker {
       return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: 0 };
     } catch (error) {
       if (error.code === 'ENOENT') { this.resolvedExecutable = null; throw new ProviderError(`${this.executable} is not installed.`, 'PROVIDER_CLI_NOT_INSTALLED', { providerId: this.providerId, failureCategory: 'provider_unavailable', details: diagnostics }); }
+      if (error.killed && error.signal) throw new ProviderError(`${this.executable} command timed out.`, 'PROVIDER_OVERALL_TIMEOUT', { providerId: this.providerId, retryable: true, failureCategory: 'timeout', details: { timeout_type: 'overall', timeout_ms: options.timeoutMs ?? 30_000 } });
       if (typeof error.stdout === 'string' || typeof error.stderr === 'string') throw new ProviderError(`${this.executable} command failed.`, 'PROVIDER_CLI_COMMAND_FAILED', { providerId: this.providerId, failureCategory: /auth|login|sign.in/i.test(`${error.stderr} ${error.stdout}`) ? 'authentication' : 'execution_failure', details: { exit_code: error.code ?? null, diagnostic: String(error.stderr || error.stdout).slice(0, 500) } });
       throw safeProviderError(error, this.providerId);
     }
