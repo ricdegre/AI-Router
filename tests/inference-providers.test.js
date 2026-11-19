@@ -262,3 +262,23 @@ test('Claude health answers immediately while an inference holds the command que
   release(); await inference;
   assert.equal((await provider.health({ profile_id: 'claude' })).busy, undefined);
 });
+
+test('Antigravity sends a long prompt through stdin as a stream-json user event, never on the command line', async () => {
+  const prompt = `Summarize.\n${'context line\n'.repeat(4_000)}`; let streamed = null; let direct = 0;
+  const init = JSON.stringify({ event: 'init', conversation_id: 'c1', init: { cwd: 'C:\\Users\\person' } });
+  const worker = {
+    run: async () => { direct += 1; return { stdout: JSON.stringify({ status: 'SUCCESS', response: 'short', usage: null }) }; },
+    runStreaming: async (profileId, args, options) => { streamed = { profileId, args, options }; return { stdout: `${init}\r\n${JSON.stringify({ event: 'result', result: { conversation_id: 'c1', status: 'SUCCESS', response: 'OK', usage: { input_tokens: 9, output_tokens: 1 } } })}\r\n` }; }
+  };
+  const provider = new AntigravityProvider({ worker });
+  const result = await provider.execute({ profile: { profile_id: 'google-personal' }, model: 'gemini-4-neon-high', inference: { reasoning_effort: 'high' }, structured_prompt: prompt, timeout_ms: 60_000 });
+  assert.equal(result.output, 'OK'); assert.deepEqual(result.metrics, { input_tokens: 9, output_tokens: 1 }); assert.equal(direct, 0);
+  assert.deepEqual(JSON.parse(streamed.options.stdin), { event: 'user', message: { content: prompt } }); assert.ok(streamed.options.stdin.endsWith('\n'));
+  assert.ok(streamed.args.join(' ').length < 400); assert.equal(streamed.args.at(-1), '-p=');
+  for (const flag of ['--input-format', '--output-format', 'stream-json', '--sandbox', '--disable-slash-commands', 'plan', 'gemini-4-neon-high', 'high']) assert.ok(streamed.args.includes(flag), flag);
+  worker.runStreaming = async () => ({ stdout: `${init}\n${JSON.stringify({ event: 'result', result: { status: 'ERROR', response: '', error: 'boom' } })}\n` });
+  await assert.rejects(() => provider.execute({ profile: { profile_id: 'google-personal' }, model: 'm', structured_prompt: prompt }), { code: 'ANTIGRAVITY_EXECUTION_FAILED' });
+  worker.runStreaming = async () => ({ stdout: `${init}\n` });
+  await assert.rejects(() => provider.execute({ profile: { profile_id: 'google-personal' }, model: 'm', structured_prompt: prompt }), { code: 'ANTIGRAVITY_MALFORMED_RESPONSE' });
+  assert.equal((await provider.execute({ profile: { profile_id: 'google-personal' }, model: 'm', prompt: 'short prompt' })).output, 'short'); assert.equal(direct, 1);
+});

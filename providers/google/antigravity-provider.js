@@ -4,6 +4,17 @@ import { parseStructuredResponse } from '../core/structured-response.js';
 import { CliWorker } from '../core/cli-worker.js';
 
 const AUTH_STATES = Object.freeze({ MISSING: 'CLI_MISSING', PENDING: 'AUTH_PENDING', REQUIRED: 'AUTH_REQUIRED', AUTHENTICATED: 'AUTHENTICATED', ERROR: 'CLI_ERROR' });
+const STDIN_PROMPT_THRESHOLD = 8_000;
+
+// The last "result" event of a stream-json run carries the same fields as the json output format.
+function parseStreamResult(stdout) {
+  for (const line of String(stdout).split(/\r?\n/).reverse()) {
+    if (!line.trim().startsWith('{')) continue;
+    try { const event = JSON.parse(line); if (event.event === 'result' && event.result && typeof event.result === 'object') return event.result; } catch { /* partial or non-JSON line */ }
+  }
+  return null;
+}
+
 const AUTH_REQUIRED_PATTERN = /authentication required|not (?:logged|signed) in|please sign in|login required|sign-in required|run\s+agy.*sign/i;
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -126,10 +137,19 @@ export class AntigravityProvider extends ProviderAdapter {
   async execute(request) {
     const effort = request.inference?.reasoning_effort;
     const timeoutSeconds = Math.max(1, Math.ceil((request.timeout_ms ?? 180_000) / 1_000));
-    const args = ['-p', request.structured_prompt ?? request.prompt, '--output-format', 'json', '--sandbox', '--disable-slash-commands', '--mode', 'plan', '--print-timeout', `${timeoutSeconds}s`, '--model', request.model];
-    if (effort) args.push('--effort', effort);
-    const result = await this.worker.run(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms });
-    let envelope; try { envelope = JSON.parse(result.stdout); } catch { throw new ProviderError('Antigravity returned malformed JSON.', 'ANTIGRAVITY_MALFORMED_RESPONSE', { providerId: this.descriptor.id, failureCategory: 'malformed_output' }); }
+    const prompt = request.structured_prompt ?? request.prompt;
+    const common = ['--sandbox', '--disable-slash-commands', '--mode', 'plan', '--print-timeout', `${timeoutSeconds}s`, '--model', request.model, ...(effort ? ['--effort', effort] : [])];
+    const options = { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms };
+    let envelope;
+    if (prompt.length > STDIN_PROMPT_THRESHOLD) {
+      // Windows limits a command line to ~32K characters, and agy reads stdin only in stream-json mode: one NDJSON user event in, a final result event out.
+      const result = await this.worker.runStreaming(request.profile.profile_id, ['--input-format', 'stream-json', '--output-format', 'stream-json', ...common, '-p='], { ...options, timeouts: request.execution_timeouts, signal: request.signal, stdin: `${JSON.stringify({ event: 'user', message: { content: prompt } })}\n` });
+      envelope = parseStreamResult(result.stdout);
+    } else {
+      const result = await this.worker.run(request.profile.profile_id, ['-p', prompt, '--output-format', 'json', ...common], options);
+      try { envelope = JSON.parse(result.stdout); } catch { envelope = null; }
+    }
+    if (!envelope) throw new ProviderError('Antigravity returned malformed JSON.', 'ANTIGRAVITY_MALFORMED_RESPONSE', { providerId: this.descriptor.id, failureCategory: 'malformed_output' });
     if (envelope.status !== 'SUCCESS') throw new ProviderError('Antigravity did not complete the request.', 'ANTIGRAVITY_EXECUTION_FAILED', { providerId: this.descriptor.id, details: { status: envelope.status ?? null, error: String(envelope.error ?? '').slice(0, 300) } });
     return { status: 'completed', model: request.model, output: envelope.response, metrics: envelope.usage ?? null };
   }
