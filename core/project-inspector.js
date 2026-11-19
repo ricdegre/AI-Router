@@ -96,14 +96,15 @@ export async function inspectProject(workspacePath, task = {}, options = {}) {
   const tree = files.slice(0, 300).join('\n').slice(0, treeLimit);
   const sections = [`PROJECT FILE INVENTORY (${files.length} text files; generated/vendor/binary/secret paths excluded)\n${tree}`];
   let used = sections[0].length; const includedFiles = []; const includedFileMetadata = [];
-  for (const { file } of selected) {
-    const available = budgetChars - used - file.length - 12; if (available < 160) break;
+  for (const [index, { file }] of selected.entries()) {
+    const available = budgetChars - used - file.length - 44; if (available < 160) break;
     try {
       const content = await readFile(path.join(root, file), 'utf8');
       if (content.includes('\0')) { continue; }
       const isNamed = named.has(file);
-      const { excerpt, start } = isNamed ? namedExcerpt(content, task, available) : { excerpt: content.slice(0, Math.min(1_600, available)), start: 0 };
-      sections.push(`FILE: ${file}${start ? ` (from character ${start})` : ''}\n${excerpt}`); includedFiles.push(file); includedFileMetadata.push({ path: file, sha256: createHash('sha256').update(content).digest('hex'), mode: excerpt.length === content.length ? 'full' : 'extract', range: { start_char: start, end_char: start + excerpt.length }, chars: excerpt.length, mandatory: isNamed, reason: isNamed ? 'named in task' : 'project inspection relevance' }); used += file.length + excerpt.length + 8;
+      const { excerpt, start } = isNamed ? namedExcerpt(content, task, available) : { excerpt: content.length <= available - (selected.length - index - 1) * 1_700 ? content : content.slice(0, Math.min(1_600, available)), start: 0 };
+      // A whole file is labelled as such so the model knows it can propose an exact edit; the rest is an extract.
+      sections.push(`FILE: ${file}${start ? ` (from character ${start})` : ''}${excerpt.length === content.length ? ' (complete file)' : ' (extract, not the whole file)'}\n${excerpt}`); includedFiles.push(file); includedFileMetadata.push({ path: file, sha256: createHash('sha256').update(content).digest('hex'), mode: excerpt.length === content.length ? 'full' : 'extract', range: { start_char: start, end_char: start + excerpt.length }, chars: excerpt.length, mandatory: isNamed, reason: isNamed ? 'named in task' : 'project inspection relevance' }); used += file.length + excerpt.length + 8;
     } catch {}
   }
   const rendered = sections.join('\n\n');

@@ -37,3 +37,16 @@ test('several large named files all fit whole within the project inspection budg
   const result = await inspectProject(root, { objective: 'Update src/pages/One.tsx, src/pages/Two.tsx and src/pages/Three.tsx' }, { budgetChars: 32_000 });
   for (const name of ['One', 'Two', 'Three']) assert.equal(result.included_file_metadata.find((item) => item.path === `src/pages/${name}.tsx`)?.mode, 'full');
 });
+
+test('files not named in the task arrive whole when the project fits the budget', async (t) => {
+  const root = await temporaryDirectory(t, 'inspect-whole-');
+  await mkdir(path.join(root, 'public')); const big = `body { margin: 0; }\n${'/* filler */\n'.repeat(400)}table { margin: 1rem; }\n`;
+  await writeFile(path.join(root, 'public', 'styles.css'), big); await writeFile(path.join(root, 'server.js'), 'export const port = 3000;\n');
+  const task = { objective: 'Ajusta el margen de la tabla en pantallas pequeñas.' };
+  const whole = await inspectProject(root, task, { budgetChars: 80_000 });
+  assert.equal(whole.included_file_metadata.find((item) => item.path === 'public/styles.css').mode, 'full');
+  assert.ok(whole.rendered.includes('FILE: public/styles.css (complete file)') && whole.rendered.includes('table { margin: 1rem; }'));
+  const tight = await inspectProject(root, task, { budgetChars: 4_000 });
+  assert.equal(tight.included_file_metadata.find((item) => item.path === 'public/styles.css').mode, 'extract');
+  assert.ok(tight.rendered.includes('FILE: public/styles.css (extract, not the whole file)'));
+});

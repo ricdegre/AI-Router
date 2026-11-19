@@ -105,7 +105,7 @@ export class ContextBuilder {
     return {
       context_protocol_version: '0.1', project_id: projectId, task_id: task.task_id, plan,
       budget_chars: budgetChars, used_chars: rendered.length, approximate_tokens: approximateTokens(rendered),
-      sections, file_manifest: [...fileManifest, ...(projectInspection?.included_file_metadata ?? []).filter((item) => sections.find((section) => section.name === 'project_inspection')?.content.includes(`FILE: ${item.path}\n`))],
+      sections, file_manifest: [...fileManifest, ...(projectInspection?.included_file_metadata ?? []).filter((item) => sections.find((section) => section.name === 'project_inspection')?.content.includes(`FILE: ${item.path} (`))],
       omitted: optional.filter(([name, content]) => content && !sections.some((section) => section.name === name)).map(([name]) => ({ name, reason: 'context budget' })),
       project_inspection: projectInspection ? { ...projectInspection, rendered: undefined } : null, rendered
     };
