@@ -136,7 +136,7 @@ Run `node interfaces/cli/ai-router.js help` for available commands, including `d
 
 On Windows, double-click **AI Router.vbs** in the repository root. It starts the service in the background and opens the panel. Double-click **Stop AI Router.vbs** for a clean shutdown. The preferred address is `http://127.0.0.1:43127`; when that port is occupied the launcher chooses the next available loopback port and opens the correct URL.
 
-From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), [operator guide](docs/OPERATOR_GUIDE.md), and the day-to-day [VS Code usage guide](docs/GUIA-DE-USO.md) (Spanish).
 
 The VS Code client lives in `interfaces/vscode`. Build its package once (`cd interfaces/vscode`, `npm ci`, `npm run package`), then double-click **Install AI Router VS Code Extension.vbs** or use the dashboard **VS Code** page. Use `AI Router: Run Task`, `AI Router: Explain Route`, `AI Router: Focus Mode`, or `AI Router: Open Dashboard`. Provider authentication remains exclusively in the Dashboard.
 
@@ -156,7 +156,7 @@ The application those tasks produced:
 
 ## Development status
 
-AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Triage classifier](docs/TRIAGE_CLASSIFIER.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Triage classifier](docs/TRIAGE_CLASSIFIER.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), [operator guide](docs/OPERATOR_GUIDE.md), and the day-to-day [VS Code usage guide](docs/GUIA-DE-USO.md) (Spanish).
 
 ## Known limits
 
