@@ -492,3 +492,12 @@ test('cancelling a running task stops it without applying the proposed writes', 
   await assert.rejects(() => readFile(path.join(local.workspace, 'late.txt')), { code: 'ENOENT' });
   assert.equal(local.orchestrator.cancelRunning(local.project.projectId, 'cancel-local-01'), false);
 });
+
+test('token usage is recorded whatever field names the provider reports', async (t) => {
+  for (const [name, metrics] of [['openrouter', { prompt_tokens: 10, completion_tokens: 5 }], ['claude', { input_tokens: 10, output_tokens: 5 }], ['gemini', { promptTokenCount: 10, candidatesTokenCount: 5 }], ['ollama', { prompt_eval_count: 10, eval_count: 5 }]]) {
+    const f = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', strength: 'strong', execute: async () => ({ structured: response('ok', 'Analysis complete.'), metrics }) }]);
+    await f.orchestrator.run({ project_id: f.project.projectId, task_id: `usage-${name}`, objective: 'Analyze project architecture read-only', task_type: 'project_analysis' }, { maxAttempts: 1 });
+    const [attempt] = await f.dependencies.attemptStore.list(f.project.projectId, `usage-${name}`);
+    assert.deepEqual([attempt.token_metrics.input_tokens, attempt.token_metrics.output_tokens, attempt.token_metrics.source], [10, 5, 'PROVIDER_ACTUAL'], name);
+  }
+});

@@ -295,8 +295,10 @@ export class ResilientOrchestrator {
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, ...executionEnvelopeAudit(request), attempt_context_manifest_hash: attemptManifest.hash, context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0, vision_required: taskAnalysis?.vision_required === true });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
-          const inputTokens = providerResult.usage?.input_tokens ?? providerResult.metrics?.prompt_eval_count ?? null;
-          const outputTokens = providerResult.usage?.output_tokens ?? providerResult.metrics?.eval_count ?? null;
+          // Each provider reports usage under its own field names.
+          const reported = { ...(providerResult.metrics ?? {}), ...(providerResult.usage ?? {}) };
+          const inputTokens = reported.input_tokens ?? reported.prompt_eval_count ?? reported.prompt_tokens ?? reported.promptTokenCount ?? reported.inputTokens ?? null;
+          const outputTokens = reported.output_tokens ?? reported.eval_count ?? reported.completion_tokens ?? reported.candidatesTokenCount ?? reported.outputTokens ?? null;
           await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { token_metrics: { input_tokens: inputTokens, output_tokens: outputTokens, source: inputTokens == null && outputTokens == null ? 'UNAVAILABLE' : 'PROVIDER_ACTUAL', context_tokens_estimate: context.approximate_tokens, user_instruction_tokens_estimate: task.artp?.metrics?.artp_tokens_estimate ?? Math.ceil((task.prompt ?? '').length / 4), persistent_context_reused_items: task.artp?.alias_bindings?.length ?? 0 } });
           if (providerResult.limits) await this.profileRegistry.updateLimits(candidate.profile_id, providerResult.limits);
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_response', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, response_received: true });
