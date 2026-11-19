@@ -4,6 +4,14 @@ AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain 
 
 ## Unreleased
 
+- Fixed new files in new directories being rejected: the recovery snapshot records the directories an attempt creates and removes them on restore.
+- Changed project inspection to send whole files when the project fits the context budget, and to label each file as complete or an extract.
+- Fixed Claude Code returning a plan instead of the JSON result by no longer starting it in plan mode (it still runs with no tools).
+- Fixed an expired Claude Code session being reported as a refresh lock; it is now `CLAUDE_AUTH_REQUIRED` and falls back to another provider.
+- Changed structured-response parsing to read a JSON object wrapped in prose, and to record the shape of a response it cannot parse.
+- Changed the F09 and ARTP benchmark scripts to default to `qwen3.5:9b`; the F09 model is set with `AI_ROUTER_F09_MODEL`.
+- Added the results of a full trial on real accounts (`docs/ENSAYO-RESULTADO.md`) and panel screenshots to the README.
+
 - Routed light tasks (cosmetic or one-line edits) to local and free capacity before subscriptions, and kept medium code changes off local models under 20B parameters.
 - Improved task analysis for Spanish bug reports, explicit architecture redesigns, and features that mention tests.
 - Added the Triage task classifier with a `shadow` routing mode and a loopback-only Ollama transport, ranking with the router's own ordering.
