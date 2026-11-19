@@ -245,3 +245,20 @@ test('Claude sends long prompts through stdin instead of the command line', asyn
   assert.ok(calls[0].args.includes('--input-format')); assert.ok(!calls[0].args.some((arg) => arg.length > 1_000));
   assert.ok(calls[0].options.stdin.includes('x'.repeat(100)));
 });
+
+test('Claude health answers immediately while an inference holds the command queue', async () => {
+  let release; const gate = new Promise((resolve) => { release = resolve; });
+  const worker = {
+    diagnostics: async () => ({ found: true }),
+    run: async (_profileId, args) => ({ stdout: args[0] === 'auth' ? JSON.stringify({ loggedIn: true }) : args.includes('/usage') ? '{}' : '2.0' }),
+    runStreaming: async () => { await gate; return { stdout: JSON.stringify({ type: 'result', result: 'ok' }) }; }
+  };
+  const provider = new ClaudeCodeProvider({ worker });
+  const before = await provider.health({ profile_id: 'claude' });
+  assert.equal(before.status, 'healthy'); assert.equal(before.busy, undefined);
+  const inference = provider.execute({ profile: { profile_id: 'claude' }, model: 'sonnet', test_prompt: 'hi' });
+  const during = await provider.health({ profile_id: 'claude' });
+  assert.equal(during.status, 'healthy'); assert.equal(during.busy, true);
+  release(); await inference;
+  assert.equal((await provider.health({ profile_id: 'claude' })).busy, undefined);
+});
