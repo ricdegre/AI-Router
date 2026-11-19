@@ -3,7 +3,7 @@ import { ACTION_TYPES } from '../actions/action-mediator.js';
 import { analyzeTask } from '../routing/task-analysis.js';
 import { resolveSafePath } from '../core/safe-path.js';
 import { parseArtp } from './parser.js';
-import { ARTP_VERSION, CONTEXT_MANIFEST_VERSION, FUTURE_EXECUTION_ENVELOPE, sha256 } from './contracts.js';
+import { ARTP_VERSION, CONTEXT_MANIFEST_VERSION, sha256 } from './contracts.js';
 import { safeArtpPath } from './alias-store.js';
 
 const WRITES = new Set(['create_file', 'modify_file', 'append_file']);
@@ -195,7 +195,6 @@ export class ArtpCompiler {
       compact_view: { protocol_version: ARTP_VERSION, descriptor: parsed.original, parse_valid: true },
       canonical_task: semantic, semantic_hash: semanticHash, task_analysis: analysis, effective_policy: effectivePolicy,
       context_manifest: manifest, expanded_view: expanded,
-      future_execution_envelope_contract: FUTURE_EXECUTION_ENVELOPE,
       audit_metadata: { protocol_version: ARTP_VERSION, descriptor_hash: parsed.descriptor_hash, compiler_result: 'PREVIEW_VALID', alias_bindings: aliasBindings, policy_hash: policyHash, manifest_hash: manifest.hash },
       metrics: { artp_bytes: Buffer.byteLength(descriptor, 'utf8'), artp_chars: descriptor.length, artp_tokens_estimate: Math.ceil(descriptor.length / 4), estimate_only: true, expanded_chars_estimate: JSON.stringify(expanded).length }
     };

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AiRouterError } from '../core/errors.js';
 
-export const CHANGESET_VERSION = '0.1';
 
 export function contentHash(content) {
   return createHash('sha256').update(content, 'utf8').digest('hex');
