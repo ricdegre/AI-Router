@@ -175,6 +175,8 @@ AI Router is designed and directed by its author and written with AI coding agen
 
 Created and maintained by **Richard R Degregorio** ([@ricdegre](https://github.com/ricdegre)).
 
+I am not a software developer or a network engineer, and this project does not claim otherwise. I solve the problems that come up in my work with the tools I have, and look for new tools when those are not enough. I have working knowledge of programming, networking, accounting and several other fields; that is what lets me follow a process from end to end, tell where a problem is likely to be, and direct AI agents to fix it. AI Router is one of those tools: I needed it, so I had it built and tested it on my own work.
+
 ## License
 
 Released under the [MIT License](LICENSE). Copyright (c) 2026 Richard R Degregorio.
