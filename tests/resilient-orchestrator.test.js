@@ -21,6 +21,7 @@ import { contentHash } from '../actions/changeset.js';
 import { ValidationEngine } from '../validation/validation-engine.js';
 import { AiRouterError } from '../core/errors.js';
 import { MockProvider } from './mock-provider.js';
+import { descriptorFromTask, descriptorToTask } from '../core/task-execution-descriptor.js';
 
 function response(status, summary, actions = [], remaining = []) {
   return { schema_version: '0.1', status, summary, observations: [], proposed_actions: actions,
@@ -443,4 +444,60 @@ test('several edits to one file in a plan are applied in order as one changeset'
   const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'multi-edit-01', objective: 'Add a reset route in App.tsx', preferred_profiles: ['profile-a'], required_capabilities: ['coding'] }, { maxAttempts: 1 });
   assert.equal(result.status, 'completed');
   assert.equal(await readFile(path.join(setup.workspace, 'App.tsx'), 'utf8'), "import Login from './Login';\nimport Reset from './Reset';\n<Route path=\"/reset\" />\n<Route path=\"*\" />\n");
+});
+
+test('a descriptor task falls back when the first account is out of quota, rate limited, unavailable, or signed out', async (t) => {
+  for (const [category, code] of [['quota_exhausted', 'CLAUDE_SUBSCRIPTION_LIMIT_REACHED'], ['rate_limited', 'CLAUDE_RATE_LIMITED'], ['provider_unavailable', 'PROVIDER_CLI_NOT_INSTALLED'], ['authentication', 'PROVIDER_AUTH_REQUIRED']]) {
+    const f = await fixture(t, [
+      { provider: 'provider-a', profile: 'profile-a', strength: 'strong', execute: async () => { throw new ProviderError('unavailable', code, { failureCategory: category }); } },
+      { provider: 'provider-b', profile: 'profile-b', strength: 'strong', execute: async () => ({ structured: response('ok', 'Fallback completed the read-only analysis.') }) }
+    ]);
+    const task = { ...descriptorToTask(descriptorFromTask({ project_id: f.project.projectId, task_id: `fallback-${category.replace('_', '-')}`, objective: 'Analyze project architecture read-only', task_type: 'project_analysis', max_attempts: 2 }, f.project)), preferred_profiles: ['profile-a', 'profile-b'] };
+    const result = await f.orchestrator.run(task, { maxAttempts: 2 });
+    assert.equal(result.status, 'completed', category);
+    assert.deepEqual((await f.dependencies.attemptStore.list(f.project.projectId, task.task_id)).map((item) => [item.provider_id, item.failure_category]), [['provider-a', category], ['provider-b', null]]);
+  }
+});
+
+test('an exhausted account falls back to another account of the same provider when no other provider is eligible', async (t) => {
+  let calls = 0;
+  const f = await fixture(t, [{ provider: 'provider-a', profiles: ['profile-a1', 'profile-a2'], strength: 'strong', execute: async (request) => { calls += 1; if (request.profile_id === 'profile-a1') throw new ProviderError('quota', 'CLAUDE_SUBSCRIPTION_LIMIT_REACHED', { failureCategory: 'quota_exhausted' }); return { structured: response('ok', 'The second account completed the analysis.') }; } }]);
+  const result = await f.orchestrator.run({ project_id: f.project.projectId, task_id: 'same-provider-account-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', preferred_profiles: ['profile-a1', 'profile-a2'] }, { maxAttempts: 2 });
+  assert.equal(result.status, 'completed'); assert.equal(calls, 2);
+  assert.deepEqual((await f.dependencies.attemptStore.list(f.project.projectId, 'same-provider-account-01')).map((item) => item.profile_id), ['profile-a1', 'profile-a2']);
+});
+
+test('cancelling a running task stops it without applying the proposed writes', async (t) => {
+  const write = [{ action_id: 'create-late', type: 'create_file', target: 'late.txt', parameters: { content: 'late\n' } }];
+  // Cancelled by another process: only the stored state changes while the provider is still working.
+  let stored;
+  stored = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', execute: async () => { await stored.dependencies.taskStore.cancel(stored.project.projectId, 'cancel-stored-01'); return { structured: response('ok', 'Proposed after cancel.', write) }; } }]);
+  const storedResult = await stored.orchestrator.run({ project_id: stored.project.projectId, task_id: 'cancel-stored-01', objective: 'Create late.txt', required_capabilities: ['coding'] }, { maxAttempts: 2 });
+  assert.equal(storedResult.status, 'cancelled');
+  assert.equal((await stored.dependencies.taskStore.get(stored.project.projectId, 'cancel-stored-01')).state, 'CANCELLED');
+  assert.deepEqual((await stored.dependencies.attemptStore.list(stored.project.projectId, 'cancel-stored-01')).map((item) => [item.status, item.failure_category]), [['failed', 'user_cancelled']]);
+  await assert.rejects(() => readFile(path.join(stored.workspace, 'late.txt')), { code: 'ENOENT' });
+
+  // Cancelled in this process: the provider call itself is aborted.
+  let aborted = false; let local;
+  local = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', execute: async (request) => {
+    assert.equal(local.orchestrator.cancelRunning(local.project.projectId, 'cancel-local-01'), true);
+    aborted = request.signal.aborted;
+    return { structured: response('ok', 'Proposed after cancel.', write) };
+  } }, { provider: 'provider-b', profile: 'profile-b', execute: async () => { throw new Error('A cancelled task must not fall back.'); } }]);
+  const localResult = await local.orchestrator.run({ project_id: local.project.projectId, task_id: 'cancel-local-01', objective: 'Create late.txt', required_capabilities: ['coding'], preferred_profiles: ['profile-a', 'profile-b'] }, { maxAttempts: 2 });
+  assert.equal(localResult.status, 'cancelled'); assert.equal(aborted, true);
+  assert.equal((await local.dependencies.taskStore.get(local.project.projectId, 'cancel-local-01')).state, 'CANCELLED');
+  assert.equal((await local.dependencies.attemptStore.list(local.project.projectId, 'cancel-local-01')).length, 1);
+  await assert.rejects(() => readFile(path.join(local.workspace, 'late.txt')), { code: 'ENOENT' });
+  assert.equal(local.orchestrator.cancelRunning(local.project.projectId, 'cancel-local-01'), false);
+});
+
+test('token usage is recorded whatever field names the provider reports', async (t) => {
+  for (const [name, metrics] of [['openrouter', { prompt_tokens: 10, completion_tokens: 5 }], ['claude', { input_tokens: 10, output_tokens: 5 }], ['gemini', { promptTokenCount: 10, candidatesTokenCount: 5 }], ['ollama', { prompt_eval_count: 10, eval_count: 5 }]]) {
+    const f = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', strength: 'strong', execute: async () => ({ structured: response('ok', 'Analysis complete.'), metrics }) }]);
+    await f.orchestrator.run({ project_id: f.project.projectId, task_id: `usage-${name}`, objective: 'Analyze project architecture read-only', task_type: 'project_analysis' }, { maxAttempts: 1 });
+    const [attempt] = await f.dependencies.attemptStore.list(f.project.projectId, `usage-${name}`);
+    assert.deepEqual([attempt.token_metrics.input_tokens, attempt.token_metrics.output_tokens, attempt.token_metrics.source], [10, 5, 'PROVIDER_ACTUAL'], name);
+  }
 });

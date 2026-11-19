@@ -18,7 +18,7 @@ function slug(value) {
 }
 
 function runGit(workspace, args) {
-  const result = spawnSync('git', ['-C', workspace, ...args], { encoding: 'utf8', windowsHide: true });
+  const result = spawnSync('git', ['-c', 'core.fsmonitor=false', '-C', workspace, ...args], { encoding: 'utf8', windowsHide: true });
   return result.status === 0 ? result.stdout.trim() : '';
 }
 

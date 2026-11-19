@@ -425,7 +425,7 @@ export class ControlApi {
     const taskAction = pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/(cancel|resume)$/);
     if (taskAction) {
       const projectId = requiredId(decodeURIComponent(taskAction[1]), 'Project ID'); const taskId = requiredId(decodeURIComponent(taskAction[2]), 'Task ID');
-      if (taskAction[3] === 'cancel') { const result = await this.services.taskStore.cancel(projectId, taskId); await this.services.auditLog.record('task_cancelled', { project_id: projectId, task_id: taskId }); return result; }
+      if (taskAction[3] === 'cancel') { const result = await this.services.taskStore.cancel(projectId, taskId); this.services.orchestrator?.cancelRunning(projectId, taskId); await this.services.auditLog.record('task_cancelled', { project_id: projectId, task_id: taskId }); return result; }
       return this.services.resumeManager.resume(taskId, { projectId });
     }
     throw new AiRouterError('Endpoint not found.', 'CONTROL_ENDPOINT_NOT_FOUND');

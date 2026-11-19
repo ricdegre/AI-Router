@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { AttachmentStore, MAX_IMAGE_BYTES } from '../core/attachment-store.js';
 import { temporaryDirectory } from './helpers.js';
 
@@ -19,7 +20,7 @@ test('attachment store validates, isolates, claims, resolves, and expires image 
   const claimed = await store.claim(staged.map(item => item.attachment_id), 'project-one', 'task-one'); assert.equal(claimed.length, 3); assert.ok(claimed.every(item => !('path' in item)));
   const resolved = await store.resolve('project-one', 'task-one', claimed); assert.equal(resolved.length, 3); assert.deepEqual(await readFile(resolved[0].path), png());
   now += 201; await store.cleanup(); await assert.rejects(() => store.resolve('project-one', 'task-one', claimed), { code: 'ATTACHMENT_RAW_EXPIRED' });
-  const metadata = JSON.parse(await readFile(store.taskDirectory('project-one', 'task-one') + `\\${claimed[0].attachment_id}.json`, 'utf8')); assert.equal(metadata.raw_retained, false); assert.ok(metadata.raw_removed_at);
+  const metadata = JSON.parse(await readFile(path.join(store.taskDirectory('project-one', 'task-one'), `${claimed[0].attachment_id}.json`), 'utf8')); assert.equal(metadata.raw_retained, false); assert.ok(metadata.raw_removed_at);
 });
 
 test('attachment store rejects unsupported, corrupt, mismatched, oversized, expired, and unsafe references', async (t) => {

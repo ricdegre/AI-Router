@@ -73,3 +73,9 @@ test('failed streaming CLI reports bounded redacted stderr and metadata without 
     return true;
   });
 });
+
+test('a non-streaming command that exceeds its timeout is reported as a timeout', async (t) => {
+  const root = await temporaryDirectory(t);
+  const value = new CliWorker({ providerId: 'test', executable: process.execPath, dataRoot: root });
+  await assert.rejects(() => value.run('profile', ['-e', 'setTimeout(() => {}, 10000)'], { timeoutMs: 200 }), (error) => error.code === 'PROVIDER_OVERALL_TIMEOUT' && error.failureCategory === 'timeout');
+});

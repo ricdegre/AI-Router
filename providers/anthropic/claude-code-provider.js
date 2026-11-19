@@ -111,6 +111,8 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     super({ id: 'anthropic', name: 'Anthropic', type: 'cloud', strength_class: 'strong', capabilities: ['chat', 'coding', 'subscription', 'long_context'], authentication_modes: ['claude-subscription-cli'], execution_channels: [{ id: 'claude-code-subscription', name: 'Claude Code Subscription', cost_category: 'SUBSCRIPTION_INCLUDED', metered: false, input_modalities: ['text', 'image'] }], inference_controls: ['reasoning_effort'] });
     this.worker = options.worker ?? new CliWorker({ providerId: 'anthropic', executable: options.executable ?? 'claude', dataRoot: options.dataRoot });
     this.commandQueue = Promise.resolve();
+    this.pendingInference = 0;
+    this.lastHealth = new Map();
     // The OAuth refresh lock is usually held briefly by another Claude Code process; it fails before inference.
     this.oauthLockRetries = options.oauthLockRetries ?? 2;
     this.oauthLockRetryDelayMs = options.oauthLockRetryDelayMs ?? 5_000;
@@ -152,9 +154,13 @@ export class ClaudeCodeProvider extends ProviderAdapter {
   async connectionStatus(options) { try { return await this.connect(options); } catch (error) { if (['PROVIDER_CLI_COMMAND_FAILED', 'PROVIDER_CLI_NOT_INSTALLED'].includes(error.code)) return { status: 'auth-pending', error_code: error.code }; throw error; } }
   async disconnect({ profile_id }) { await this.runCommand(profile_id, ['auth', 'logout'], { purpose: 'logout' }); return { status: 'disconnected' }; }
   async health({ profile_id = 'health', timeout_ms } = {}) {
-    try { const auth = await this.inspectAuth(profile_id, timeout_ms); return { status: auth.authenticated ? 'healthy' : 'unavailable', reachable: auth.authenticated, authenticated: auth.authenticated, plan_type: auth.plan_type, cli: auth.cli, execution_channel: 'claude-code-subscription' }; }
-    catch (error) { return { status: 'unavailable', reachable: false, error_code: error.code }; }
+    // Commands run one at a time, so a check would wait behind a running task (minutes). Answer from the last check instead:
+    // the CLI is evidently working, and an account problem still surfaces on the next attempt and falls back.
+    if (this.pendingInference > 0) return { ...(this.lastHealth.get(profile_id) ?? { status: 'healthy', reachable: true, execution_channel: 'claude-code-subscription' }), busy: true };
+    try { const auth = await this.inspectAuth(profile_id, timeout_ms); return this.remember(profile_id, { status: auth.authenticated ? 'healthy' : 'unavailable', reachable: auth.authenticated, authenticated: auth.authenticated, plan_type: auth.plan_type, cli: auth.cli, execution_channel: 'claude-code-subscription' }); }
+    catch (error) { return this.remember(profile_id, { status: 'unavailable', reachable: false, error_code: error.code }); }
   }
+  remember(profileId, health) { this.lastHealth.set(profileId, health); return health; }
   // Discovery runs several Claude Code commands (~20 s); the model list rarely changes, so reuse it for 30 minutes.
   async discoverModels(options = {}) {
     const key = `${options.profile_id ?? 'provider-discovery'}:${options.skipAuth ? 'no-auth' : 'auth'}`;
@@ -216,6 +222,7 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     let result;
     for (let lockRetry = 0; ; lockRetry += 1) {
       recentOutput = '';
+      this.pendingInference += 1;
       try {
         result = await this.queueCommand(() => execute(request.profile.profile_id, args, { purpose: request.purpose ?? 'router-task', timeoutMs: request.timeout_ms, timeouts: request.execution_timeouts, signal: request.signal, ...(stdin ? { stdin } : {}), onOutput: ({ stream, chunk }) => { if (stream === 'stdout') recentOutput = `${recentOutput}${chunk}`.slice(-8192); } }));
       } catch (error) {
@@ -233,7 +240,7 @@ export class ClaudeCodeProvider extends ProviderAdapter {
         if (error.code === 'PROVIDER_CLI_COMMAND_FAILED' && stdoutSummary.is_error === true) throw new ProviderError('Claude Code emitted a failed result and exited non-zero.', 'CLAUDE_EXECUTION_FAILED', { providerId: this.descriptor.id, failureCategory: 'execution_failure', details });
         if (error.details) throw new ProviderError(error.message, error.code, { providerId: this.descriptor.id, retryable: error.retryable, failureCategory: error.failureCategory, details });
         throw error;
-      }
+      } finally { this.pendingInference -= 1; }
       break;
     }
     const envelope = parseEnvelope(result.stdout);

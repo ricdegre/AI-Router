@@ -84,3 +84,36 @@ test('mediator enforces descriptor filesystem sub-scopes', async (t) => {
   assert.equal((await mediator.execute({ action_id: 'read-no', type: 'read_file', target: 'denied/no.txt' })).error.code, 'ACTION_SCOPE_REJECTED');
   assert.equal((await mediator.execute({ action_id: 'create-no', type: 'create_file', target: 'allowed/new.txt', parameters: { content: 'x' } })).error.code, 'ACTION_POLICY_REJECTED');
 });
+
+test('actions cannot read or write Git metadata', async (t) => {
+  const { workspace, mediator } = await fixture(t);
+  await mkdir(path.join(workspace, '.git', 'hooks'), { recursive: true });
+  for (const [type, target] of [['create_file', '.git/hooks/pre-commit'], ['create_file', 'sub/.GIT/config'], ['create_file', '.git./hooks/post-checkout'], ['read_file', '.git/config'], ['list_directory', '.git']]) {
+    const result = await mediator.execute({ action_id: 'git-meta', type, target, parameters: { content: '#!/bin/sh\n' } });
+    assert.equal(result.status, 'rejected', target); assert.equal(result.error.code, 'ACTION_SCOPE_REJECTED');
+  }
+  assert.deepEqual(await readdir(path.join(workspace, '.git', 'hooks')), []);
+  assert.equal((await mediator.execute({ action_id: 'gitignore', type: 'create_file', target: '.gitignore', parameters: { content: 'node_modules/\n' } })).status, 'completed');
+});
+
+test('writes are staged beside the target, never in the runtime root, and leave no temporary file', async (t) => {
+  const { workspace, backups, mediator } = await fixture(t);
+  assert.equal((await mediator.execute({ action_id: 'create-one', type: 'create_file', target: 'note.txt', parameters: { content: 'one\n' } })).status, 'completed');
+  assert.equal((await mediator.execute({ action_id: 'append-one', type: 'append_file', target: 'note.txt', parameters: { content: 'two\n', expected_sha256: contentHash('one\n') } })).status, 'completed');
+  assert.equal(await readFile(path.join(workspace, 'note.txt'), 'utf8'), 'one\ntwo\n');
+  assert.deepEqual(await readdir(workspace), ['note.txt']);
+  assert.equal((await readdir(backups)).includes('ai-router-staging'), false);
+});
+
+test('actions cannot read or write credential files', async (t) => {
+  const { workspace, mediator } = await fixture(t);
+  await mkdir(path.join(workspace, 'config'));
+  for (const name of ['.env', '.env.local', 'config/credentials.json', 'id_rsa', 'server.key', '.npmrc']) await writeFile(path.join(workspace, name), 'TOKEN=value\n');
+  for (const target of ['.env', '.ENV.local', 'config/credentials.json', 'id_rsa', 'server.key', '.npmrc', '.env.']) {
+    const read = await mediator.execute({ action_id: 'read-secret', type: 'read_file', target, parameters: {} });
+    assert.equal(read.status, 'rejected', target); assert.equal(read.error.code, 'ACTION_SCOPE_REJECTED'); assert.equal(JSON.stringify(read).includes('TOKEN=value'), false);
+    assert.equal((await mediator.execute({ action_id: 'append-secret', type: 'append_file', target, parameters: { content: 'X=1\n', expected_sha256: contentHash('TOKEN=value\n') } })).status, 'rejected', target);
+  }
+  assert.equal((await mediator.execute({ action_id: 'create-template', type: 'create_file', target: '.env.example', parameters: { content: 'TOKEN=\n' } })).status, 'completed');
+  assert.equal((await mediator.execute({ action_id: 'read-template', type: 'read_file', target: '.env.example', parameters: {} })).result.content, 'TOKEN=\n');
+});

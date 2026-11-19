@@ -81,12 +81,13 @@ function summarizeStdout(value) {
 export function executableCandidates(executable, env = process.env, platform = process.platform) {
   if (path.isAbsolute(executable) || hasPathSeparator(executable)) return [{ path: path.resolve(executable), source: 'configured' }];
   const extensions = platform === 'win32' ? [...new Set(['', ...(env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').map((item) => item.toLowerCase())])] : [''];
+  const platformPath = platform === 'win32' ? path.win32 : path.posix;
   const candidates = [];
-  for (const directory of String(env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
-    for (const extension of extensions) candidates.push({ path: path.join(directory, `${executable}${extension}`), source: 'PATH' });
+  for (const directory of String(env.PATH ?? '').split(platformPath.delimiter).filter(Boolean)) {
+    for (const extension of extensions) candidates.push({ path: platformPath.join(directory, `${executable}${extension}`), source: 'PATH' });
   }
   if (platform === 'win32' && executable.toLowerCase().replace(/\.exe$/i, '') === 'agy' && env.LOCALAPPDATA) {
-    candidates.push({ path: path.join(env.LOCALAPPDATA, 'agy', 'bin', 'agy.exe'), source: 'windows-default' });
+    candidates.push({ path: platformPath.join(env.LOCALAPPDATA, 'agy', 'bin', 'agy.exe'), source: 'windows-default' });
   }
   return candidates;
 }
@@ -119,6 +120,7 @@ export class CliWorker {
       return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: 0 };
     } catch (error) {
       if (error.code === 'ENOENT') { this.resolvedExecutable = null; throw new ProviderError(`${this.executable} is not installed.`, 'PROVIDER_CLI_NOT_INSTALLED', { providerId: this.providerId, failureCategory: 'provider_unavailable', details: diagnostics }); }
+      if (error.killed && error.signal) throw new ProviderError(`${this.executable} command timed out.`, 'PROVIDER_OVERALL_TIMEOUT', { providerId: this.providerId, retryable: true, failureCategory: 'timeout', details: { timeout_type: 'overall', timeout_ms: options.timeoutMs ?? 30_000 } });
       if (typeof error.stdout === 'string' || typeof error.stderr === 'string') throw new ProviderError(`${this.executable} command failed.`, 'PROVIDER_CLI_COMMAND_FAILED', { providerId: this.providerId, failureCategory: /auth|login|sign.in/i.test(`${error.stderr} ${error.stdout}`) ? 'authentication' : 'execution_failure', details: { exit_code: error.code ?? null, diagnostic: String(error.stderr || error.stdout).slice(0, 500) } });
       throw safeProviderError(error, this.providerId);
     }

@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { SECRET_FILE_PATTERN } from './safe-path.js';
 
 const EXCLUDED_DIRECTORIES = new Set([
   '.git', '.agents', '.codex', '.codex-remote-attachments', '.openai', '.wrangler', '.next', '.nuxt',
@@ -11,12 +12,11 @@ const BINARY_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.i
 const TEXT_EXTENSIONS = new Set(['', '.md', '.txt', '.json', '.jsonc', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.css', '.scss', '.html', '.yml', '.yaml', '.toml', '.sql', '.graphql', '.gql', '.py', '.rs', '.go', '.java', '.kt', '.cs', '.sh', '.ps1']);
 const ROOT_KEY_FILES = /^(?:readme(?:\.[^/]+)?|package\.json|wrangler\.jsonc|tsconfig\.json|vite\.config\.[^/]+|next\.config\.[^/]+|dockerfile|compose\.ya?ml)$/i;
 const KEY_FILES = /(?:^|\/)(?:schema\.[^/]+|index\.[^/]+|layout\.[^/]+|route\.[^/]+|00-indice\.md)$/i;
-const SECRET_FILES = /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|auth\.json|id_(?:rsa|ed25519)|[^/]*\.(?:pem|key))$/i;
 const LOCK_FILES = /(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/i;
 export function contextPathAllowed(relativePath, scope = {}) {
   const value = normalized(path.normalize(relativePath));
   const parts = value.split('/');
-  if (path.isAbsolute(relativePath) || value === '..' || value.startsWith('../') || parts.includes('..') || parts.some((part) => EXCLUDED_DIRECTORIES.has(part.toLowerCase())) || SECRET_FILES.test(value) || LOCK_FILES.test(value)) return false;
+  if (path.isAbsolute(relativePath) || value === '..' || value.startsWith('../') || parts.includes('..') || parts.some((part) => EXCLUDED_DIRECTORIES.has(part.toLowerCase())) || SECRET_FILE_PATTERN.test(value) || LOCK_FILES.test(value)) return false;
   const within = (prefix) => prefix === '.' || value === prefix || value.startsWith(`${prefix}/`);
   const allowed = scope.allowed_paths?.length ? scope.allowed_paths : ['.'];
   return allowed.some((entry) => within(normalized(path.normalize(entry)))) && !(scope.denied_paths ?? []).some((entry) => within(normalized(path.normalize(entry))));
@@ -50,7 +50,7 @@ async function inventory(root, options = {}) {
         if (EXCLUDED_DIRECTORIES.has(entry.name.toLowerCase())) { excludedDirectories.add(relative); continue; }
         await visit(absolute, depth + 1); continue;
       }
-      if (!entry.isFile() || SECRET_FILES.test(relative) || LOCK_FILES.test(relative) || BINARY_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) { excludedFiles += 1; continue; }
+      if (!entry.isFile() || SECRET_FILE_PATTERN.test(relative) || LOCK_FILES.test(relative) || BINARY_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) { excludedFiles += 1; continue; }
       if (!TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) { excludedFiles += 1; continue; }
       files.push(relative);
       if (files.length >= (options.maxFiles ?? 5_000)) break;

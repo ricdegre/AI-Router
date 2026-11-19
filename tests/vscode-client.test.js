@@ -71,9 +71,17 @@ test('tracking window resolves completed backend state and lost polling without 
   assert.equal(failures, 3); assert.equal(lost.status, 'TRACKING_LOST'); assert.equal(lost.terminal, false);
 });
 
+test('tracking follows a task through a transient FAILED state and still ends on a persistent one', async () => {
+  const states = ['RUNNING', 'FAILED', 'ESCALATING', 'RUNNING', 'COMPLETED']; const seen = [];
+  const recovered = await trackTask({ async task() { return { state: { state: states.shift() }, attempts: [{ summary: 'Fallback result.' }] }; } }, 'project', 'task', { wait: async () => {}, onUpdate: (snapshot) => seen.push(snapshot.status) });
+  assert.equal(recovered.status, 'COMPLETED'); assert.equal(seen.includes('FAILED'), false);
+  let polls = 0; const failed = await trackTask({ async task() { polls += 1; return { state: { state: 'FAILED' }, attempts: [] }; } }, 'project', 'task', { wait: async () => {} });
+  assert.equal(failed.status, 'FAILED'); assert.equal(failed.terminal, true); assert.equal(polls, 3);
+});
+
 test('active editor context is accepted only for files inside the workspace', () => {
   assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'file', fsPath: 'D:\\Projects\\demo-shop\\src\\main.js' }), 'src\\main.js');
-  assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'file', fsPath: 'C:\\Users\\user\\Documents\\products.html' }), null);
+  assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'file', fsPath: 'C:\\Users\\person\\Documents\\products.html' }), null);
   assert.equal(workspaceRelativeFile('D:\\Projects\\demo-shop', { scheme: 'untitled', fsPath: 'D:\\Workspace\\draft.txt' }), null);
 });
 

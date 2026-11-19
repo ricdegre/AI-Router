@@ -35,3 +35,10 @@ test('runtime path guard rejects traversal outside the root', async (t) => {
   assert.throws(() => resolveWithin(root, '..', 'outside'), { code: 'PATH_OUTSIDE_RUNTIME' });
 });
 
+
+test('a local configuration saved with a UTF-8 BOM is still read', async (t) => {
+  const base = await temporaryDirectory(t);
+  await mkdir(path.join(base, 'config'));
+  await writeFile(path.join(base, 'config', 'local.json'), `﻿${JSON.stringify({ dataRoot: path.join(base, 'runtime'), projectRoots: [] })}`, 'utf8');
+  assert.equal((await loadConfig({ sourceRoot: base, env: {} })).dataRoot, path.join(base, 'runtime'));
+});

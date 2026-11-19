@@ -117,6 +117,14 @@ export class ResilientOrchestrator {
   constructor(dependencies) {
     Object.assign(this, dependencies);
     if (this.descriptorStore && this.taskStore) this.taskStore.descriptorStore = this.descriptorStore;
+    this.runningTasks = new Map();
+  }
+
+  // Aborts the provider call of a task this process is executing; the run then stops without applying its actions.
+  cancelRunning(projectId, taskId) {
+    const controller = this.runningTasks.get(`${projectId}/${taskId}`);
+    controller?.abort();
+    return Boolean(controller);
   }
 
   async checkpoint(project, task, attempt, stage, validation = []) {
@@ -172,6 +180,12 @@ export class ResilientOrchestrator {
     const maxAttempts = Math.min(Math.max(options.maxAttempts ?? 3, 1), 10);
     const project = await this.projectRegistry.get(task.project_id);
     const lease = await this.projectCoordinator.acquire(project.projectId, { timeoutMs: options.lockTimeoutMs });
+    const cancellation = new AbortController();
+    const callerSignal = options.signal;
+    if (callerSignal?.aborted) cancellation.abort(); else callerSignal?.addEventListener('abort', () => cancellation.abort(), { once: true });
+    options = { ...options, signal: cancellation.signal };
+    const runningKey = `${project.projectId}/${task.task_id}`;
+    this.runningTasks.set(runningKey, cancellation);
     try {
       await this.memoryManager.initialize(project);
       if (!options.resume && this.descriptorStore) {
@@ -238,7 +252,8 @@ export class ResilientOrchestrator {
       for (let index = 0; index < candidates.length; index += 1, startedAttempts += 1) {
         const candidate = candidates[index];
         const taskRecord = await this.taskStore.get(task.project_id, task.task_id);
-        if (taskRecord.state === 'CANCELLED' || options.signal?.aborted) return { status: 'cancelled', route, attempts: await this.attemptStore.list(task.project_id, task.task_id) };
+        if (options.signal.aborted && taskRecord.state !== 'CANCELLED') await this.taskStore.cancel(task.project_id, task.task_id, 'user-cancelled');
+        if (taskRecord.state === 'CANCELLED' || options.signal.aborted) return { status: 'cancelled', route, attempts: await this.attemptStore.list(task.project_id, task.task_id) };
         if (taskRecord.state !== 'ROUTING') await this.taskStore.transition(task.project_id, task.task_id, 'ROUTING', { reason: 'next-attempt-routing', attempt: priorAttempts.length + startedAttempts + 1 });
         await this.taskStore.transition(task.project_id, task.task_id, 'RUNNING', { reason: 'attempt-started', attempt: priorAttempts.length + startedAttempts + 1 });
         const preCheckpoint = task.checkpoint_policy?.pre_attempt === false ? null : await this.checkpoint(project, task, priorAttempts.length + startedAttempts + 1, 'pre-attempt');
@@ -280,8 +295,10 @@ export class ResilientOrchestrator {
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_intent', { attempt_number: attempt.attempt_number, ...executionEnvelopeAudit(request), attempt_context_manifest_hash: attemptManifest.hash, context_tokens_approximate: context.approximate_tokens, project_files_inspected: context.project_inspection?.files_inspected ?? 0, vision_required: taskAnalysis?.vision_required === true });
           await options.faultInjector?.('before-provider-call', { attempt, candidate });
           providerResult = provider.executeStructured ? await provider.executeStructured(request) : await provider.execute(request);
-          const inputTokens = providerResult.usage?.input_tokens ?? providerResult.metrics?.prompt_eval_count ?? null;
-          const outputTokens = providerResult.usage?.output_tokens ?? providerResult.metrics?.eval_count ?? null;
+          // Each provider reports usage under its own field names.
+          const reported = { ...(providerResult.metrics ?? {}), ...(providerResult.usage ?? {}) };
+          const inputTokens = reported.input_tokens ?? reported.prompt_eval_count ?? reported.prompt_tokens ?? reported.promptTokenCount ?? reported.inputTokens ?? null;
+          const outputTokens = reported.output_tokens ?? reported.eval_count ?? reported.completion_tokens ?? reported.candidatesTokenCount ?? reported.outputTokens ?? null;
           await this.attemptStore.patch(task.project_id, task.task_id, attempt.attempt_number, { token_metrics: { input_tokens: inputTokens, output_tokens: outputTokens, source: inputTokens == null && outputTokens == null ? 'UNAVAILABLE' : 'PROVIDER_ACTUAL', context_tokens_estimate: context.approximate_tokens, user_instruction_tokens_estimate: task.artp?.metrics?.artp_tokens_estimate ?? Math.ceil((task.prompt ?? '').length / 4), persistent_context_reused_items: task.artp?.alias_bindings?.length ?? 0 } });
           if (providerResult.limits) await this.profileRegistry.updateLimits(candidate.profile_id, providerResult.limits);
           await this.recoveryJournal?.record(task.project_id, task.task_id, 'provider_response', { attempt_number: attempt.attempt_number, provider_id: candidate.provider_id, response_received: true });
@@ -293,6 +310,10 @@ export class ResilientOrchestrator {
           failureCategory = failureFrom(error);
           failureCode = error.code ?? 'PROVIDER_EXECUTION_FAILED';
           providerDiagnostic = safeProviderDiagnostic(error);
+        }
+        // A cancel can arrive while the provider is working (from this process or another one): never apply what it proposed.
+        if (options.signal.aborted || (await this.taskStore.get(task.project_id, task.task_id)).state === 'CANCELLED') {
+          failureCategory = 'user_cancelled'; failureCode = 'TASK_CANCELLED'; structured = null;
         }
 
         const proposedActions = mergeSameFileEdits(withSeenContentHashes(structured?.proposed_actions ?? [], attemptManifest));
@@ -428,6 +449,10 @@ export class ResilientOrchestrator {
         const next = failureCategory && (!escalationAllowed || !recoverySafe || unrestoredPriorWrites) ? null : route.routing_mode === 'manual' ? null
           : ['timeout', 'provider_unavailable'].includes(failureCategory)
             ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id) ?? null
+            // Quota, rate limits and sign-in belong to one account: prefer another provider, else another account of the same one.
+            : ['quota_exhausted', 'rate_limited', 'authentication'].includes(failureCategory)
+              ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id)
+                ?? candidates.slice(index + 1).find((item) => item.profile_id !== candidate.profile_id) ?? null
             // An execution failure can be model-specific: prefer another provider, else another model or profile of the same one.
             : failureCategory === 'execution_failure'
               ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id)
@@ -492,7 +517,7 @@ export class ResilientOrchestrator {
           failure_category: failureCategory, failure_code: failureCode, provider_diagnostic: providerDiagnostic, summary: structured?.summary ?? failureCode,
           escalation_decision: next ? 'escalate' : 'block', next_candidate: next
         });
-        await this.circuitBreaker?.recordFailure(candidate.provider_id, candidate.profile_id, candidate.model_id, failureCategory);
+        if (failureCategory !== 'user_cancelled') await this.circuitBreaker?.recordFailure(candidate.provider_id, candidate.profile_id, candidate.model_id, failureCategory);
         const current = await this.taskStore.get(task.project_id, task.task_id);
         if (current.state === 'WAITING_VALIDATION' || current.state === 'RUNNING') await this.taskStore.transition(task.project_id, task.task_id, 'FAILED', { reason: failureCategory, attempt: attempt.attempt_number });
         await this.handoff(project, task, candidate, attempt, next ? 'ready-for-handoff' : 'blocked', {
@@ -502,8 +527,8 @@ export class ResilientOrchestrator {
           uncertainty: structured?.uncertainty ?? []
         });
         await this.auditLog?.record('escalation', { project_id: task.project_id, task_id: task.task_id, attempt: attempt.attempt_number, failure_category: failureCategory, next_candidate: next ? { provider_id: next.provider_id, profile_id: next.profile_id, model_id: next.model_id } : null });
-        if (failureCategory === 'user_cancelled' || options.signal?.aborted) {
-          await this.taskStore.transition(task.project_id, task.task_id, 'CANCELLED', { reason: 'user-cancelled', attempt: attempt.attempt_number });
+        if (failureCategory === 'user_cancelled' || options.signal.aborted) {
+          await this.taskStore.cancel(task.project_id, task.task_id, 'user-cancelled');
           return { status: 'cancelled', attempts: await this.attemptStore.list(task.project_id, task.task_id) };
         }
         if (next) {
@@ -521,6 +546,7 @@ export class ResilientOrchestrator {
       if (final.state === 'FAILED') await this.taskStore.transition(task.project_id, task.task_id, 'BLOCKED', { reason: 'attempts-exhausted' });
       return { status: 'blocked', route, attempts: await this.attemptStore.list(task.project_id, task.task_id), reason: 'attempts-exhausted' };
     } finally {
+      this.runningTasks.delete(runningKey);
       await lease.release();
     }
   }
