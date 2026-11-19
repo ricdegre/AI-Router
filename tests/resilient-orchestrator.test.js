@@ -466,3 +466,29 @@ test('an exhausted account falls back to another account of the same provider wh
   assert.equal(result.status, 'completed'); assert.equal(calls, 2);
   assert.deepEqual((await f.dependencies.attemptStore.list(f.project.projectId, 'same-provider-account-01')).map((item) => item.profile_id), ['profile-a1', 'profile-a2']);
 });
+
+test('cancelling a running task stops it without applying the proposed writes', async (t) => {
+  const write = [{ action_id: 'create-late', type: 'create_file', target: 'late.txt', parameters: { content: 'late\n' } }];
+  // Cancelled by another process: only the stored state changes while the provider is still working.
+  let stored;
+  stored = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', execute: async () => { await stored.dependencies.taskStore.cancel(stored.project.projectId, 'cancel-stored-01'); return { structured: response('ok', 'Proposed after cancel.', write) }; } }]);
+  const storedResult = await stored.orchestrator.run({ project_id: stored.project.projectId, task_id: 'cancel-stored-01', objective: 'Create late.txt', required_capabilities: ['coding'] }, { maxAttempts: 2 });
+  assert.equal(storedResult.status, 'cancelled');
+  assert.equal((await stored.dependencies.taskStore.get(stored.project.projectId, 'cancel-stored-01')).state, 'CANCELLED');
+  assert.deepEqual((await stored.dependencies.attemptStore.list(stored.project.projectId, 'cancel-stored-01')).map((item) => [item.status, item.failure_category]), [['failed', 'user_cancelled']]);
+  await assert.rejects(() => readFile(path.join(stored.workspace, 'late.txt')), { code: 'ENOENT' });
+
+  // Cancelled in this process: the provider call itself is aborted.
+  let aborted = false; let local;
+  local = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', execute: async (request) => {
+    assert.equal(local.orchestrator.cancelRunning(local.project.projectId, 'cancel-local-01'), true);
+    aborted = request.signal.aborted;
+    return { structured: response('ok', 'Proposed after cancel.', write) };
+  } }, { provider: 'provider-b', profile: 'profile-b', execute: async () => { throw new Error('A cancelled task must not fall back.'); } }]);
+  const localResult = await local.orchestrator.run({ project_id: local.project.projectId, task_id: 'cancel-local-01', objective: 'Create late.txt', required_capabilities: ['coding'], preferred_profiles: ['profile-a', 'profile-b'] }, { maxAttempts: 2 });
+  assert.equal(localResult.status, 'cancelled'); assert.equal(aborted, true);
+  assert.equal((await local.dependencies.taskStore.get(local.project.projectId, 'cancel-local-01')).state, 'CANCELLED');
+  assert.equal((await local.dependencies.attemptStore.list(local.project.projectId, 'cancel-local-01')).length, 1);
+  await assert.rejects(() => readFile(path.join(local.workspace, 'late.txt')), { code: 'ENOENT' });
+  assert.equal(local.orchestrator.cancelRunning(local.project.projectId, 'cancel-local-01'), false);
+});
