@@ -21,7 +21,7 @@ const WRITE_ACTIONS = new Set(['create_file', 'modify_file', 'append_file']);
 function safeProviderDiagnostic(error) {
   const details = error?.details;
   if (!details || typeof details !== 'object') return null;
-  const allowed = ['exit_code', 'signal', 'timeout_type', 'timeout_ms', 'executable', 'cwd', 'process_id', 'arguments', 'claude_config_dir', 'provider_environment_overrides_removed', 'api_key_environment', 'stderr_diagnostic', 'stdout_summary', 'rpc_code', 'rpc_message', 'cause_code', 'process_error_code', 'requested_model', 'actual_model'];
+  const allowed = ['exit_code', 'signal', 'timeout_type', 'timeout_ms', 'executable', 'cwd', 'process_id', 'arguments', 'claude_config_dir', 'provider_environment_overrides_removed', 'api_key_environment', 'stderr_diagnostic', 'stdout_summary', 'rpc_code', 'rpc_message', 'cause_code', 'process_error_code', 'requested_model', 'actual_model', 'length', 'starts_with_brace', 'ends_with_brace', 'parse_error'];
   const result = Object.fromEntries(allowed.filter((key) => details[key] !== undefined).map((key) => [key, details[key]]));
   for (const key of ['cause_code', 'process_error_code']) if (typeof result[key] !== 'string' || !/^[A-Z][A-Z0-9_]{0,79}$/.test(result[key])) delete result[key];
   if (Array.isArray(result.arguments)) result.arguments = result.arguments.filter((item) => typeof item === 'string' && (/^--[a-z][a-z-]*$/i.test(item) || /^--(?:model|effort|input-format|output-format)=.{1,80}$/i.test(item) || item === '-p')).slice(0, 40);

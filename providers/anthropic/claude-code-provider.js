@@ -209,7 +209,7 @@ export class ClaudeCodeProvider extends ProviderAdapter {
     // Windows limits a command line to ~32K characters; long prompts go through stdin like image input.
     const streamInput = imageInput || prompt.length > STDIN_PROMPT_THRESHOLD;
     const args = streamInput ? ['-p', '--input-format', 'stream-json'] : ['-p', prompt];
-    args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'plan', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config');
+    args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', request.model, '--tools', '', '--disallowedTools', 'mcp__*', '--disable-slash-commands', '--permission-mode', 'dontAsk', '--permission-prompts', 'none', '--no-session-persistence', '--safe-mode', '--strict-mcp-config');
     if (request.inference?.reasoning_effort) args.push('--effort', request.inference.reasoning_effort);
     let stdin;
     if (streamInput) {
