@@ -51,6 +51,8 @@ test('write worker prompt distinguishes a complete action plan from unfinished w
   const prompt = buildStructuredTaskPrompt({ task_analysis: { write_mode: 'write' }, prompt: 'Create one file.' });
   assert.match(prompt, /If your proposed actions fully satisfy the requested change, use status "ok" with empty remaining_work/);
   assert.match(prompt, /AI Router applies and validates those actions after your response/);
+  assert.match(prompt, /one modify_file action per place on the same target/);
+  assert.match(prompt, /Never claim a change in summary that your actions do not make/);
 });
 
 test('model descriptor keeps facts, overrides, and heuristics separate', () => {
