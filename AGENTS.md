@@ -11,6 +11,10 @@ Se aceptan lenguaje natural y ARTP/1 portable. Aliases Markdown no registran ali
 
 Si un agente no descubre AGENTS.md automáticamente, indicarle que lea este archivo al iniciar sesión.
 
+## Idioma (regla del usuario)
+
+Hablar al usuario en español. Los nombres de menús, botones, opciones y mensajes de programas se escriben en inglés, tal como aparecen en su computadora (por ejemplo: Settings → Claude Code → Remote Control).
+
 ## Sin sobras (regla del usuario)
 
 Cuando un cambio reemplaza algo y lo nuevo ya se probó y funciona, borrar lo viejo completo en todos los lugares: código, base de datos, archivos, configuración, variables, servicios y documentación. El cambio no está terminado hasta comprobar que no quedó nada (buscar sus nombres y referencias). No dejar cosas "por si acaso" ni código apagado o comentado; el historial de Git y los respaldos son la vuelta atrás. Los datos reales de un negocio se borran solo después de preguntar al usuario.
