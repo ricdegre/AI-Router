@@ -10,7 +10,8 @@ export const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.u
 async function readLocalConfig(sourceRoot) {
   const localPath = path.join(sourceRoot, 'config', 'local.json');
   try {
-    return JSON.parse(await readFile(localPath, 'utf8'));
+    // Windows editors and PowerShell often save UTF-8 with a BOM, which JSON.parse rejects.
+    return JSON.parse((await readFile(localPath, 'utf8')).replace(/^\uFEFF/, ''));
   } catch (error) {
     if (error.code === 'ENOENT') return {};
     if (error instanceof SyntaxError) {
