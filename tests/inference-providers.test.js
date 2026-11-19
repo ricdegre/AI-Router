@@ -282,3 +282,12 @@ test('Antigravity sends a long prompt through stdin as a stream-json user event,
   await assert.rejects(() => provider.execute({ profile: { profile_id: 'google-personal' }, model: 'm', structured_prompt: prompt }), { code: 'ANTIGRAVITY_MALFORMED_RESPONSE' });
   assert.equal((await provider.execute({ profile: { profile_id: 'google-personal' }, model: 'm', prompt: 'short prompt' })).output, 'short'); assert.equal(direct, 1);
 });
+
+test('Claude reports an expired session as login required, not as a refresh lock', async () => {
+  const worker = { run: async () => ({ stdout: '{}' }), runStreaming: async (_profile, _args, options) => {
+    options.onOutput({ stream: 'stdout', chunk: JSON.stringify({ type: 'result', is_error: true, result: 'Failed to authenticate: OAuth session expired and could not be refreshed' }) });
+    throw new ProviderError('claude command failed.', 'PROVIDER_CLI_COMMAND_FAILED', { details: { exit_code: 1, stdout_summary: { is_error: true, failure_classification: 'authentication' } } });
+  } };
+  const provider = new ClaudeCodeProvider({ worker, oauthLockRetryDelayMs: 0 });
+  await assert.rejects(provider.testChat({ profile_id: 'profile', model: 'haiku', message: 'OK', max_output_tokens: 8 }), error => error.code === 'CLAUDE_AUTH_REQUIRED' && error.failureCategory === 'authentication');
+});

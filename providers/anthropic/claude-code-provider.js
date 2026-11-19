@@ -232,6 +232,8 @@ export class ClaudeCodeProvider extends ProviderAdapter {
         const failureEvidence = `${recentOutput}\n${stderr}\n${JSON.stringify(stdoutSummary)}`;
         const actualModel = error.details?.stdout_summary?.actual_model ?? executedModel(recentOutput, null);
         const details = { ...(error.details ?? {}), requested_model: request.model, actual_model: actualModel };
+        const sessionExpired = error.code === 'PROVIDER_CLI_COMMAND_FAILED' && (failureClass === 'authentication' || /oauth session expired|could not be refreshed|failed to authenticate/i.test(failureEvidence));
+        if (sessionExpired) throw new ProviderError('Claude subscription login is required: the Claude Code session expired. Run `claude` in a terminal and sign in again.', 'CLAUDE_AUTH_REQUIRED', { providerId: this.descriptor.id, failureCategory: 'authentication', details });
         const oauthLocked = error.code === 'PROVIDER_CLI_COMMAND_FAILED' && (failureClass === 'oauth_refresh_lock' || oauthRefreshLocked(failureEvidence));
         if (oauthLocked && lockRetry < this.oauthLockRetries && !request.signal?.aborted) { await new Promise((resolve) => setTimeout(resolve, this.oauthLockRetryDelayMs)); continue; }
         if (oauthLocked) throw new ProviderError('Claude Code OAuth refresh is locked by another or interrupted CLI process. Retry after the other process exits; sign-in is not yet known to be required.', 'CLAUDE_OAUTH_REFRESH_LOCKED', { providerId: this.descriptor.id, retryable: true, failureCategory: 'provider_unavailable', details: { ...details, oauth_lock_retries: lockRetry } });

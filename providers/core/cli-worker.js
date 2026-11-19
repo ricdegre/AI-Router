@@ -43,6 +43,7 @@ function summarizeArguments(args) {
 function classifyCliFailure(value) {
   const text = String(value ?? '');
   const categories = [
+    ['authentication', /(?:oauth session expired|could not be refreshed|failed to authenticate)/i],
     ['oauth_refresh_lock', /(?:oauth|token).{0,80}(?:refresh|lock)|(?:refresh|lock).{0,80}(?:oauth|token)/i],
     ['authentication', /(?:not authenticated|authentication failed|unauthorized|invalid (?:api )?key|login required|sign.?in required|token expired)/i],
     ['rate_limited', /(?:rate limit|too many requests|\b429\b)/i],
