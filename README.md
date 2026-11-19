@@ -6,7 +6,7 @@ AI Router is a local, provider-independent continuity and routing layer for AI-a
 
 > **MODEL CAN CHANGE. PROJECT MEMORY MUST NOT.**
 
-![Node.js 20+](https://img.shields.io/badge/node-%E2%89%A520-339933) ![License: MIT](https://img.shields.io/badge/license-MIT-blue) ![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange) ![Tests: 343 passing](https://img.shields.io/badge/tests-343%20passing-brightgreen)
+![Node.js 22+](https://img.shields.io/badge/node-%E2%89%A522-339933) ![License: MIT](https://img.shields.io/badge/license-MIT-blue) ![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange) [![Tests](https://github.com/ricdegre/AI-Router/actions/workflows/test.yml/badge.svg)](https://github.com/ricdegre/AI-Router/actions/workflows/test.yml)
 
 ## The problem
 
@@ -62,7 +62,7 @@ This repository currently provides:
 - safe paths, controlled text actions, exact stale-protected changesets, private backups, and independent validation;
 - persistent task states, attempt history, bounded executable escalation, audit events, project leases, and crash recovery;
 - Task Execution Descriptor 0.1, persistent execution plans, hash-chained recovery journals, workspace drift classification, and safe disk-only resume;
-- a continuity orchestrator tested across isolated Agent A and Agent B instances, including a live local Ollama stage;
+- a resilient orchestrator that runs each task, falls back to the next eligible resource, and resumes from disk in a separate process (Agent A → Agent B);
 - operator commands and a privacy-conscious diagnostic report;
 - a local-only operational control panel with explainable routing, continuity inspection, durable task controls, and system diagnostics;
 - multi-account profile management with provider-aware model selection, isolated connection checks, and bounded Test Chat inference that has no project or tool access;
@@ -101,7 +101,8 @@ flowchart LR
     PREG --> OPENROUTER[OpenRouter API]
     PREG --> GEMINI[Gemini API opt-in]
     PREG --> CODEX[Isolated Codex subscription worker]
-    PREG --> FUTURE[Future provider adapters]
+    PREG --> CLAUDE[Claude Code subscription CLI]
+    PREG --> AGY[Google Antigravity subscription CLI]
     MEM --> DATA[(Private runtime data)]
     PROFILES --> DATA
 ```
@@ -112,7 +113,7 @@ Each registered project receives an external memory directory containing project
 
 ## Quick start
 
-Node.js 20 or newer is required. No third-party packages are needed.
+Node.js 22 or newer is required. The router itself has no third-party dependencies, so there is nothing to install.
 
 1. Copy `config/config.example.json` to `config/local.json`.
 2. Set `dataRoot` to a private writable directory.
@@ -123,6 +124,11 @@ Environment variables override local configuration:
 
 - `AI_ROUTER_DATA`: private runtime data root.
 - `PROJECT_ROOTS`: project roots separated by the operating system path delimiter.
+- `AI_ROUTER_PORT`: preferred control service port (default 43127).
+- `AI_ROUTER_NO_BROWSER`: start the service without opening the browser.
+- `AI_ROUTER_VSCODE_CLI`: path to the VS Code command-line launcher when it is not on `PATH`.
+
+The demo and smoke scripts read a few more (`AI_ROUTER_URL`, `OLLAMA_SMOKE_MODEL`, `AI_ROUTER_DEMO_PROFILE`, `AI_ROUTER_DEMO_MODEL`, `AI_ROUTER_DEMO_EFFORT`, `AI_ROUTER_BENCHMARK_MODEL`, `AI_ROUTER_PROTECTED_WORKSPACES`); see the header of each script.
 
 Run `node interfaces/cli/ai-router.js help` for available commands, including `doctor`, provider health, task list/show/attempts/resume/validate/doctor, audit inspection, memory validation, and `route explain`.
 
@@ -132,11 +138,24 @@ On Windows, double-click **AI Router.vbs** in the repository root. It starts the
 
 From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), and [operator guide](docs/OPERATOR_GUIDE.md).
 
-The source for the VS Code client is in `interfaces/vscode`. Launch it in an Extension Development Host and use `AI Router: Run Task`, `AI Router: Explain Route`, or `AI Router: Open Dashboard`. Provider authentication remains exclusively in the Dashboard.
+The VS Code client lives in `interfaces/vscode`. Build its package once (`cd interfaces/vscode`, `npm ci`, `npm run package`), then double-click **Install AI Router VS Code Extension.vbs** or use the dashboard **VS Code** page. Use `AI Router: Run Task`, `AI Router: Explain Route`, `AI Router: Focus Mode`, or `AI Router: Open Dashboard`. Provider authentication remains exclusively in the Dashboard.
 
 ## Development status
 
 AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Triage classifier](docs/TRIAGE_CLASSIFIER.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), and [operator guide](docs/OPERATOR_GUIDE.md).
+
+## Known limits
+
+This is a pre-release that one person runs on one Windows machine. The full, dated list is in the [October 2026 audit](docs/AUDIT-2026-10.md) (Spanish) and the [roadmap](docs/ROADMAP.md). The main ones:
+
+- Automatic fallback and cancellation are covered by tests with simulated providers; a full run across real subscription accounts is still pending.
+- Local models under 20B parameters only receive light tasks, so on a 12 GB GPU medium work still goes to a subscription model.
+- Ollama requests are capped at a 32K-token context window.
+- The Codex and Antigravity channels run vendor agents; AI Router relies on their own sandbox flags (see [SECURITY.md](SECURITY.md)).
+
+## How this project is built
+
+AI Router is designed and directed by its author and written with AI coding agents (Claude Code, Codex, and others), which is also the workflow it is meant to serve. The author sets the goals, the rules agents must follow ([AGENTS.md](AGENTS.md)), and decides what is merged. Agents write code and tests under those rules, and the work is checked by the test suite on every push (Linux and Windows), by continuity notes that any agent must read before working ([PROGRESS](PROGRESS/PROGRESS.md), in Spanish), and by independent audits such as the one linked above, whose findings and fixes are recorded commit by commit.
 
 ## Author
 
