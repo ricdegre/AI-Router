@@ -4,6 +4,7 @@ AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain 
 
 ## Unreleased
 
+- VS Code: the panel shows the planned provider and model as soon as the route is chosen, instead of only after the first attempt starts, and shows validation as a short label (`Passed`, `Failed`, `Not requested`) instead of raw JSON.
 - Fixed new files in new directories being rejected: the recovery snapshot records the directories an attempt creates and removes them on restore.
 - Changed project inspection to send whole files when the project fits the context budget, and to label each file as complete or an extract.
 - Fixed Claude Code returning a plan instead of the JSON result by no longer starting it in plan mode (it still runs with no tools).

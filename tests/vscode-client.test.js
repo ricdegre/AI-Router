@@ -273,6 +273,9 @@ test('extension activates, registers every command, and handles every webview ac
   await messageHandler({ type: 'run', instruction: 'ARTP/1\nP: "demo"\nDO: "Inspect"', attachments: [] });
   assert.equal(opened, 1); assert.equal(createOptions.readOnly, true); assert.equal(ensuredWorkspace, undefined); assert.ok(messages.some(item => item.type === 'connection' && item.connected)); assert.ok(messages.some(item => item.type === 'resources')); assert.ok(messages.some(item => item.type === 'workspace' && item.status === 'MATCH' && item.registeredPath === 'D:\\Projects\\demo-shop')); assert.ok(messages.some(item => item.type === 'result')); assert.ok(messages.some(item => item.type === 'taskStatus'));
   assert.ok(messages.some(item => item.type === 'taskStatus' && item.task.status === 'COMPLETED' && item.task.result === 'Read-only inspection complete.')); assert.ok(logs.some(line => line.includes('task.resume.response_lost')));
+  // The route chosen before the task exists is shown as planned until an attempt reports the real provider.
+  assert.ok(messages.some(item => item.type === 'taskStatus' && item.task.providerPlanned === true && item.task.provider === 'ollama' && item.task.model === 'qwen' && item.task.stage === 'Creating task'));
+  assert.ok(messages.filter(item => item.type === 'taskStatus' && item.task.terminal).every(item => item.task.providerPlanned === false));
   assert.match(statusBar.text, /Completed/); assert.match(statusBar.tooltip, /service: connected/); assert.doesNotMatch(statusBar.text, /connected/i);
   assert.equal(messages.filter(item => item.type === 'artpPreview').length, 2); assert.equal(createOptions.readOnly, true);
   assert.ok(logs.some(line => line.includes('extension.activated'))); assert.ok(logs.some(line => line.includes('webview.message'))); assert.ok(logs.every(line => !line.includes('Inspect only')));

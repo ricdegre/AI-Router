@@ -27,10 +27,14 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     let refreshSequence = 0;
     let taskStatus = currentTask?.status ?? 'READY';
     let lastTaskSnapshot = null;
+    // The route chosen before the task exists; shown until the first attempt reports the real provider.
+    let plannedRoute = null;
     const notifyPanel = (message) => { panel?.webview.postMessage(message); focusPanel?.webview.postMessage(message); };
     const showTechnicalOutput = () => { if (!focusPanel) channel.show(true); };
     const showTask = snapshot => {
       if (!snapshot) return;
+      const planned = plannedRoute && !snapshot.provider && !snapshot.terminal && !['READY', 'FAILED'].includes(snapshot.status) && (!snapshot.taskId || !plannedRoute.taskId || snapshot.taskId === plannedRoute.taskId);
+      snapshot = planned ? { ...snapshot, provider: plannedRoute.provider, model: plannedRoute.model, providerPlanned: true } : { ...snapshot, providerPlanned: false };
       lastTaskSnapshot = snapshot.taskId && lastTaskSnapshot?.taskId === snapshot.taskId ? { ...lastTaskSnapshot, ...snapshot } : snapshot;
       snapshot = lastTaskSnapshot;
       taskStatus = snapshot.status;
@@ -177,7 +181,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     }
 
     async function runTask(instruction, overrideSelection = null, readOnly = false, attachments = []) {
-      let taskId = null;
+      let taskId = null; plannedRoute = null;
       const folder = vscodeApi.workspace.workspaceFolders?.[0]; if (!folder) return vscodeApi.window.showErrorMessage('Open a workspace before running an AI Router task.');
       const objective = instruction || await vscodeApi.window.showInputBox({ prompt: 'Describe the coding change', ignoreFocusOut: true }); if (!objective) return null;
       if (objective.startsWith('ARTP/')) return previewArtp(objective, attachments);
@@ -193,10 +197,11 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
         if (!sameWorkspacePath(folder.uri.fsPath, project.workspacePath)) throw Object.assign(new Error('AI Router returned a different workspace path.'), { code: 'WORKSPACE_MISMATCH' });
         await router.post(`/api/projects/${encodeURIComponent(project.projectId)}/memory/initialize`);
         const selection = { ...configuredSelection(), ...(overrideSelection ?? {}) }; const route = await router.explain(objective, selection, attachments); outputLine(channel, 'Selected resource', route.selected ?? route.error); if (!route.selected) throw Object.assign(new Error(route.error?.message || 'No eligible route.'), { code: route.error?.code });
+        plannedRoute = { taskId: null, provider: route.selected.provider_id ?? null, model: route.selected.model_id ?? null }; showTask({ status: 'ROUTING', taskId: null, stage: 'Creating task' });
         notifyPanel({ type: 'progress', value: attachments.length ? 'Uploading attached images securely…' : 'Creating task…' });
         const uploaded = [];
         for (const attachment of attachments) uploaded.push(await router.uploadAttachment(attachment));
-        const created = await router.createTask(project.projectId, taskObjective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id), requiredFiles: activeFile ? [activeFile] : [] }); taskId = created.descriptor.task_id;
+        const created = await router.createTask(project.projectId, taskObjective, taskInstruction, selection, { readOnly, attachmentIds: uploaded.map(item => item.attachment_id), requiredFiles: activeFile ? [activeFile] : [] }); taskId = created.descriptor.task_id; plannedRoute.taskId = taskId;
         await rememberTask(project, taskId, readOnly);
         const outcome = await followTask(currentTask, true);
         log('command.runTask.tracking', { task_id: taskId, state: outcome?.status ?? 'TRACKING_LOST', changed_file_count: outcome?.changedFiles?.length ?? 0 });

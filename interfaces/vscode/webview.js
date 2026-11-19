@@ -42,10 +42,10 @@
     const details = document.querySelector('#taskDetails'); details.replaceChildren();
     const row = (label, value, technical = false) => { if (value === null || value === undefined || value === '') return; const item = document.createElement('div'); if (technical) item.className = 'technical-detail'; const name = document.createElement('strong'); name.textContent = `${label}: `; item.append(name, document.createTextNode(String(value))); details.append(item); };
     if (task.status === 'READY') row('Last task', task.lastTask);
-    row('Task', task.taskId, true); if (task.persistedState && task.persistedState !== task.status) row('Recorded state', task.persistedState, true); row('Stage', task.stage); row('Provider', task.provider); row('Model', task.model);
+    row('Task', task.taskId, true); if (task.persistedState && task.persistedState !== task.status) row('Recorded state', task.persistedState, true); row('Stage', task.stage); row(task.providerPlanned ? 'Planned provider' : 'Provider', task.provider); row(task.providerPlanned ? 'Planned model' : 'Model', task.model);
     if (focusMode) document.querySelector('#advancedTaskId').textContent = task.taskId ? `Task ID: ${task.taskId}` : 'No task yet';
     row('Elapsed', Number.isFinite(task.durationMs) ? `${Math.floor(task.durationMs / 60000)}m ${Math.floor((task.durationMs % 60000) / 1000)}s` : null);
-    row('Validation', task.validation ? (task.validation.passed === true ? 'Passed' : task.validation.passed === false ? 'Failed' : JSON.stringify(task.validation)) : task.terminal ? 'Not reported' : null);
+    row('Validation', task.validation ? (task.validation.passed === true ? 'Passed' : task.validation.passed === false ? 'Failed' : task.validation.status === 'NOT_REQUESTED' ? 'Not requested' : task.validation.status || 'Not reported') : task.terminal ? 'Not reported' : null);
     row('Changed Files', task.terminal ? (task.changedFiles?.length ? task.changedFiles.join(', ') : 'none') : null);
     row('Error', task.error);
     const output = document.querySelector('#taskResult'); output.hidden = !task.result; output.textContent = task.result ? `${focusMode ? '' : 'Result\n'}${typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}` : '';

@@ -32,7 +32,11 @@ Para trabajar cómodo, pulsa **Open Focus Mode**: abre los mismos controles en u
 1. Escribe la tarea en **Instruction**. Una sola cosa por tarea.
 2. Deja **Routing mode** en **Automatic Routing**.
 3. Pulsa **Run Task**.
-4. Mira **Task Status**: pasa por `ROUTING`, `RUNNING` y termina en `COMPLETED`, `BLOCKED` o `FAILED`. Ahí salen el proveedor, el modelo, el tiempo y los archivos cambiados.
+4. Mira **Task Status**: pasa por `ROUTING`, `RUNNING` y termina en `COMPLETED`, `BLOCKED` o `FAILED`.
+   - **Planned provider** y **Planned model** salen enseguida: es a dónde va a ir la tarea. Cuando el modelo empieza a trabajar pasan a **Provider** y **Model**; si cambian, es que hubo fallback.
+   - **Validation: Not requested** es lo normal: el router no ejecutó pruebas porque nadie se las pidió.
+   - **Changed Files: none** es lo normal en una tarea **Read-only**.
+   - El primer minuto se va en preparar la tarea (**Inspecting workspace**, **Selecting provider**) antes de que el modelo empiece.
 
 Lo que conviene saber:
 
