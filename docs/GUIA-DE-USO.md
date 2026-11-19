@@ -51,7 +51,7 @@ Lo que conviene saber:
 AI Router no ejecuta las pruebas del proyecto. Hazlo tú, siempre:
 
 1. Revisa los cambios en **Source Control** de VS Code (el icono de la rama).
-2. Ejecuta las pruebas del proyecto, por ejemplo `npm test`.
+2. Ejecuta las pruebas del proyecto, por ejemplo `npm.cmd test`. En la terminal de VS Code (PowerShell) hay que escribir `npm.cmd`, no `npm`: Windows bloquea `npm` a secas con el error "running scripts is disabled on this system".
 3. Si está bien, haz commit:
 
    ```powershell
