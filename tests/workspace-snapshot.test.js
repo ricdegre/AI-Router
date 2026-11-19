@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { temporaryDirectory } from './helpers.js';
 import { contentHash } from '../actions/changeset.js';
@@ -31,10 +31,23 @@ test('snapshot fails closed when a target cannot be captured or has external dri
   const workspaceRoot = path.join(root, 'workspace'); const dataRoot = path.join(root, 'data'); await mkdir(workspaceRoot);
   await writeFile(path.join(workspaceRoot, 'large.txt'), 'x'.repeat(100));
   await assert.rejects(() => createRecoverySnapshot({ dataRoot, projectId: 'project-001', taskId: 'too-large', attemptNumber: 1, workspaceRoot, actions: [{ type: 'modify_file', target: 'large.txt' }], maxFileBytes: 10 }), { code: 'RECOVERY_SNAPSHOT_UNAVAILABLE' });
-  await assert.rejects(() => createRecoverySnapshot({ dataRoot, projectId: 'project-001', taskId: 'missing-parent', attemptNumber: 1, workspaceRoot, actions: [{ type: 'create_file', target: 'new-directory/new-file.txt' }] }), { code: 'RECOVERY_SNAPSHOT_UNAVAILABLE' });
   const identity = { dataRoot, projectId: 'project-001', taskId: 'drift-test', attemptNumber: 1, workspaceRoot };
   await createRecoverySnapshot({ ...identity, actions: [{ type: 'modify_file', target: 'large.txt' }] });
   await writeFile(path.join(workspaceRoot, 'large.txt'), 'external edit');
   await assert.rejects(() => restoreRecoverySnapshot({ ...identity, expectedCurrent: { 'large.txt': contentHash('planned edit') } }), { code: 'RECOVERY_DRIFT' });
   assert.equal(await readFile(path.join(workspaceRoot, 'large.txt'), 'utf8'), 'external edit');
+});
+
+test('a snapshot records new parent directories and a restore removes them', async (t) => {
+  const root = await temporaryDirectory(t, 'snapshot-dirs-');
+  const workspaceRoot = path.join(root, 'workspace'); const dataRoot = path.join(root, 'data'); await mkdir(workspaceRoot);
+  await writeFile(path.join(workspaceRoot, 'blocker'), 'file');
+  const identity = { dataRoot, projectId: 'project-001', taskId: 'new-directories', attemptNumber: 1, workspaceRoot };
+  const snapshot = await createRecoverySnapshot({ ...identity, actions: [{ type: 'create_file', target: 'public/css/site.css' }, { type: 'create_file', target: 'public/index.html' }] });
+  assert.deepEqual(snapshot.manifest.created_directories, ['public/css', 'public']);
+  await mkdir(path.join(workspaceRoot, 'public', 'css'), { recursive: true });
+  await writeFile(path.join(workspaceRoot, 'public', 'css', 'site.css'), 'a'); await writeFile(path.join(workspaceRoot, 'public', 'index.html'), 'b');
+  await restoreRecoverySnapshot({ ...identity, expectedCurrent: { 'public/css/site.css': contentHash('a'), 'public/index.html': contentHash('b') } });
+  await assert.rejects(() => stat(path.join(workspaceRoot, 'public')), { code: 'ENOENT' });
+  await assert.rejects(() => createRecoverySnapshot({ ...identity, taskId: 'parent-is-file', actions: [{ type: 'create_file', target: 'blocker/new-file.txt' }] }), { code: 'RECOVERY_SNAPSHOT_UNAVAILABLE' });
 });

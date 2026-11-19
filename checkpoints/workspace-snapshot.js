@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveWithin, assertSafeProjectId } from '../core/paths.js';
 import { resolveSafePath } from '../core/safe-path.js';
@@ -20,12 +20,17 @@ export async function createRecoverySnapshot({ dataRoot, projectId, taskId, atte
   const directory = snapshotDirectory(dataRoot, projectId, taskId, attemptNumber);
   await mkdir(path.dirname(directory), { recursive: true, mode: 0o700 });
   await mkdir(directory, { mode: 0o700 });
-  const entries = [];
+  const entries = []; const createdDirectories = new Set();
   try {
     for (const [index, target] of targets.entries()) {
       const safe = await resolveSafePath(workspaceRoot, target, { mustExist: false });
-      // Creating parent directories cannot be undone by a file-only snapshot.
-      const parent = await stat(path.dirname(safe.path));
+      // Record every missing parent directory so a restore can remove the ones this attempt creates.
+      let parentPath = path.dirname(safe.path); let parent = null;
+      for (;;) {
+        try { parent = await stat(parentPath); break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        createdDirectories.add(path.relative(path.resolve(workspaceRoot), parentPath).split(path.sep).join('/'));
+        parentPath = path.dirname(parentPath);
+      }
       if (!parent.isDirectory()) throw new AiRouterError('Recovery target parent is not a directory.', 'RECOVERY_SNAPSHOT_UNAVAILABLE');
       let original = null; let mode = null;
       try {
@@ -37,7 +42,7 @@ export async function createRecoverySnapshot({ dataRoot, projectId, taskId, atte
       if (original !== null) await writeFile(resolveWithin(directory, entry.blob), original, { flag: 'wx', mode: 0o600 });
       entries.push(entry);
     }
-    const manifest = { snapshot_version: '0.1', project_id: projectId, task_id: taskId, attempt_number: attemptNumber, created_at: new Date().toISOString(), entries };
+    const manifest = { snapshot_version: '0.1', project_id: projectId, task_id: taskId, attempt_number: attemptNumber, created_at: new Date().toISOString(), entries, created_directories: [...createdDirectories].sort((a, b) => b.length - a.length) };
     await writeFile(resolveWithin(directory, 'manifest.json'), `${JSON.stringify(manifest)}\n`, { flag: 'wx', mode: 0o600 });
     return { directory, manifest };
   } catch (error) {
@@ -79,6 +84,11 @@ export async function restoreRecoverySnapshot({ dataRoot, projectId, taskId, att
       await rename(temporary, target.path);
       if (entry.mode != null) await chmod(target.path, entry.mode);
     }
+  }
+  // Deepest first; a directory that holds anything else is left in place.
+  for (const relative of Array.isArray(manifest.created_directories) ? manifest.created_directories : []) {
+    const safe = await resolveSafePath(workspaceRoot, relative, { mustExist: false });
+    try { await rmdir(safe.path); } catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error; }
   }
   return { restored: true, targets: targets.filter((item) => item.currentHash !== item.entry.sha256).map((item) => item.entry.target) };
 }
