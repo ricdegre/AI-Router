@@ -7,7 +7,7 @@
   "license": "MIT",
   "author": "Richard R Degregorio (https://github.com/ricdegre)",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "ai-router": "./interfaces/cli/ai-router.js"

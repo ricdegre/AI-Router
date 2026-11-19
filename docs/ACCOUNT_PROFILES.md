@@ -8,7 +8,7 @@ Profile metadata contains:
 - `auth_mode` as a non-secret mode label
 - `enabled` and `status`
 - `location`: local or cloud
-- `cost_category`: local, free, subscription, metered, or unknown
+- `cost_category`: `LOCAL`, `FREE`, `SUBSCRIPTION_INCLUDED`, `METERED_LOW`, `METERED_MEDIUM`, `METERED_HIGH`, or `UNKNOWN`; the older lowercase values `local`, `subscription`, and `metered` are still accepted
 - `selected_model_id` and its non-secret discovered model descriptor
 - optional capability additions/removals
 - usage and limit availability flags

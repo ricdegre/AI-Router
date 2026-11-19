@@ -20,19 +20,19 @@ Google also documents OAuth/ADC for applications with a Cloud project and consen
 
 OpenAI officially documents App Server `account/login/start` with `type: "chatgpt"` for its managed browser flow. AI Router uses that flow for personal subscription profiles, gives each profile a separate `CODEX_HOME`, validates the returned ChatGPT account, discovers only the models reported to it, and displays the exact multi-bucket rate-limit payload. It does not assume a five-hour bucket or invent missing values.
 
-## Claude Code subscription
-
-Claude profiles use the installed Claude Code CLI and its existing `claude.ai` subscription sign-in. AI Router does not request or enable `ANTHROPIC_API_KEY`. Model discovery uses tool-free, non-persistent `/model` commands; inference passes the selected model and supported `--effort` value explicitly. Test Connection and post-inference refresh use the official `/usage` command's JSON envelope and preserve only the usage windows actually reported, including their literal reset text. Models that require separate usage-credit consent are not exposed as ordinary subscription routing resources.
-
 AI Router does not copy the desktop/CLI login, ask for a password, expose tokens in process arguments, or fall back to an OpenAI API key. The isolated Codex worker runs against a blank read-only workspace and returns untrusted proposals; AI Router retains routing, action mediation, validation, checkpoints, memory, and handoff authority. Disconnect invokes App Server logout and removes that profile's isolated local runtime state.
+
+## Anthropic / Claude Code subscription
+
+Claude profiles use the installed Claude Code CLI, its existing `claude.ai` Pro/Max subscription sign-in, and print mode. AI Router does not request or enable `ANTHROPIC_API_KEY`: it removes that and related variables from the worker environment, disables tools and MCP, requests restricted mode, and never switches to Console API billing automatically. Model discovery uses tool-free, non-persistent `/model` commands; inference passes the selected model and supported `--effort` value explicitly. Test Connection and post-inference refresh use the official `/usage` command's JSON envelope and preserve only the usage windows actually reported, including their literal reset text. Models that require separate usage-credit consent are not exposed as ordinary subscription routing resources; usage credits must remain declined to stay inside the subscription allowance. Model/effort metadata is accepted only from the connected CLI. The CLI is not bundled or installed automatically.
+
+Claude commands run one at a time. While an inference is running, a health check does not wait behind it: it answers from the last completed check (or healthy when there is none yet) and marks the result `busy`.
 
 ## Google Antigravity subscription
 
 The Antigravity adapter targets Google's official `agy` CLI account flow and headless JSON mode. It discovers account-visible model slugs with `agy models`, so Gemini, Claude, GPT/open-weight, and future families remain dynamic. It sends only supported model/effort combinations, runs with the CLI sandbox enabled, and parses quota windows literally when `/usage` exposes them. Google API-key variables are removed from the worker environment. The CLI is not bundled or installed automatically.
 
-## Anthropic / Claude subscription
-
-The Anthropic adapter targets official Claude Code login and print mode for Pro/Max subscription access. It removes `ANTHROPIC_API_KEY` and related variables, disables tools and MCP, requests restricted mode, and never switches to Console API billing automatically. Model/effort metadata is accepted only from the connected CLI. The CLI is not bundled or installed automatically; usage credits must remain declined to stay inside subscription allowance.
+Prompts over 8,000 characters are not passed on the command line (Windows limits its length). They are sent through stdin with `--input-format stream-json --output-format stream-json` as one NDJSON line, `{"event":"user","message":{"content":…}}`, and the result is read from the final `result` event of the output stream.
 
 ## Secret storage
 

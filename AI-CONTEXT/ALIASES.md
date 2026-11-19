@@ -42,7 +42,7 @@ Referencias estructuradas versionadas por Git para agentes directos; NO son alia
 ## @PROJECT_VALIDATION
 - Tipo: VALIDATION SET para agente directo.
 - Desde raíz: npm test; package.json lo define como node --test.
-- Alternativa enfocada pertinente: npm run test:continuity; package.json lo define como node --test tests/orchestrator.integration.test.js.
+- Alternativa enfocada pertinente: npm run test:continuity; package.json lo define como node --test tests/durable-resume.test.js.
 - Límite: éxito no demuestra cuentas actuales ni readiness real/fallback. Resultados actuales van en PROGRESS.
 
 ## @RECOVERY
