@@ -14,7 +14,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "test:continuity": "node --test tests/orchestrator.integration.test.js",
+    "test:continuity": "node --test tests/durable-resume.test.js",
     "demo": "node scripts/continuity-demo.js",
     "demo:local-agent": "node scripts/local-agent-handoff-demo.js",
     "demo:vscode-fallback": "node scripts/vscode-fallback-demo.js",

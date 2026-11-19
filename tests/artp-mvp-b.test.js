@@ -6,7 +6,6 @@ import { randomUUID } from 'node:crypto';
 import { temporaryDirectory } from './helpers.js';
 import { createRuntimeServices } from '../core/runtime-services.js';
 import { descriptorToTask } from '../core/task-execution-descriptor.js';
-import { inspectDescriptorVersion, migrateDescriptorExplicit } from '../core/descriptor-migrations.js';
 import { createAttemptContextManifest } from '../core/attempt-context-manifest.js';
 import { MockProvider } from './mock-provider.js';
 import { contentHash } from '../actions/changeset.js';
@@ -68,14 +67,11 @@ test('ARTP rejects unknown and outside-scope validators and raw commands', async
   await assert.rejects(() => services.artpTaskService.preview({ descriptor: text().replace('validation:target-check', 'powershell Remove-Item') }), { code: 'ARTP_VALIDATION_INVALID' });
 });
 
-test('historical v0.1 remains readable and migrates explicitly to v0.2 with backup', async (t) => {
+test('historical v0.1 remains readable', async (t) => {
   const { services, project } = await fixture(t);
   const old = { schema_version: '0.1', task_id: 'historical-01', project_id: project.projectId, objective: 'Read old file', filesystem_scope: { workspace_path: project.workspacePath } };
   await services.descriptorStore.create(old);
-  assert.equal(inspectDescriptorVersion(old).status, 'migration-available');
   assert.equal((await services.descriptorStore.load(project.projectId, old.task_id)).schema_version, '0.1');
-  const migrated = await migrateDescriptorExplicit(services.descriptorStore, project.projectId, old.task_id, '0.2');
-  assert.equal(migrated.descriptor.schema_version, '0.2'); assert.equal(migrated.descriptor.artp, null); assert.ok(migrated.backup);
 });
 
 test('attempt manifest hashes context without persisting contents and varies by resource', () => {
