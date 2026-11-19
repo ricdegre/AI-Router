@@ -21,6 +21,14 @@ function normalizeFence(text) {
   return match ? match[1].trim() : trimmed;
 }
 
+// Some models wrap the JSON object in a sentence or put the fence mid-text; take the one object they sent.
+function embeddedObject(text) {
+  const fenced = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/i);
+  if (fenced) return fenced[1];
+  const start = text.indexOf('{'); const end = text.lastIndexOf('}');
+  return start > 0 && end > start ? text.slice(start, end + 1) : null;
+}
+
 export function validateStructuredResponse(input) {
   inspectKeys(input);
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AiRouterError('Structured response must be an object.', 'INVALID_STRUCTURED_RESPONSE');
@@ -61,10 +69,12 @@ export function parseStructuredResponse(text, options = {}) {
   try {
     return { valid: true, fallback: false, response: validateStructuredResponse(JSON.parse(candidate)) };
   } catch (error) {
+    const embedded = error instanceof AiRouterError ? null : embeddedObject(candidate);
+    if (embedded) { try { return { valid: true, fallback: false, response: validateStructuredResponse(JSON.parse(embedded)) }; } catch (inner) { if (inner instanceof AiRouterError) throw inner; } }
     const looksStructured = /^[\[{]/.test(candidate) || /^```/i.test(text.trim());
     if (looksStructured || options.allowTextFallback === false) {
       if (error instanceof AiRouterError) throw error;
-      throw new AiRouterError('Provider returned malformed JSON.', 'MALFORMED_STRUCTURED_RESPONSE');
+      throw new AiRouterError('Provider returned malformed JSON.', 'MALFORMED_STRUCTURED_RESPONSE', { length: candidate.length, starts_with_brace: candidate.startsWith('{'), ends_with_brace: candidate.endsWith('}'), parse_error: String(error.message).replace(/"[^"]*"/g, '"…"').slice(0, 120) });
     }
     const summary = candidate.trim().slice(0, options.maxFallbackChars ?? 2_000);
     if (!summary) throw new AiRouterError('Provider returned an empty response.', 'EMPTY_PROVIDER_OUTPUT');

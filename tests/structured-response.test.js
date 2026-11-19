@@ -14,6 +14,12 @@ test('structured response accepts JSON and whole markdown JSON fences', () => {
   assert.equal(parseStructuredResponse(`\`\`\`json\n${JSON.stringify(valid)}\n\`\`\``).response.status, 'ok');
 });
 
+test('a JSON object wrapped in prose or in a mid-text fence is still read', () => {
+  assert.equal(parseStructuredResponse(`Here is the result:\n${JSON.stringify(valid)}\nDone.`, { allowTextFallback: false }).response.summary, 'done');
+  assert.equal(parseStructuredResponse(`Result below.\n\`\`\`json\n${JSON.stringify(valid)}\n\`\`\``, { allowTextFallback: false }).response.status, 'ok');
+  assert.throws(() => parseStructuredResponse('Sorry, {not json} here', { allowTextFallback: false }), { code: 'MALFORMED_STRUCTURED_RESPONSE' });
+});
+
 test('structured response rejects malformed, oversized, and adversarial data', () => {
   assert.throws(() => parseStructuredResponse('{bad json'), { code: 'MALFORMED_STRUCTURED_RESPONSE' });
   assert.throws(() => parseStructuredResponse(JSON.stringify({ ...valid, token: 'forbidden' })), { code: 'UNSAFE_STRUCTURED_RESPONSE' });
