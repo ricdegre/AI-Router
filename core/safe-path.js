@@ -50,3 +50,5 @@ export async function resolveSafePath(root, requestedPath, options = {}) {
   return { root: realRoot, path: candidate, relative: path.relative(realRoot, await realpath(ancestor)) === '' ? relative : path.relative(realRoot, candidate) };
 }
 
+// Files that normally hold credentials; never sent to a model as context and never opened by a model action.
+export const SECRET_FILE_PATTERN = /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|auth\.json|id_(?:rsa|ed25519)|[^/]*\.(?:pem|key))$/i;

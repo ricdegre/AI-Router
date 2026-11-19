@@ -2,7 +2,7 @@ import { chmod, link, mkdir, readFile, readdir, rename, stat, unlink, writeFile 
 import path from 'node:path';
 import { isPathWithin } from '../core/paths.js';
 import { randomUUID } from 'node:crypto';
-import { resolveSafePath } from '../core/safe-path.js';
+import { resolveSafePath, SECRET_FILE_PATTERN } from '../core/safe-path.js';
 import { withFileLock } from '../core/file-lock.js';
 import { inspectGit } from '../checkpoints/git-checkpoint.js';
 import { AiRouterError } from '../core/errors.js';
@@ -63,7 +63,10 @@ export class ActionMediator {
       if (!isPathWithin(this.workspaceRoot, absolute)) throw new AiRouterError('Action target is outside the workspace.', 'PATH_OUTSIDE_ROOT');
       target = path.relative(this.workspaceRoot, absolute).replaceAll('\\', '/');
       // Git metadata (hooks, config) can run code on the user's next git command; Windows ignores trailing dots and spaces.
-      if (target.split('/').some((segment) => segment.replace(/[. ]+$/, '').toLowerCase() === '.git')) throw new AiRouterError('Actions cannot target Git metadata.', 'ACTION_SCOPE_REJECTED');
+      const segments = target.split('/').map((segment) => segment.replace(/[. ]+$/, ''));
+      if (segments.some((segment) => segment.toLowerCase() === '.git')) throw new AiRouterError('Actions cannot target Git metadata.', 'ACTION_SCOPE_REJECTED');
+      // Secret files stay out of model reach: a read would copy them into attempt records and to the provider. Committed templates are not secrets.
+      if (action.type !== 'list_directory' && SECRET_FILE_PATTERN.test(segments.join('/')) && !/\.(?:example|sample|template)$/i.test(segments.at(-1))) throw new AiRouterError('Actions cannot target credential files.', 'ACTION_SCOPE_REJECTED');
     }
     if (target && this.filesystemScope) {
       const relative = target.toLowerCase();

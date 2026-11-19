@@ -104,3 +104,16 @@ test('writes are staged beside the target, never in the runtime root, and leave 
   assert.deepEqual(await readdir(workspace), ['note.txt']);
   assert.equal((await readdir(backups)).includes('ai-router-staging'), false);
 });
+
+test('actions cannot read or write credential files', async (t) => {
+  const { workspace, mediator } = await fixture(t);
+  await mkdir(path.join(workspace, 'config'));
+  for (const name of ['.env', '.env.local', 'config/credentials.json', 'id_rsa', 'server.key', '.npmrc']) await writeFile(path.join(workspace, name), 'TOKEN=value\n');
+  for (const target of ['.env', '.ENV.local', 'config/credentials.json', 'id_rsa', 'server.key', '.npmrc', '.env.']) {
+    const read = await mediator.execute({ action_id: 'read-secret', type: 'read_file', target, parameters: {} });
+    assert.equal(read.status, 'rejected', target); assert.equal(read.error.code, 'ACTION_SCOPE_REJECTED'); assert.equal(JSON.stringify(read).includes('TOKEN=value'), false);
+    assert.equal((await mediator.execute({ action_id: 'append-secret', type: 'append_file', target, parameters: { content: 'X=1\n', expected_sha256: contentHash('TOKEN=value\n') } })).status, 'rejected', target);
+  }
+  assert.equal((await mediator.execute({ action_id: 'create-template', type: 'create_file', target: '.env.example', parameters: { content: 'TOKEN=\n' } })).status, 'completed');
+  assert.equal((await mediator.execute({ action_id: 'read-template', type: 'read_file', target: '.env.example', parameters: {} })).result.content, 'TOKEN=\n');
+});
