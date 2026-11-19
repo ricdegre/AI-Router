@@ -128,7 +128,7 @@ Environment variables override local configuration:
 - `AI_ROUTER_NO_BROWSER`: start the service without opening the browser.
 - `AI_ROUTER_VSCODE_CLI`: path to the VS Code command-line launcher when it is not on `PATH`.
 
-The demo and smoke scripts read a few more (`AI_ROUTER_URL`, `OLLAMA_SMOKE_MODEL`, `AI_ROUTER_DEMO_PROFILE`, `AI_ROUTER_DEMO_MODEL`, `AI_ROUTER_DEMO_EFFORT`, `AI_ROUTER_BENCHMARK_MODEL`, `AI_ROUTER_PROTECTED_WORKSPACES`); see the header of each script.
+The demo and smoke scripts read a few more (`AI_ROUTER_URL`, `OLLAMA_SMOKE_MODEL`, `AI_ROUTER_DEMO_PROFILE`, `AI_ROUTER_DEMO_MODEL`, `AI_ROUTER_DEMO_EFFORT`, `AI_ROUTER_BENCHMARK_MODEL`, `AI_ROUTER_F09_MODEL`, `AI_ROUTER_PROTECTED_WORKSPACES`); see the header of each script.
 
 Run `node interfaces/cli/ai-router.js help` for available commands, including `doctor`, provider health, task list/show/attempts/resume/validate/doctor, audit inspection, memory validation, and `route explain`.
 

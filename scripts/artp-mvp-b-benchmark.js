@@ -10,7 +10,7 @@ import { inspectGit, createCheckpointMetadata } from '../checkpoints/git-checkpo
 
 const BASELINE = 'STATE=PENDING\n';
 const EXPECTED = 'STATE=READY\n';
-const MODEL = process.env.AI_ROUTER_BENCHMARK_MODEL || 'gemma4:26b';
+const MODEL = process.env.AI_ROUTER_BENCHMARK_MODEL || 'qwen3.5:9b';
 
 function git(workspace, ...args) {
   const result = spawnSync('git', ['-C', workspace, ...args], { encoding: 'utf8', windowsHide: true });

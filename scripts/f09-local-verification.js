@@ -22,6 +22,7 @@ import { ActionMediator } from '../actions/action-mediator.js';
 import { ValidationCommandRegistry, ValidationEngine } from '../validation/validation-engine.js';
 import { AttachmentStore } from '../core/attachment-store.js';
 
+const MODEL = process.env.AI_ROUTER_F09_MODEL || 'qwen3.5:9b';
 const WIDTH = 540; const HEIGHT = 280;
 const SEGMENTS = { 0: 'abcedf', 1: 'bc', 2: 'abged', 3: 'abgcd', 4: 'fgbc', 5: 'afgcd', 6: 'afgecd', 7: 'abc', 8: 'abcdefg', 9: 'abfgcd' };
 const TABLE = new Uint32Array(256);
@@ -59,7 +60,7 @@ async function runE2E(expected, image, provider) {
   if (git(workspace, ['remote', '-v'])) throw new Error('Disposable fixture unexpectedly has a Git remote.');
   const baseline = git(workspace, ['rev-parse', 'HEAD']);
   const projectRegistry = new ProjectRegistry(runtime); const { project } = await projectRegistry.register(workspace);
-  const profileRegistry = new ProfileRegistry(runtime); const model = await provider.inspectModel('gemma4:26b');
+  const profileRegistry = new ProfileRegistry(runtime); const model = await provider.inspectModel(MODEL);
   if (model.discovered_facts.vision !== true) throw new Error('Installed local model does not report vision capability.');
   const profileId = 'f09-local-vision';
   await profileRegistry.register({ profile_id: profileId, provider_id: 'ollama', display_name: 'F09 local visual fixture', auth_mode: 'none', enabled: true, status: 'ready', location: 'local', cost_category: 'LOCAL', routing_classification: 'REAL', execution_channel: 'ollama-local', selected_model_id: model.model_id, models: [model] });
@@ -120,7 +121,7 @@ async function main() {
   const image = visualFixture(expected); const imagePath = path.join(directory, 'visual.png'); await writeFile(imagePath, image);
   const provider = new OllamaProvider();
   const started = performance.now();
-  const result = await provider.execute({ model: 'gemma4:26b', prompt: 'What three-digit number is drawn in the image? Reply using only the three digits.', attachments: [{ path: imagePath, mime_type: 'image/png' }], options: { num_predict: 32, temperature: 0 }, think: false, timeout_ms: 180_000 });
+  const result = await provider.execute({ model: MODEL, prompt: 'What three-digit number is drawn in the image? Reply using only the three digits.', attachments: [{ path: imagePath, mime_type: 'image/png' }], options: { num_predict: 32, temperature: 0 }, think: false, timeout_ms: 180_000 });
   const actual = String(result.output).trim();
   const passed = actual === String(expected);
   process.stdout.write(`${JSON.stringify({ status: passed ? 'VISUAL_PERCEPTION_CONFIRMED' : 'VISUAL_PERCEPTION_NOT_CONFIRMED', model: result.model, expected, actual: actual.slice(0, 100), latency_ms: Math.round(performance.now() - started), image_bytes: image.length, image_path: imagePath })}\n`);
