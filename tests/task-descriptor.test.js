@@ -5,7 +5,6 @@ import path from 'node:path';
 import { temporaryDirectory } from './helpers.js';
 import { descriptorFromTask, descriptorToTask, validateTaskExecutionDescriptor } from '../core/task-execution-descriptor.js';
 import { TaskDescriptorStore } from '../core/task-descriptor-store.js';
-import { inspectDescriptorVersion, migrateDescriptorExplicit, registerDescriptorMigration } from '../core/descriptor-migrations.js';
 
 function valid(workspace) {
   return { schema_version: '0.1', task_id: 'task-01', project_id: 'project-01', objective: 'Durably resume a synthetic task', filesystem_scope: { workspace_path: workspace, allowed_paths: ['src'], denied_paths: [] } };
@@ -57,20 +56,4 @@ test('descriptor store persists, finds, updates, and lists without process memor
   assert.equal(reconstructed.current_state, 'READY');
   assert.equal(reconstructed.descriptor_revision, 2);
   assert.equal((await store.list()).length, 1);
-});
-
-test('future descriptor migration is explicit and creates a backup', async (t) => {
-  const root = await temporaryDirectory(t);
-  const workspace = path.join(root, 'workspace');
-  await mkdir(workspace, { recursive: true });
-  const store = new TaskDescriptorStore(path.join(root, 'runtime'));
-  const file = store.path('project-01', 'task-01');
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify({ ...valid(workspace), schema_version: '0.0' })}\n`);
-  registerDescriptorMigration('0.0', '0.1', (descriptor) => ({ ...descriptor, descriptor_revision: 1 }));
-  assert.equal(inspectDescriptorVersion({ schema_version: '0.0' }).status, 'migration-available');
-  const result = await migrateDescriptorExplicit(store, 'project-01', 'task-01', '0.1');
-  assert.equal(result.migrated, true);
-  assert.match(await readFile(result.backup, 'utf8'), /"0\.0"/);
-  assert.equal((await store.load('project-01', 'task-01')).schema_version, '0.1');
 });

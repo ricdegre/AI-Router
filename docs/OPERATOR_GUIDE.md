@@ -4,7 +4,7 @@
 
 1. Double-click **AI Router.vbs** and wait for the dashboard to open.
 2. Check **Overview**. A degraded badge is informative: open **Doctor** for evidence.
-3. Open **VS Code** to confirm the editor, extension version, local service, and heartbeat. Use **Install Extension** after accidental removal or **Repair Extension** if activation is broken. These actions affect only the packaged AI Router extension.
+3. Open **VS Code** to confirm the editor, extension version, local service, and heartbeat. Use **Install Extension** after accidental removal or **Repair Extension** if activation is broken. These actions affect only the packaged AI Router extension and need the extension package to be built first (see Recovery).
 4. In **Projects**, register a workspace or scan roots already configured by the operator. Initialize memory if required.
 5. In **Providers**, confirm the intended adapter is enabled and healthy. AI Router never starts Ollama or changes its model/configuration state.
 6. Use **Routing** to test task requirements before creating work. Rejected candidates show explicit reasons.
@@ -25,8 +25,18 @@
 
 If the browser closes, double-click the launcher again; an existing healthy service is reused. If the service fails to start, inspect the private `logs/control-service.log`, run `npm run status`, and run the CLI `doctor` command. Port collisions are handled automatically. A stale `control/service.json` is ignored if its health endpoint is not reachable.
 
-If the VS Code extension is removed, double-click `Install AI Router VS Code Extension.vbs`. If it is installed but disconnected or damaged, double-click `Repair AI Router VS Code Extension.vbs`. Both launchers are idempotent, preserve settings and unrelated extensions, and verify the extension against `dist\ai-router-vscode-0.6.0.vsix`. The manual fallback remains VS Code's **Extensions: Install from VSIX...** command, followed by Dashboard → VS Code → **Test Connection**.
+If the VS Code extension is removed, double-click `Install AI Router VS Code Extension.vbs`. If it is installed but disconnected or damaged, double-click `Repair AI Router VS Code Extension.vbs`. Both launchers are idempotent, preserve settings and unrelated extensions, and install from `<repo>\dist\ai-router-vscode-0.6.0.vsix`. The same actions are on the dashboard **VS Code** page.
+
+That package is a build output and is not in Git. On a fresh clone, build it once before installing (Node.js 22 or newer); the command creates `dist/` itself:
+
+```text
+cd interfaces/vscode
+npm ci
+npm run package
+```
+
+The manual fallback remains VS Code's **Extensions: Install from VSIX...** command with that file, followed by Dashboard → VS Code → **Test Connection**.
 
 ## Security expectations
 
-Keep the service on loopback. Do not forward its port, add a network proxy, or disable browser Origin protections. Runtime data may contain project paths and operational task text, so keep the configured data root private. The dashboard has no cloud login and no place to paste API keys.
+Keep the service on loopback. Do not forward its port, add a network proxy, or disable browser Origin protections. Runtime data may contain project paths and operational task text, so keep the configured data root private. The dashboard has no login of its own. API keys are entered only in a profile's **Connect** dialog (OpenRouter and Gemini): the key is sent to the loopback service, stored encrypted with Windows DPAPI under the data root, and never returned to the browser. OpenAI subscription profiles sign in through the official browser flow instead of a key.

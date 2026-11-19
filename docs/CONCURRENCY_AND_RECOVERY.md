@@ -20,7 +20,7 @@ The orchestrator persists the task transition, attempt, proposed actions, and ex
 8. skips an action identity whose approved/recovered receipt already exists;
 9. reruns router-owned validation before completion.
 
-Terminal tasks cannot be rerun. CLI resume is enabled only for validated Task Execution Descriptor 0.1 records whose task doctor recommendation is `RESUMABLE`. `BLOCKED` requires review; `CANCELLED` and `COMPLETED` are terminal.
+Terminal tasks cannot be rerun. CLI resume is enabled only for validated Task Execution Descriptor records (versions 0.1 and 0.2) whose task doctor recommendation is `RESUMABLE`. `BLOCKED` requires review; `CANCELLED` and `COMPLETED` are terminal.
 
 Independent-process tests prove that process B can reconstruct a process A task from runtime files alone. A separate-process lease test proves that concurrent resume of one project is blocked within a bounded wait.
 

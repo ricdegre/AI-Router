@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -97,10 +97,5 @@ export class SecretStore {
     if (Object.keys(state.secrets ?? {}).length === 0) await unlink(filePath).catch(() => {});
     else await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     return { removed };
-  }
-
-  async profileIds() {
-    try { return (await readdir(this.directory)).filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5)); }
-    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   }
 }

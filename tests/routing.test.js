@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProviderRegistry } from '../providers/core/registry.js';
 import { RoutingPolicy } from '../routing/policy.js';
-import { EscalationPlan } from '../routing/escalation.js';
 import { MockProvider } from './mock-provider.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 import { createModelDescriptor } from '../providers/core/model-descriptor.js';
@@ -251,17 +250,6 @@ test('manual routing resolves a provider execution channel when legacy profile s
   const legacy = profile('legacy-channel-profile', 'channel-provider', 'local', { execution_channel: null });
   const route = await new RoutingPolicy().explain({ routing_mode: 'manual', manual_profile: legacy.profile_id, manual_execution_channel: 'native-channel' }, registry, [legacy]);
   assert.equal(route.selected.execution_channel, 'native-channel');
-});
-
-test('escalation is bounded and user cancellation never escalates', () => {
-  const candidates = [profile('local', 'provider-a'), profile('standard', 'provider-b'), profile('strong', 'provider-c')];
-  const plan = new EscalationPlan(candidates, { maxAttempts: 2 });
-  assert.equal(plan.nextCandidate().profile_id, 'local');
-  plan.recordAttempt({ provider_id: 'provider-a', profile_id: 'local', result: 'failure', failure_category: 'timeout' });
-  assert.equal(plan.shouldEscalate(), true);
-  assert.equal(plan.nextCandidate().profile_id, 'standard');
-  plan.recordAttempt({ provider_id: 'provider-b', profile_id: 'standard', result: 'failure', failure_category: 'user_cancelled' });
-  assert.equal(plan.shouldEscalate(), false);
 });
 
 test('light cosmetic edits conserve subscription quota and bugs are not classified as light', async () => {

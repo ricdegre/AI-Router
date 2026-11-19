@@ -8,11 +8,6 @@ export class ProviderRegistry {
     this.profileRegistry = options.profileRegistry ?? null;
   }
 
-  attachProfileRegistry(profileRegistry) {
-    this.profileRegistry = profileRegistry;
-    return this;
-  }
-
   async profiles(providerId = undefined) {
     return this.profileRegistry ? this.profileRegistry.list(providerId) : [];
   }

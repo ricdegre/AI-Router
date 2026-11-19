@@ -15,18 +15,21 @@ AI Router is split into a public source repository and a private runtime data ro
 3. **Shared Project Memory** stores layered, human-readable operational state outside the project workspace.
 4. **Handoff Service** records enough structured state for a new agent to continue without private chat history.
 5. **Checkpoint Service** reads Git state and records non-destructive checkpoint metadata. It never performs automatic rollback.
-6. **Provider Adapters** expose normalized availability, authentication modes, capabilities, usage, execution, cancellation, and health information. Ollama is the first adapter.
-7. **Account Profiles** reference independently addressable provider resources without storing passwords in the project registry or memory.
-8. **Policy Engine** deterministically chooses a capable resource based on risk, availability, strength, cost category, and explicit preferences.
-9. **Interfaces** call core services. The CLI is the first interface; VS Code, a local API, desktop, or web interfaces may follow.
+6. **Provider Adapters** expose normalized availability, authentication modes, capabilities, usage, execution, cancellation, and health information. Six adapters are registered: Ollama, OpenRouter, Gemini, OpenAI Codex (ChatGPT subscription), Claude Code, and Google Antigravity.
+7. **Account Profiles** reference independently addressable provider resources without storing passwords in the project registry or memory. API keys live in a separate DPAPI-encrypted secret store.
+8. **Policy Engine** analyzes the task, then deterministically chooses a capable resource based on risk, availability, strength, cost category, and explicit preferences. An optional **Decision Engine** layer (Triage, with a mock or loopback Ollama transport) can add bounded classification evidence but cannot override hard filters.
+9. **Interfaces** call core services: the CLI, a loopback-only control API, the local dashboard served by it, and a VS Code extension that talks to the same API.
 10. **Structured Responses** normalize model claims and proposed actions without granting execution authority.
 11. **Action Mediator** enforces safe paths, allowed action types, source hashes, backups, and dry-run behavior.
 12. **Validation Engine** evaluates router-owned acceptance requirements independently from provider claims.
-13. **Resilient Orchestrator** persists states and attempts, coordinates one writer per project, escalates through bounded candidates, and reconstructs work after interruption.
+13. **Resilient Orchestrator** persists states and attempts, coordinates one writer per project, falls back automatically through bounded candidates, stops a running task on cancel without applying its output, and reconstructs work after interruption.
 14. **Audit and Diagnostics** expose operational evidence without private prompts or secret fields.
 15. **Task Execution Descriptor** persists complete task policy and execution limits independently of process memory.
 16. **Execution Plan and Recovery Journal** preserve step progress and intent/receipt evidence across crashes.
 17. **Resume Manager** validates state, journal, drift, locks, checkpoints, providers, attempts, and safety matrix before reconstructing work.
+18. **Context Builder and Execution Envelope** assemble the bounded, hashed context and the provider-neutral request for each attempt.
+19. **Attachment Store** keeps bounded task images in private storage; descriptors and audit records carry metadata only.
+20. **ARTP** compiles compact ARTP/1 task descriptors into Task Execution Descriptors through preview, create, and resume.
 
 ## Data flow
 
@@ -38,7 +41,7 @@ Interfaces depend on core services. Core services depend on configuration and st
 
 ## Current implementation
 
-The platform implements configuration, locked registries, Memory/Handoff Protocol 0.1, Task Execution Descriptor 0.1, Recovery Journal 0.1, persistent execution plans, Git checkpoint metadata, Provider and Structured Response Protocol 0.1, private profiles, model-aware Ollama execution, deterministic routing, controlled actions, independent validation, bounded escalation, drift-aware disk-only resume, diagnostics, CLI, mocks, and multiprocess tests. Cloud authentication remains deferred.
+The platform implements configuration, locked registries, Memory/Handoff Protocol 0.1, Task Execution Descriptor 0.2 (0.1 remains readable), Recovery Journal 0.1, persistent execution plans, Git checkpoint metadata, Provider and Structured Response Protocol 0.1, private profiles with per-profile authentication, six provider adapters, task analysis and deterministic routing with the optional Triage classifier, controlled actions, independent validation, automatic bounded fallback, drift-aware disk-only resume, image attachments, ARTP/1 tasks, diagnostics, the CLI, the loopback control API and dashboard, the VS Code extension, mocks, and multiprocess tests. Remote execution and destructive rollback are not implemented.
 
 ```mermaid
 flowchart TD

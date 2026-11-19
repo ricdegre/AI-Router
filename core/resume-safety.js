@@ -1,4 +1,3 @@
-export const RESUME_RECOMMENDATIONS = Object.freeze(['RESUMABLE', 'REVIEW_REQUIRED', 'BLOCKED', 'COMPLETED']);
 
 export function evaluateResumeSafety({ state, drift, lock, journal, resumePolicy = {} }) {
   const reasons = [];

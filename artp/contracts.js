@@ -15,13 +15,6 @@ export function stableJson(value) {
 
 export function sha256(value) { return createHash('sha256').update(typeof value === 'string' ? value : stableJson(value)).digest('hex'); }
 
-// These contracts are provider-neutral. MVP A never passes them to a worker.
+// These contract versions are provider-neutral.
 export const CONTEXT_MANIFEST_VERSION = '0.1';
 export const EXECUTION_ENVELOPE_VERSION = '0.1';
-export const FUTURE_EXECUTION_ENVELOPE = Object.freeze({
-  version: EXECUTION_ENVELOPE_VERSION,
-  status: 'defined-not-executed',
-  attachment_binding: 'task-scoped-id-and-hash',
-  mandatory_context: 'fail-if-unavailable-or-truncated',
-  required_fields: ['project_id', 'descriptor_semantic_hash', 'policy_hash', 'context_manifest_hash', 'attachment_bindings']
-});

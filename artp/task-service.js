@@ -6,7 +6,6 @@ import { resolveSafePath } from '../core/safe-path.js';
 import { AiRouterError } from '../core/errors.js';
 import { sha256 } from './contracts.js';
 
-const ID = /^[a-z0-9][a-z0-9._-]{1,79}$/;
 const READ = ['read_file', 'list_directory', 'inspect_git_status'];
 
 export class ArtpTaskService {

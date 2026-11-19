@@ -6,7 +6,6 @@ export const PROVIDER_CAPABILITIES = Object.freeze([
   'local', 'subscription', 'metered_api', 'streaming', 'tool_use'
 ]);
 export const PROVIDER_TYPES = Object.freeze(['local', 'cloud', 'gateway', 'mock']);
-export const PROVIDER_HEALTH = Object.freeze(['healthy', 'degraded', 'unavailable', 'unknown', 'disabled']);
 
 function validId(value) {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9._-]{1,63}$/.test(value);

@@ -48,18 +48,5 @@ export class CircuitBreaker {
     });
     return outcome;
   }
-
-  async recoverProvider(providerId) {
-    await updateJsonAtomic(this.filePath, { version: '0.1', circuits: {} }, (state) => {
-      for (const [id, circuit] of Object.entries(state.circuits)) {
-        if (id.startsWith(`${providerId}:`) && circuit.status === 'open' && Date.now() >= Date.parse(circuit.cooldown_until)) {
-          circuit.status = 'closed';
-          circuit.consecutive_failures = 0;
-          circuit.recovered_at = new Date().toISOString();
-        }
-      }
-      return state;
-    });
-  }
 }
 
