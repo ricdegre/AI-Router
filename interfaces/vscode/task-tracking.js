@@ -28,13 +28,16 @@ async function trackTask(router, projectId, taskId, options = {}) {
   const onUpdate = options.onUpdate ?? (() => {});
   const active = options.active ?? (() => true);
   const started = now();
-  let resumeOutcome = null; let resumeError = null; let failures = 0; let trackingWarned = false; let lastSnapshot = null;
+  let resumeOutcome = null; let resumeError = null; let failures = 0; let trackingWarned = false; let lastSnapshot = null; let failedPolls = 0;
   if (options.resume) void router.resume(projectId, taskId).then(value => { resumeOutcome = value; }).catch(error => { resumeError = error; options.onResumeError?.(error); });
   while (active()) {
     try {
       const detail = await router.task(projectId, taskId);
       failures = 0;
       let snapshot = taskSnapshot(detail, { ...options, projectId, taskId, resumeOutcome });
+      // FAILED is also a brief step on the way to the next provider; it is final only when it stays.
+      failedPolls = snapshot.persistedState === 'FAILED' ? failedPolls + 1 : 0;
+      if (snapshot.terminal && failedPolls > 0 && failedPolls < 3) snapshot = { ...snapshot, status: 'ROUTING', terminal: false };
       if (snapshot.terminal) { onUpdate(snapshot); return snapshot; }
       if (resumeError) {
         snapshot = { ...snapshot, status: 'TRACKING_LOST', stage: 'Execution stopped', error: `${resumeError.code || 'RESUME_FAILED'} — ${resumeError.message}`, terminal: false };
