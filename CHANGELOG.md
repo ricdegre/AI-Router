@@ -1,5 +1,7 @@
 # Changelog
 
+AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
+
 ## Unreleased
 
 - Routed light tasks (cosmetic or one-line edits) to local and free capacity before subscriptions, and kept medium code changes off local models under 20B parameters.
@@ -9,6 +11,32 @@
 - Fixed `INVALID_ACTION_PROTOCOL` from local models by requiring `target` for file actions in the provider JSON schema.
 - Retried Claude Code OAuth refresh-lock contention before failing.
 - Set the MIT copyright holder and added portable agent continuity files (`AGENTS.md`, `AI-CONTEXT/`, `PROGRESS/`).
+- Security: rejected any action that targets a `.git` path segment, and kept credential files (`.env`, keys, `credentials.*`, `.npmrc`, and similar) out of reach of every file action while still allowing templates such as `.env.example`.
+- Security: ran Git with `core.fsmonitor=false` when inspecting a workspace.
+- Added automatic fallback on quota exhaustion, rate limits, provider outages, sign-in failures, blocked or incomplete responses, and empty proposals, including a second account of the same provider when no other provider is eligible.
+- Added a workspace baseline checkpoint when a task is created through the control API or ARTP, so drift detection no longer compares against an earlier task.
+- Added a Last Task card to the dashboard overview and a last-task line in the VS Code panel when nothing is active.
+- Added token usage metrics for every provider, not only Ollama.
+- Changed the default per-task context budget from 16K to 96K characters, with project inspection allowed up to 80K, still capped by each model's context window.
+- Changed context selection so files named in the task are sent whole, or as a window around quoted text when they do not fit.
+- Changed changesets so the router supplies `expected_sha256` when a model omits it, several edits to one file are combined into one ordered changeset, and LF edits match CRLF files without changing their line endings.
+- Changed Ollama requests to size `num_ctx` to the prompt instead of relying on the server default.
+- Changed Claude Code and Antigravity to send prompts over 8,000 characters through stdin (`stream-json`), avoiding the Windows command-line limit.
+- Changed the control service to cache provider health, model discovery (5 minutes), Doctor results (15 seconds), and project inspection (30 seconds), with `refresh=true` and any state change bypassing or clearing them.
+- Changed the Decision Engines page to show the configured Triage transport and to read the latest decision from the audit log.
+- Fixed cancellation of a running task: the provider call is aborted, nothing it proposed is applied, no fallback runs, and the task ends in `CANCELLED`.
+- Fixed file writes when the runtime root and the workspace are on different drives by staging temporary files beside the target.
+- Fixed task analysis requiring web access for any mention of "web", treating words such as "revision" or "capturar" as vision requests, and ignoring the instruction text during real execution.
+- Fixed Claude Code health checks waiting behind a running inference.
+- Fixed the VS Code extension abandoning a task during the transient `FAILED` state before fallback, resolving active-editor paths with the wrong path style, and packaging on a fresh clone without `dist/`.
+- Fixed `config/local.json` saved with a UTF-8 BOM, helper-command timeouts being classified as execution failures, and replacement text containing `$` patterns being expanded.
+- Fixed three tests and the CLI executable lookup that assumed Windows path handling, so the suite passes on Linux.
+- Removed modules that only tests still used (`core/continuity-orchestrator.js`, `routing/escalation.js`, `core/descriptor-migrations.js`) and other unused functions and constants; fallback runs in the resilient orchestrator and descriptors 0.1 and 0.2 are read directly.
+- Removed the personal recovery note, references to unrelated projects, two single-profile smoke scripts, the empty `third-party/` directory, `docs/reinstall-dependencies.json`, and the superseded `docs/SECURITY.md`.
+- Updated development-only packaging dependencies of the VS Code extension (`npm audit fix`).
+- Changed the minimum Node.js version to 22.
+- Added a CI workflow that runs the tests on Linux and Windows (Node 22 and 24) and builds the VS Code package.
+- Added the October 2026 audit report (`docs/AUDIT-2026-10.md`, in Spanish) and brought the documentation in line with the code.
 
 ## 0.12.0-pre.0
 
@@ -60,8 +88,6 @@
 - Added idempotent one-click Windows install and repair launchers for the packaged VS Code extension.
 - Added strictly allowlisted VS Code integration status and actions to the local dashboard.
 - Added package/version detection, activation heartbeat verification, recovery documentation, and installer tests.
-
-AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain protocol or storage changes that require documented migration.
 
 ## 0.11.0-pre.0 — First-use readiness and installable VS Code client
 

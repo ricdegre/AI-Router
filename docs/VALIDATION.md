@@ -4,7 +4,7 @@ Entries are dated records of what was run at the time. Only the first section de
 
 ## Current state: 0.12.0-pre.0, 2026-11-19
 
-- Full automated suite (`npm test`): 358 passed, 0 failed, 0 skipped on Linux with Node 22, at commit `02d050e`. The same suite also runs on Windows, the primary platform.
+- Full automated suite (`npm test`): 355 passed, 0 failed, 0 skipped on Linux with Node 22. It was 358 earlier the same day, before the tests of three removed unused modules were deleted. The CI workflow runs the same suite on Linux and Windows with Node 22 and 24.
 - The suite uses mocks and temporary directories only. It contacts no provider and needs no account.
 - Not yet validated end to end: a real task that falls back between two different subscription providers, cancelling a real running task, the Codex read-only sandbox on native Windows, and Codex timeouts on long turns. These need the real CLIs and consume quota.
 
@@ -20,7 +20,7 @@ These runs found defects that were then fixed with regression tests; they are si
 ## Provider-ready continuity block — 2026-09-21
 
 - Full automated suite: 30 passed, 0 failed.
-- Isolated Agent A → Agent B integration test: passed when run independently.
+- Isolated Agent A → Agent B integration test: passed when run independently. (That test and its orchestrator were later removed; `tests/durable-resume.test.js` now covers the handoff.)
 - Route explanation: selected the healthy local Ollama profile for a low-risk coding task and reported capability, strength, health, cost, and local-preference reasons.
 - Secret and public-path scans: required before release commits.
 
