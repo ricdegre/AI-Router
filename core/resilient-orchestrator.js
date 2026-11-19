@@ -428,6 +428,10 @@ export class ResilientOrchestrator {
         const next = failureCategory && (!escalationAllowed || !recoverySafe || unrestoredPriorWrites) ? null : route.routing_mode === 'manual' ? null
           : ['timeout', 'provider_unavailable'].includes(failureCategory)
             ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id) ?? null
+            // Quota, rate limits and sign-in belong to one account: prefer another provider, else another account of the same one.
+            : ['quota_exhausted', 'rate_limited', 'authentication'].includes(failureCategory)
+              ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id)
+                ?? candidates.slice(index + 1).find((item) => item.profile_id !== candidate.profile_id) ?? null
             // An execution failure can be model-specific: prefer another provider, else another model or profile of the same one.
             : failureCategory === 'execution_failure'
               ? candidates.slice(index + 1).find((item) => item.provider_id !== candidate.provider_id)

@@ -21,6 +21,7 @@ import { contentHash } from '../actions/changeset.js';
 import { ValidationEngine } from '../validation/validation-engine.js';
 import { AiRouterError } from '../core/errors.js';
 import { MockProvider } from './mock-provider.js';
+import { descriptorFromTask, descriptorToTask } from '../core/task-execution-descriptor.js';
 
 function response(status, summary, actions = [], remaining = []) {
   return { schema_version: '0.1', status, summary, observations: [], proposed_actions: actions,
@@ -443,4 +444,25 @@ test('several edits to one file in a plan are applied in order as one changeset'
   const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'multi-edit-01', objective: 'Add a reset route in App.tsx', preferred_profiles: ['profile-a'], required_capabilities: ['coding'] }, { maxAttempts: 1 });
   assert.equal(result.status, 'completed');
   assert.equal(await readFile(path.join(setup.workspace, 'App.tsx'), 'utf8'), "import Login from './Login';\nimport Reset from './Reset';\n<Route path=\"/reset\" />\n<Route path=\"*\" />\n");
+});
+
+test('a descriptor task falls back when the first account is out of quota, rate limited, unavailable, or signed out', async (t) => {
+  for (const [category, code] of [['quota_exhausted', 'CLAUDE_SUBSCRIPTION_LIMIT_REACHED'], ['rate_limited', 'CLAUDE_RATE_LIMITED'], ['provider_unavailable', 'PROVIDER_CLI_NOT_INSTALLED'], ['authentication', 'PROVIDER_AUTH_REQUIRED']]) {
+    const f = await fixture(t, [
+      { provider: 'provider-a', profile: 'profile-a', strength: 'strong', execute: async () => { throw new ProviderError('unavailable', code, { failureCategory: category }); } },
+      { provider: 'provider-b', profile: 'profile-b', strength: 'strong', execute: async () => ({ structured: response('ok', 'Fallback completed the read-only analysis.') }) }
+    ]);
+    const task = { ...descriptorToTask(descriptorFromTask({ project_id: f.project.projectId, task_id: `fallback-${category.replace('_', '-')}`, objective: 'Analyze project architecture read-only', task_type: 'project_analysis', max_attempts: 2 }, f.project)), preferred_profiles: ['profile-a', 'profile-b'] };
+    const result = await f.orchestrator.run(task, { maxAttempts: 2 });
+    assert.equal(result.status, 'completed', category);
+    assert.deepEqual((await f.dependencies.attemptStore.list(f.project.projectId, task.task_id)).map((item) => [item.provider_id, item.failure_category]), [['provider-a', category], ['provider-b', null]]);
+  }
+});
+
+test('an exhausted account falls back to another account of the same provider when no other provider is eligible', async (t) => {
+  let calls = 0;
+  const f = await fixture(t, [{ provider: 'provider-a', profiles: ['profile-a1', 'profile-a2'], strength: 'strong', execute: async (request) => { calls += 1; if (request.profile_id === 'profile-a1') throw new ProviderError('quota', 'CLAUDE_SUBSCRIPTION_LIMIT_REACHED', { failureCategory: 'quota_exhausted' }); return { structured: response('ok', 'The second account completed the analysis.') }; } }]);
+  const result = await f.orchestrator.run({ project_id: f.project.projectId, task_id: 'same-provider-account-01', objective: 'Analyze project architecture read-only', task_type: 'project_analysis', preferred_profiles: ['profile-a1', 'profile-a2'] }, { maxAttempts: 2 });
+  assert.equal(result.status, 'completed'); assert.equal(calls, 2);
+  assert.deepEqual((await f.dependencies.attemptStore.list(f.project.projectId, 'same-provider-account-01')).map((item) => item.profile_id), ['profile-a1', 'profile-a2']);
 });
