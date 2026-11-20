@@ -23,11 +23,12 @@ This page explains how to size a task, what each state in the VS Code panel mean
 | **Completed** | The task finished. **Changed Files** lists what was written. |
 | **Blocked** | No provider produced a change the router could apply. No file was changed. Read **Error** and the **Attempt** lines. |
 | **Failed** | Every provider failed. Open **Profiles / Accounts** in the dashboard and run **Test Chat** on each profile. |
-| **Cancelled** | You cancelled the task. No file was changed. |
+| **Cancelling** | You clicked **Cancel Task** and the router is stopping the task. |
+| **Cancelled** | You cancelled the task. **Changed Files** lists only what the task itself had already written, usually nothing. |
 | **Tracking lost** | VS Code could not read the task's state. The task itself may still be running. Click **Refresh**. |
 | **Still running** | The task has been running for more than ten minutes and is still alive. |
 
-While a task runs, **Run Task** reads **Running…** and is disabled, and **Cancel Task** appears next to it. When a task completes, the **Instruction** box is emptied. If you click **Run Task** with the same instruction as the previous task, the panel asks for a second click before repeating it.
+While a task runs, **Run Task** reads **Running…** and is disabled, and **Cancel Task** appears under it. When a task completes or is cancelled, the **Instruction** box is emptied. If you click **Run Task** with the same instruction as the previous task, the panel asks for a second click before repeating it.
 
 ## When a task moves to another provider
 

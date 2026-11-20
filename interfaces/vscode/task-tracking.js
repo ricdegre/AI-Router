@@ -17,7 +17,8 @@ function taskSnapshot(detail, { taskId, projectId, readOnly = false, startedAt =
   const started = startedAt || detail?.state?.started_at || detail?.state?.created_at || null;
   const ended = blockedBeforeStart ? new Date().toISOString() : TERMINAL.has(state) ? detail?.state?.updated_at || new Date().toISOString() : null;
   const durationMs = started ? Math.max(0, Date.parse(ended || new Date().toISOString()) - Date.parse(started)) : null;
-  const gitChanged = (detail?.workspace_changes?.changedFiles ?? []).map(entry => /^[ MADRCU?!]{2} /.test(entry) ? entry.slice(3).split(' -> ').at(-1) : entry);
+  // Git status lists every uncommitted file, so a cancelled task reports only what its own actions wrote.
+  const gitChanged = (state === 'CANCELLED' ? [] : detail?.workspace_changes?.changedFiles ?? []).map(entry => /^[ MADRCU?!]{2} /.test(entry) ? entry.slice(3).split(' -> ').at(-1) : entry);
   const changedFiles = readOnly ? [] : [...new Set([...gitChanged, ...(detail?.attempts ?? []).flatMap(item => (item.execution_results ?? []).filter(result => result.status === 'completed' && result.target).map(result => result.target))])];
   // Earlier attempts explain why the task is now on another provider.
   const attempts = detail?.attempts ?? [];
@@ -31,7 +32,7 @@ async function trackTask(router, projectId, taskId, options = {}) {
   const onUpdate = options.onUpdate ?? (() => {});
   const active = options.active ?? (() => true);
   const started = now();
-  let resumeOutcome = null; let resumeError = null; let failures = 0; let trackingWarned = false; let lastSnapshot = null; let failedPolls = 0;
+  let resumeOutcome = null; let resumeError = null; let failures = 0; let trackingWarned = false; let lastSnapshot = null; let failedPolls = 0; let cancelPolls = 0;
   if (options.resume) void router.resume(projectId, taskId).then(value => { resumeOutcome = value; }).catch(error => { resumeError = error; options.onResumeError?.(error); });
   while (active()) {
     try {
@@ -42,7 +43,10 @@ async function trackTask(router, projectId, taskId, options = {}) {
       failedPolls = snapshot.persistedState === 'FAILED' ? failedPolls + 1 : 0;
       if (snapshot.terminal && failedPolls > 0 && failedPolls < 3) snapshot = { ...snapshot, status: 'ROUTING', terminal: false };
       if (snapshot.terminal) { onUpdate(snapshot); return snapshot; }
-      if (resumeError) {
+      // A cancelled task ends its run request with an error before the Cancelled state is written; wait for that state.
+      const cancelling = Boolean(options.cancelling?.()) && cancelPolls < 5;
+      if (cancelling) { cancelPolls += 1; snapshot = { ...snapshot, status: 'CANCELLING', stage: 'Cancelling' }; }
+      else if (resumeError) {
         snapshot = { ...snapshot, status: 'TRACKING_LOST', stage: 'Execution stopped', error: `${resumeError.code || 'RESUME_FAILED'} — ${resumeError.message}`, terminal: false };
         onUpdate(snapshot); return snapshot;
       }

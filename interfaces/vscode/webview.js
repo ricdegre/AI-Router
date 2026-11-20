@@ -48,7 +48,7 @@
     currentTask = task;
     const busy = isBusy(task);
     // The instruction of a task that just completed is done: empty the box so Run Task cannot repeat it by accident.
-    if (wasBusy && task.status === 'COMPLETED' && lastRunInstruction !== null && instruction.value === lastRunInstruction) { instruction.value = ''; lastRunInstruction = null; }
+    if (wasBusy && ['COMPLETED', 'CANCELLED'].includes(task.status) && lastRunInstruction !== null && instruction.value === lastRunInstruction) { instruction.value = ''; lastRunInstruction = null; }
     const state = document.querySelector('#taskState');
     state.textContent = readable(task.status);
     const activity = document.querySelector('#taskActivity'); activity.hidden = !busy;
@@ -66,7 +66,7 @@
     row('Changed Files', task.terminal ? (task.changedFiles?.length ? task.changedFiles.join(', ') : 'none') : null);
     row(task.status === 'COMPLETED' ? 'Note' : 'Error', failureText(task.error));
     const output = document.querySelector('#taskResult'); output.hidden = !task.result; output.textContent = task.result ? `${focusMode ? '' : 'Result\n'}${typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}` : '';
-    if (focusMode && task.taskId && task.terminal) result.textContent = '';
+    if (task.taskId && task.terminal) result.textContent = '';
     else if (task.status === 'TRACKING_LOST') result.textContent = task.error || 'Task tracking was interrupted. Refresh to reconcile its recorded state.';
   }
   function option(value, label) { const element = document.createElement('option'); element.value = value; element.textContent = label; return element; }

@@ -27,6 +27,7 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     let sessionTaskId = null;
     let trackingKey = null;
     let trackingGeneration = 0;
+    let cancelRequested = null;
     let refreshSequence = 0;
     let taskStatus = currentTask?.status ?? 'READY';
     let lastTaskSnapshot = null;
@@ -53,10 +54,11 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     async function followTask(record, resume = false) {
       const key = `${record.projectId}:${record.taskId}`;
       if (trackingKey === key) return null;
+      if (cancelRequested !== record.taskId) cancelRequested = null;
       trackingKey = key; const generation = ++trackingGeneration;
       try {
         return await trackTask(client(), record.projectId, record.taskId, { ...record, resume,
-          active: () => generation === trackingGeneration,
+          active: () => generation === trackingGeneration, cancelling: () => cancelRequested === record.taskId,
           onUpdate(snapshot) { if (generation === trackingGeneration) showTask(snapshot); },
           onResumeError(error) { log('task.resume.response_lost', { task_id: record.taskId, ...safeError(error) }); },
           onPollError(error) { log('task.poll.failed', { task_id: record.taskId, ...safeError(error) }); }
@@ -216,8 +218,8 @@ function createExtension(vscodeApi = vscode, RouterClientClass = RouterClient) {
     async function cancelTask() {
       const record = currentTask; log('command.cancelTask', { task_id: record?.taskId ?? null });
       if (!record?.taskId || IDLE_STATES.includes(taskStatus)) { notifyPanel({ type: 'error', error: 'There is no running task to cancel.' }); return null; }
-      try { const result = await client().cancel(record.projectId, record.taskId); notifyPanel({ type: 'progress', value: 'Cancelling task…' }); await refresh(); return result; }
-      catch (error) { notifyPanel({ type: 'error', error: `${error.code || 'ERROR'} — ${error.message}` }); log('command.cancelTask.failed', safeError(error)); return null; }
+      try { cancelRequested = record.taskId; showTask({ ...lastTaskSnapshot, taskId: record.taskId, status: 'CANCELLING', stage: 'Cancelling' }); const result = await client().cancel(record.projectId, record.taskId); notifyPanel({ type: 'progress', value: 'Cancelling task…' }); await refresh(); return result; }
+      catch (error) { cancelRequested = null; notifyPanel({ type: 'error', error: `${error.code || 'ERROR'} — ${error.message}` }); log('command.cancelTask.failed', safeError(error)); return null; }
     }
 
     const handleWebviewMessage = async message => { log('webview.message', { type: message.type, attachment_count: Array.isArray(message.attachments) ? message.attachments.length : 0 }); if (message.type === 'dashboard') return vscodeApi.commands.executeCommand('aiRouter.openDashboard'); if (message.type === 'focus') return vscodeApi.commands.executeCommand('aiRouter.focusMode'); if (message.type === 'output') return channel.show(true); if (message.type === 'ready') { if (lastTaskSnapshot?.taskId && lastTaskSnapshot.taskId === currentTask?.taskId) notifyPanel({ type: 'taskStatus', task: lastTaskSnapshot }); return vscodeApi.commands.executeCommand('aiRouter.refresh'); } if (message.type === 'refresh') return vscodeApi.commands.executeCommand('aiRouter.refresh'); if (message.type === 'cancel') return cancelTask(); if (message.type === 'preview') return previewArtp(message.instruction, message.attachments ?? []); if (message.type === 'executeArtp') return executeArtp(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'explain') return explainRoute(message.instruction, message.selection, message.attachments ?? []); if (message.type === 'run') return runTask(message.instruction, message.selection, Boolean(message.readOnly), message.attachments ?? []); log('webview.message.ignored', { type: String(message.type || 'missing') }); return null; };

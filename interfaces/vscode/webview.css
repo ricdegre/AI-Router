@@ -8,7 +8,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
 .secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
-#newTask { grid-column: 1 / -1; }
+#newTask, #cancel { grid-column: 1 / -1; }
 .status { padding: 8px; margin: 8px 0; background: var(--vscode-editor-background); white-space: pre-wrap; word-break: break-word; }
 .ok { color: var(--vscode-testing-iconPassed); }
 .bad { color: var(--vscode-testing-iconFailed); }
@@ -39,7 +39,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .focus-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
 .focus-compose, .focus-result { min-width: 0; }
 .focus-mode textarea { min-height: 240px; padding: 12px; font-size: 14px; line-height: 1.5; }
-.focus-mode #run { grid-column: 1 / -1; padding: 12px; font-size: 14px; font-weight: 600; }
+.focus-mode #run, .focus-mode #cancel { grid-column: 1 / -1; padding: 12px; font-size: 14px; font-weight: 600; }
 .focus-mode .task-status { margin: 0 0 18px; padding: 12px 16px; }
 .focus-mode #taskState { font-size: 22px; }
 .focus-mode #taskDetails { display: flex; flex-wrap: wrap; gap: 4px 20px; line-height: 1.5; }

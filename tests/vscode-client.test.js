@@ -565,3 +565,15 @@ test('the panel shows task states as plain words', () => {
   try { ({ readableState } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
   assert.equal(readableState('WAITING_FOR_PROVIDER'), 'Waiting for provider'); assert.equal(readableState('TRACKING_LOST'), 'Tracking lost'); assert.equal(readableState(null), 'Ready');
 });
+
+test('a cancelled task shows Cancelling until the Cancelled state arrives, never Tracking lost', async () => {
+  const states = ['RUNNING', 'RUNNING', 'CANCELLED']; const seen = [];
+  const result = await trackTask({ async resume() { throw Object.assign(new Error('Task was cancelled.'), { code: 'TASK_CANCELLED' }); }, async task() { await Promise.resolve(); return { state: { state: states.shift() }, attempts: [] }; } }, 'project', 'task', { resume: true, cancelling: () => true, wait: async () => {}, onUpdate: snapshot => seen.push(snapshot.status) });
+  assert.deepEqual(seen, ['CANCELLING', 'CANCELLING', 'CANCELLED']);
+  assert.equal(result.status, 'CANCELLED');
+});
+
+test('a cancelled task does not list files that were already uncommitted', () => {
+  const snapshot = taskSnapshot({ state: { state: 'CANCELLED' }, attempts: [], workspace_changes: { changedFiles: [' M README.md'] } }, { taskId: 'task', projectId: 'project' });
+  assert.deepEqual(snapshot.changedFiles, []);
+});
