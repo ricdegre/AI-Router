@@ -20,7 +20,7 @@ AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain 
 - Fixed an expired Claude Code session being reported as a refresh lock; it is now `CLAUDE_AUTH_REQUIRED` and falls back to another provider.
 - Changed structured-response parsing to read a JSON object wrapped in prose, and to record the shape of a response it cannot parse.
 - Changed the F09 and ARTP benchmark scripts to default to `qwen3.5:9b`; the F09 model is set with `AI_ROUTER_F09_MODEL`.
-- Added the results of a full trial on real accounts (`docs/ENSAYO-RESULTADO.md`) and panel screenshots to the README.
+- Added the results of a full trial on real accounts (`docs/TRIAL_RESULTS.md`) and panel screenshots to the README.
 
 - Routed light tasks (cosmetic or one-line edits) to local and free capacity before subscriptions, and kept medium code changes off local models under 20B parameters.
 - Improved task analysis for Spanish bug reports, explicit architecture redesigns, and features that mention tests.

@@ -136,13 +136,13 @@ Run `node interfaces/cli/ai-router.js help` for available commands, including `d
 
 On Windows, double-click **AI Router.vbs** in the repository root. It starts the service in the background and opens the panel. Double-click **Stop AI Router.vbs** for a clean shutdown. The preferred address is `http://127.0.0.1:43127`; when that port is occupied the launcher chooses the next available loopback port and opens the correct URL.
 
-From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [tasks, states and limits](docs/TASKS_AND_STATES.md), [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), [operator guide](docs/OPERATOR_GUIDE.md), and the day-to-day [VS Code usage guide](docs/GUIA-DE-USO.md) (Spanish).
+From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [tasks, states and limits](docs/TASKS_AND_STATES.md), [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), [operator guide](docs/OPERATOR_GUIDE.md), and the day-to-day [VS Code usage guide](docs/USER_GUIDE.md).
 
 The VS Code client lives in `interfaces/vscode`. Build its package once (`cd interfaces/vscode`, `npm ci`, `npm run package`), then double-click **Install AI Router VS Code Extension.vbs** or use the dashboard **VS Code** page. Use `AI Router: Run Task`, `AI Router: Explain Route`, `AI Router: Focus Mode`, or `AI Router: Open Dashboard`. Provider authentication remains exclusively in the Dashboard.
 
 ### Screenshots
 
-The panel on a real run (a small expense tracker built from scratch through AI Router, [results in Spanish](docs/ENSAYO-RESULTADO.md)):
+The panel on a real run (a small expense tracker built from scratch through AI Router, [results](docs/TRIAL_RESULTS.md)):
 
 ![Overview](docs/img/panel-overview.png)
 
@@ -156,13 +156,13 @@ The application those tasks produced:
 
 ## Development status
 
-AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Triage classifier](docs/TRIAGE_CLASSIFIER.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), [operator guide](docs/OPERATOR_GUIDE.md), and the day-to-day [VS Code usage guide](docs/GUIA-DE-USO.md) (Spanish).
+AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a production release. VS Code can attach, paste, or drop bounded PNG/JPEG/WebP visual references; automatic routing requires a REAL vision-capable resource and image bytes remain in private runtime storage with a 30-day retention limit. Protocols are explicitly versioned but may require migration before a stable release. See [reinstall and recovery](docs/REINSTALL_AND_RECOVERY.md), [inference profiles](docs/INFERENCE_PROFILES.md), [real provider connections](docs/REAL_PROVIDER_CONNECTIONS.md), [account profiles](docs/ACCOUNT_PROFILES.md), [provider timeouts](docs/PROVIDER_TIMEOUTS.md), [the Decision Engine Protocol](docs/DECISION_ENGINE_PROTOCOL.md), [optional Triage classifier](docs/TRIAGE_CLASSIFIER.md), [routing policy](docs/ROUTING_POLICY.md), [security model](SECURITY.md), [operator guide](docs/OPERATOR_GUIDE.md), and the day-to-day [VS Code usage guide](docs/USER_GUIDE.md).
 
 ## Known limits
 
 This is a pre-release that one person runs on one Windows machine. The full, dated list is in the [October 2026 audit](docs/AUDIT-2026-10.md) (Spanish), the trial results, and the [roadmap](docs/ROADMAP.md). The main ones:
 
-- Automatic fallback, cancellation and secret-file protection were exercised on real accounts in the [November 2026 trial](docs/ENSAYO-RESULTADO.md) (Spanish). It also lists what is still open: the router does not run the project's tests on its own, and subscription token usage is not measured reliably.
+- Automatic fallback, cancellation and secret-file protection were exercised on real accounts in the [November 2026 trial](docs/TRIAL_RESULTS.md) and on a second, larger project ([case study: a quoting app built through AI Router](docs/CASE_STUDY_QUICK_QUOTE.md)). It also lists what is still open: the router does not run the project's tests on its own, and subscription token usage is not measured reliably.
 - Local models under 20B parameters only receive light tasks, so on a 12 GB GPU medium work still goes to a subscription model.
 - Ollama requests are capped at a 32K-token context window.
 - The Codex and Antigravity channels run vendor agents; AI Router relies on their own sandbox flags (see [SECURITY.md](SECURITY.md)).
