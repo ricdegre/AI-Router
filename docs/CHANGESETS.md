@@ -2,7 +2,7 @@
 
 The MVP uses one bounded exact-replacement representation rather than accepting arbitrary unified diffs.
 
-A changeset supplies `kind: exact_replace`, the expected SHA-256 of the complete source, and either one `search`/`replacement` pair or `edits`, a list of 1 to 50 such pairs. Edits are applied in order; each search string must match exactly once in the text left by the previous edit. The orchestrator combines several `modify_file` actions on the same file into one ordered changeset.
+A changeset supplies `kind: exact_replace`, the expected SHA-256 of the complete source, and either one `search`/`replacement` pair or `edits`, a list of 1 to 50 such pairs. Edits are applied in order; each search string must match exactly once in the text left by the previous edit. An edit may also be `{ "append": "text" }`, which adds text at the end of the file as it stands after the earlier edits. The orchestrator combines several `modify_file` and `append_file` actions on the same file into one ordered changeset, as long as they were written against the same version of the file. The per-attempt action limit (20 by default) counts actions after this combination, so it limits how many files one attempt may touch, not how many places it edits.
 
 Models cannot compute SHA-256, so `expected_sha256` may be omitted from a proposal. The router then fills it with the hash of the file version the model was shown, and the mediator still rejects the edit if the file has changed since.
 

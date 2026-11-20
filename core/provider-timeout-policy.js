@@ -8,7 +8,7 @@ export const DEFAULT_PROVIDER_TIMEOUTS = Object.freeze({
   startup_ms: 30_000,
   first_token_ms: 90_000,
   inactivity_ms: 60_000,
-  overall_ms: 300_000
+  overall_ms: 600_000
 });
 
 const OPERATION_KEYS = Object.freeze({
@@ -18,10 +18,13 @@ const OPERATION_KEYS = Object.freeze({
   test_chat: 'test_chat_ms'
 });
 
+// Large edits can keep a provider working for several minutes; inactivity and first-token limits still catch a hung one.
+export const MAX_PROVIDER_TIMEOUT_MS = 900_000;
+
 const EXECUTION_KEYS = Object.freeze(['startup_ms', 'first_token_ms', 'inactivity_ms', 'overall_ms']);
 
 function validTimeout(value) {
-  return Number.isInteger(value) && value >= 1_000 && value <= 300_000;
+  return Number.isInteger(value) && value >= 1_000 && value <= MAX_PROVIDER_TIMEOUT_MS;
 }
 
 export function validateProviderTimeouts(input = {}, defaults = DEFAULT_PROVIDER_TIMEOUTS) {
@@ -29,7 +32,7 @@ export function validateProviderTimeouts(input = {}, defaults = DEFAULT_PROVIDER
   const unknown = Object.keys(input).filter((key) => !Object.values(OPERATION_KEYS).includes(key) && !EXECUTION_KEYS.includes(key));
   if (unknown.length) throw new AiRouterError(`Unsupported provider timeout fields: ${unknown.join(', ')}.`, 'INVALID_PROVIDER_TIMEOUT_POLICY');
   const value = { ...defaults, ...input };
-  for (const [key, timeout] of Object.entries(value)) if (!validTimeout(timeout)) throw new AiRouterError(`${key} must be between 1000 and 300000 ms.`, 'INVALID_PROVIDER_TIMEOUT_POLICY');
+  for (const [key, timeout] of Object.entries(value)) if (!validTimeout(timeout)) throw new AiRouterError(`${key} must be between 1000 and ${MAX_PROVIDER_TIMEOUT_MS} ms.`, 'INVALID_PROVIDER_TIMEOUT_POLICY');
   return value;
 }
 
@@ -41,14 +44,14 @@ function firstConfigured(key, options) {
 
 export function resolveExecutionTimeouts(options = {}) {
   const requested = options.requested;
-  const overall = firstConfigured('overall_ms', options) ?? (validTimeout(requested) ? Math.min(300_000, Math.max(requested, requested * 2)) : DEFAULT_PROVIDER_TIMEOUTS.overall_ms);
+  const overall = firstConfigured('overall_ms', options) ?? (validTimeout(requested) ? Math.min(MAX_PROVIDER_TIMEOUT_MS, Math.max(requested, requested * 2)) : DEFAULT_PROVIDER_TIMEOUTS.overall_ms);
   const value = {
     startup_ms: firstConfigured('startup_ms', options) ?? Math.min(DEFAULT_PROVIDER_TIMEOUTS.startup_ms, overall),
     first_token_ms: firstConfigured('first_token_ms', options) ?? Math.min(DEFAULT_PROVIDER_TIMEOUTS.first_token_ms, overall),
     inactivity_ms: firstConfigured('inactivity_ms', options) ?? Math.min(DEFAULT_PROVIDER_TIMEOUTS.inactivity_ms, overall),
     overall_ms: overall
   };
-  for (const [key, timeout] of Object.entries(value)) if (!validTimeout(timeout)) throw new AiRouterError(`${key} must be between 1000 and 300000 ms.`, 'INVALID_PROVIDER_TIMEOUT_POLICY');
+  for (const [key, timeout] of Object.entries(value)) if (!validTimeout(timeout)) throw new AiRouterError(`${key} must be between 1000 and ${MAX_PROVIDER_TIMEOUT_MS} ms.`, 'INVALID_PROVIDER_TIMEOUT_POLICY');
   return value;
 }
 
@@ -68,6 +71,6 @@ export function resolveProviderTimeout(operation, options = {}) {
     DEFAULT_PROVIDER_TIMEOUTS[key]
   ];
   const selected = candidates.find((value) => value !== undefined && value !== null);
-  if (!validTimeout(selected)) throw new AiRouterError(`${key} must be between 1000 and 300000 ms.`, 'INVALID_PROVIDER_TIMEOUT_POLICY');
+  if (!validTimeout(selected)) throw new AiRouterError(`${key} must be between 1000 and ${MAX_PROVIDER_TIMEOUT_MS} ms.`, 'INVALID_PROVIDER_TIMEOUT_POLICY');
   return selected;
 }

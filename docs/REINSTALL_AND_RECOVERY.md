@@ -7,7 +7,7 @@ Keep the repository (`<repo>`) and the runtime data root (`<data-root>`, the `da
 1. Confirm the repository is clean and copy `<repo>` with its `.git` directory.
 2. Preserve `<data-root>`. This contains profiles, task journals, memory, checkpoints, audit records and encrypted credential records. DPAPI-protected records may not decrypt after reinstall; they are evidence and metadata, not a portable secret backup.
 3. Preserve the actual project directories separately, including each `.git` directory and any uncommitted work.
-4. The VS Code extension package (`<repo>\dist\ai-router-vscode-0.6.0.vsix`) is a build output that is not in Git. It does not need to be preserved; it is rebuilt during Restore. The one-click `.vbs` extension launchers are part of the repository.
+4. The VS Code extension package (`<repo>\dist\ai-router-vscode-0.7.0.vsix`) is a build output that is not in Git. It does not need to be preserved; it is rebuilt during Restore. The one-click `.vbs` extension launchers are part of the repository.
 5. Do not export ChatGPT, Claude, Google or provider OAuth tokens to text files. Plan to reconnect those profiles after Windows is installed.
 
 ## Minimum clean-install stack
@@ -30,7 +30,7 @@ Docker, Python, a global AI provider API key and PowerShell scripting are not re
 3. Launch AI Router with the Windows launcher documented in [WINDOWS_LAUNCHER.md](WINDOWS_LAUNCHER.md).
 4. Open Dashboard → Doctor. The first-use card reports `NOT READY`, `READY FOR DEMO`, or `READY FOR REAL PROJECTS` from persisted evidence and live health.
 5. Open Profiles and reconnect subscription/API identities visually. Reconnection creates fresh protected local authentication; it must not depend on copied plaintext credentials.
-6. Build the extension package, then double-click `Install AI Router VS Code Extension.vbs`. The build creates `<repo>\dist\ai-router-vscode-0.6.0.vsix`:
+6. Build the extension package, then double-click `Install AI Router VS Code Extension.vbs`. The build creates `<repo>\dist\ai-router-vscode-0.7.0.vsix`:
 
    ```text
    cd interfaces/vscode
@@ -45,7 +45,7 @@ Docker, Python, a global AI provider API key and PowerShell scripting are not re
 
 ### Manual fallback
 
-If the launcher cannot detect an unusual or portable VS Code installation, use **Extensions: Install from VSIX...** and select `<repo>\dist\ai-router-vscode-0.6.0.vsix` (built as in Restore step 6). Then use Dashboard → VS Code → **Test Connection**. The expected extension ID is `ai-router-local.ai-router-vscode`, expected version is `0.6.0`, minimum VS Code is `1.85.0`, and the default endpoint is `http://127.0.0.1:43127`.
+If the launcher cannot detect an unusual or portable VS Code installation, use **Extensions: Install from VSIX...** and select `<repo>\dist\ai-router-vscode-0.7.0.vsix` (built as in Restore step 6). Then use Dashboard → VS Code → **Test Connection**. The expected extension ID is `ai-router-local.ai-router-vscode`, expected version is `0.6.0`, minimum VS Code is `1.85.0`, and the default endpoint is `http://127.0.0.1:43127`.
 
 ## Recovery checks
 

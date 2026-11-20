@@ -136,7 +136,7 @@ Run `node interfaces/cli/ai-router.js help` for available commands, including `d
 
 On Windows, double-click **AI Router.vbs** in the repository root. It starts the service in the background and opens the panel. Double-click **Stop AI Router.vbs** for a clean shutdown. The preferred address is `http://127.0.0.1:43127`; when that port is occupied the launcher chooses the next available loopback port and opens the correct URL.
 
-From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), [operator guide](docs/OPERATOR_GUIDE.md), and the day-to-day [VS Code usage guide](docs/GUIA-DE-USO.md) (Spanish).
+From a terminal, use `npm run control` and stop it with Ctrl+C. The panel is self-contained and does not require Internet access. See [tasks, states and limits](docs/TASKS_AND_STATES.md), [dashboard](docs/DASHBOARD.md), [local control API](docs/LOCAL_CONTROL_API.md), [Windows launcher](docs/WINDOWS_LAUNCHER.md), [operator guide](docs/OPERATOR_GUIDE.md), and the day-to-day [VS Code usage guide](docs/GUIA-DE-USO.md) (Spanish).
 
 The VS Code client lives in `interfaces/vscode`. Build its package once (`cd interfaces/vscode`, `npm ci`, `npm run package`), then double-click **Install AI Router VS Code Extension.vbs** or use the dashboard **VS Code** page. Use `AI Router: Run Task`, `AI Router: Explain Route`, `AI Router: Focus Mode`, or `AI Router: Open Dashboard`. Provider authentication remains exclusively in the Dashboard.
 

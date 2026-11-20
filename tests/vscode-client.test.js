@@ -208,7 +208,7 @@ test('packaged VS Code extension contributes a local-only activity panel and hea
   const manifest = JSON.parse(await fs.readFile(new URL('../interfaces/vscode/package.json', import.meta.url), 'utf8'));
   const extension = await fs.readFile(new URL('../interfaces/vscode/extension.js', import.meta.url), 'utf8');
   assert.equal(manifest.contributes.views.aiRouter[0].id, 'aiRouter.control'); assert.match(manifest.scripts.package, /\.vsix/);
-  assert.equal(manifest.version, '0.6.0'); assert.equal(manifest.engines.vscode, '^1.85.0'); assert.equal(manifest.contributes.configuration.properties['aiRouter.url'].default, 'http://127.0.0.1:43127');
+  assert.equal(manifest.version, '0.7.0'); assert.equal(manifest.engines.vscode, '^1.85.0'); assert.equal(manifest.contributes.configuration.properties['aiRouter.url'].default, 'http://127.0.0.1:43127');
   assert.match(extension, /\/api\/readiness\/vscode-heartbeat/); assert.match(extension, /extension_id/); assert.match(extension, /endpoint: baseUrl\(\)/); assert.match(extension, /registerWebviewViewProvider/);
   assert.deepEqual(manifest.activationEvents, ['onStartupFinished']); assert.ok(manifest.contributes.commands.some(item => item.command === 'aiRouter.refresh'));
   assert.equal(manifest.contributes.configuration.properties['aiRouter.openFocusModeAutomatically'].default, false);
@@ -534,4 +534,34 @@ test('with no active task the panel can show the latest workspace task as contex
   const tasks = [task('old', 'COMPLETED', '2026-10-01T00:00:00Z'), task('new', 'BLOCKED', '2026-10-02T00:00:00Z'), task('gone', 'CANCELLED', '2026-10-03T00:00:00Z')];
   assert.equal(lastTaskSummary(latestWorkspaceTask(tasks, 'p', 'D:/work')), 'BLOCKED · Add account page');
   assert.equal(latestWorkspaceTask(tasks, 'other', 'D:/work'), null);
+});
+
+test('a task that moved to another provider reports its earlier attempts and why they ended', () => {
+  const snapshot = taskSnapshot({ state: { state: 'RUNNING' }, execution_plan: { current_step: 'PROVIDER' }, attempts: [
+    { provider_id: 'anthropic', model_id: 'opus', failure_code: 'PROVIDER_OVERALL_TIMEOUT', status: 'failed' },
+    { provider_id: 'openai', model_id: 'gpt', status: 'running' }
+  ] }, { taskId: 'task-1', projectId: 'project-one' });
+  assert.equal(snapshot.status, 'WAITING_FOR_PROVIDER'); assert.equal(snapshot.provider, 'openai'); assert.equal(snapshot.attemptNumber, 2);
+  assert.deepEqual(snapshot.earlierAttempts, [{ provider: 'anthropic', model: 'opus', failure: 'PROVIDER_OVERALL_TIMEOUT' }]);
+  assert.deepEqual(taskSnapshot({ state: { state: 'RUNNING' }, attempts: [{ provider_id: 'ollama' }] }, { taskId: 'task-2' }).earlierAttempts, []);
+});
+
+test('VS Code client previews a route without a Triage call and cancels a task through AI Router', async () => {
+  const calls = [];
+  const fetch = async (url, options = {}) => { calls.push({ url, options }); return new Response(JSON.stringify({ state: 'CANCELLED' }), { headers: { 'content-type': 'application/json', 'x-ai-router-control': 'nonce-1' } }); };
+  const client = new RouterClient('http://127.0.0.1:43127', fetch);
+  await client.explain('Add a field', {}, [], { preview: true });
+  assert.match(calls[0].url, /\/api\/routing\/explain\?.*engine=deterministic/);
+  await client.explain('Add a field');
+  assert.doesNotMatch(calls[1].url, /engine=/);
+  await client.cancel('project-one', 'task-1');
+  const cancel = calls.at(-1); assert.equal(cancel.url, 'http://127.0.0.1:43127/api/projects/project-one/tasks/task-1/cancel'); assert.equal(cancel.options.method, 'POST'); assert.equal(cancel.options.headers.origin, 'http://127.0.0.1:43127');
+});
+
+test('the panel shows task states as plain words', () => {
+  const Module = require('node:module'); const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) { if (request === 'vscode') return {}; return originalLoad.call(this, request, parent, isMain); };
+  let readableState;
+  try { ({ readableState } = require('../interfaces/vscode/extension.js')); } finally { Module._load = originalLoad; }
+  assert.equal(readableState('WAITING_FOR_PROVIDER'), 'Waiting for provider'); assert.equal(readableState('TRACKING_LOST'), 'Tracking lost'); assert.equal(readableState(null), 'Ready');
 });

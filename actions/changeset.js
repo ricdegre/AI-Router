@@ -20,6 +20,12 @@ export function applyExactReplacement(source, patch) {
   // Models write LF; a CRLF file (common on Windows) would never match, so adapt the edit to the file's line endings.
   const crlf = source.includes('\r\n');
   for (const original of edits) {
+    // An append edit adds text at the end of the file as it stands after the earlier edits.
+    if (typeof original?.append === 'string' && original.search === undefined) {
+      if (!original.append.length) throw new AiRouterError('Changeset append text must not be empty.', 'INVALID_CHANGESET');
+      updated += crlf && !original.append.includes('\r') ? original.append.replace(/\n/g, '\r\n') : original.append;
+      continue;
+    }
     if (typeof original?.search !== 'string' || original.search.length === 0 || typeof original.replacement !== 'string') {
       throw new AiRouterError('Changeset search and replacement must be strings.', 'INVALID_CHANGESET');
     }
@@ -37,7 +43,7 @@ export function applyExactReplacement(source, patch) {
   }
   return {
     content: updated,
-    summary: edits.length === 1 ? `Replaced one exact ${edits[0].search.length}-character region with ${edits[0].replacement.length} characters.` : `Applied ${edits.length} exact replacements in order.`,
+    summary: edits.length === 1 && typeof edits[0].search === 'string' ? `Replaced one exact ${edits[0].search.length}-character region with ${edits[0].replacement.length} characters.` : `Applied ${edits.length} edits in order.`,
     before_sha256: actual,
     after_sha256: contentHash(updated)
   };

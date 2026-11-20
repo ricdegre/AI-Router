@@ -29,9 +29,11 @@ class RouterClient {
     if (!sameWorkspacePath(workspacePath, result.project?.workspacePath)) throw new RouterError('AI Router registered a different workspace path.', 'WORKSPACE_MISMATCH');
     return result.project;
   }
-  explain(objective, selection = {}, attachments = []) {
+  // preview: answer from hard policy at once, without the Triage model call; the task itself is still routed in full.
+  explain(objective, selection = {}, attachments = [], { preview = false } = {}) {
     const manual = selection.routing_mode === 'manual' || Boolean(selection.provider_id || selection.profile_id || selection.model_id || selection.execution_channel || selection.reasoning_effort);
     const query = new URLSearchParams({ objective, task_type: 'coding', risk: 'low', capability: 'coding', mode: manual ? 'manual' : 'automatic', read_only: selection.read_only ? 'true' : 'false' });
+    if (preview) query.set('engine', 'deterministic');
     if (attachments.length) { query.append('capability', 'vision'); query.set('attachment_count', String(attachments.length)); }
     if (selection.provider_id) query.set('provider', selection.provider_id); if (selection.profile_id) query.set('profile', selection.profile_id); if (selection.model_id) query.set('model', selection.model_id); if (selection.execution_channel) query.set('channel', selection.execution_channel); if (selection.reasoning_effort) query.set('effort', selection.reasoning_effort);
     if (objective.length > 2_000) return this.post('/api/routing/explain', { ...Object.fromEntries(query), capability: query.getAll('capability') });
@@ -42,6 +44,7 @@ class RouterClient {
   createArtpTask(descriptor, preview, { draftId = null, attachmentIds = [], idempotencyKey, selection = {} } = {}) { return this.post('/api/artp/tasks', { descriptor, draft_id: draftId, attachment_ids: attachmentIds, expected_semantic_hash: preview.semantic_hash, expected_manifest_hash: preview.context_manifest.hash, idempotency_key: idempotencyKey, routing: selection.routing_mode === 'manual' ? { provider_id: selection.provider_id || null, profile_id: selection.profile_id || null, model_id: selection.model_id || null, execution_channel: selection.execution_channel || null, reasoning_effort: selection.reasoning_effort || null } : {} }); }
   createTask(projectId, objective, instruction, selection = {}, options = {}) { const allowed = options.readOnly ? ['read_file', 'list_directory', 'inspect_git_status'] : ['read_file', 'list_directory', 'inspect_git_status', 'create_file', 'modify_file', 'append_file', 'run_validation_command']; const manual = selection.routing_mode === 'manual' || Boolean(selection.provider_id || selection.profile_id || selection.model_id || selection.execution_channel || selection.reasoning_effort); const attachmentIds = options.attachmentIds ?? []; return this.post('/api/tasks', { project_id: projectId, objective, instruction, task_type: 'coding', risk: 'low', required_capabilities: attachmentIds.length ? ['coding', 'vision'] : ['coding'], attachment_ids: attachmentIds, routing_mode: manual ? 'manual' : 'automatic', provider_id: manual ? selection.provider_id || null : null, profile_id: manual ? selection.profile_id || null : null, model_id: manual ? selection.model_id || null : null, execution_channel: manual ? selection.execution_channel || null : null, reasoning_effort: manual ? selection.reasoning_effort || null : null, action_policy: { allowed, denied: options.readOnly ? ['create_file', 'modify_file', 'append_file', 'run_validation_command'] : [] }, ...(options.requiredFiles?.length ? { context_policy: { required_files: options.requiredFiles } } : {}) }); }
   resume(projectId, taskId) { return this.post(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/resume`); }
+  cancel(projectId, taskId) { return this.post(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/cancel`); }
   task(projectId, taskId) { return this.get(`/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`); }
 }
 

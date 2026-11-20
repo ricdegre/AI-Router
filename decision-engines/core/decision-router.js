@@ -56,6 +56,7 @@ export class DecisionRouter {
     if (deterministic.routing_mode === 'manual') return complete(fallbackResult(deterministic, config, 'manual-resource-selection', { status: 'DISABLED', fallback: false }));
     if (config.mode === 'deterministic_only') return complete(fallbackResult(deterministic, config, 'deterministic-only', { status: 'DISABLED', fallback: false }));
     if (!config.enabled) return complete(fallbackResult(deterministic, config, 'triage-disabled', { status: 'DISABLED' }));
+    if (task.recent_failures?.length && !config.usage_categories.retry_escalation) return complete(fallbackResult(deterministic, config, 'usage-category-disabled', { status: 'DISABLED' }));
     if (!config.usage_categories.initial_routing) return complete(fallbackResult(deterministic, config, 'usage-category-disabled', { status: 'DISABLED' }));
     const engine = this.engineFor(config);
     if (!engine) return complete(fallbackResult(deterministic, config, 'triage-not-configured', { status: 'UNCONFIGURED' }));

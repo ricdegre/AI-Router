@@ -3,7 +3,7 @@
 This is the first operational thin client. It talks only to the loopback AI Router
 control API; provider credentials remain in the Dashboard.
 
-The extension package is a build output that is not in Git. Build it once on a fresh clone (Node.js 22 or newer); the command creates `dist/` in the repository root and writes `dist/ai-router-vscode-0.6.0.vsix`:
+The extension package is a build output that is not in Git. Build it once on a fresh clone (Node.js 22 or newer); the command creates `dist/` in the repository root and writes `dist/ai-router-vscode-0.7.0.vsix`:
 
 ```text
 cd interfaces/vscode

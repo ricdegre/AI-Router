@@ -25,7 +25,7 @@
 
 If the browser closes, double-click the launcher again; an existing healthy service is reused. If the service fails to start, inspect the private `logs/control-service.log`, run `npm run status`, and run the CLI `doctor` command. Port collisions are handled automatically. A stale `control/service.json` is ignored if its health endpoint is not reachable.
 
-If the VS Code extension is removed, double-click `Install AI Router VS Code Extension.vbs`. If it is installed but disconnected or damaged, double-click `Repair AI Router VS Code Extension.vbs`. Both launchers are idempotent, preserve settings and unrelated extensions, and install from `<repo>\dist\ai-router-vscode-0.6.0.vsix`. The same actions are on the dashboard **VS Code** page.
+If the VS Code extension is removed, double-click `Install AI Router VS Code Extension.vbs`. If it is installed but disconnected or damaged, double-click `Repair AI Router VS Code Extension.vbs`. Both launchers are idempotent, preserve settings and unrelated extensions, and install from `<repo>\dist\ai-router-vscode-0.7.0.vsix`. The same actions are on the dashboard **VS Code** page.
 
 That package is a build output and is not in Git. On a fresh clone, build it once before installing (Node.js 22 or newer); the command creates `dist/` itself:
 

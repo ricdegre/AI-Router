@@ -97,7 +97,8 @@ test('corrupt recovery journal produces BLOCKED explanation', async (t) => {
 test('descriptor action count limit rejects the whole batch before mutation', async (t) => {
   let actions;
   const item = await setup(t, { taskId: 'limit-01', execute: async () => ({ structured: { schema_version: '0.1', status: 'ok', summary: 'too many', observations: [], proposed_actions: actions, validation_requested: [], remaining_work: [], uncertainty: [], handoff_notes: [] } }) });
-  actions = [item.action, { ...item.action, action_id: 'second-edit' }];
+  // The limit counts actions after same-file edits are combined, so the two actions touch different files.
+  actions = [item.action, { action_id: 'second-edit', type: 'modify_file', target: 'other.txt', parameters: { patch: { kind: 'exact_replace', search: 'a', replacement: 'b' } } }];
   item.task.execution_limits = { max_attempts: 1, max_actions_per_attempt: 1 };
   const result = await item.services.orchestrator.run(item.task, { maxAttempts: 1 });
   assert.equal(result.status, 'blocked');
@@ -150,4 +151,15 @@ test('a separate process holding the project lease blocks concurrent resume', as
   const explanation = await item.services.resumeManager.explain(item.task.task_id);
   assert.equal(explanation.recommendation, 'BLOCKED');
   assert.ok(explanation.reasons.includes('project-lock-active'));
+});
+
+test('checking whether a task can resume never calls the Triage model', async (t) => {
+  const item = await setup(t, { taskId: 'status-poll-01' });
+  await assert.rejects(() => item.services.orchestrator.run(item.task, { maxAttempts: 2, faultInjector: async (stage) => { if (stage === 'after-action-before-receipt') throw new AiRouterError('crash', 'SIMULATED_CRASH'); } }), { code: 'SIMULATED_CRASH' });
+  let triageCalls = 0;
+  item.services.resumeManager.routingPolicy = { explain: async () => { triageCalls += 1; throw new Error('status checks must not use the decision engine'); } };
+  const explanation = await item.services.resumeManager.explain(item.task.task_id);
+  assert.equal(explanation.recommendation, 'RESUMABLE');
+  assert.ok(explanation.provider_candidate);
+  assert.equal(triageCalls, 0);
 });

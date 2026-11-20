@@ -32,11 +32,12 @@ Para trabajar cómodo, pulsa **Open Focus Mode**: abre los mismos controles en u
 1. Escribe la tarea en **Instruction**. Una sola cosa por tarea.
 2. Deja **Routing mode** en **Automatic Routing**.
 3. Pulsa **Run Task**.
-4. Mira **Task Status**: pasa por `ROUTING`, `RUNNING` y termina en `COMPLETED`, `BLOCKED` o `FAILED`.
-   - **Planned provider** y **Planned model** salen enseguida: es a dónde va a ir la tarea. Cuando el modelo empieza a trabajar pasan a **Provider** y **Model**; si cambian, es que hubo fallback.
+4. Mira **Task Status**: pasa por **Routing**, **Waiting for provider**, **Applying changes** y termina en **Completed**, **Blocked** o **Failed**. Mientras la tarea corre, el botón dice **Running…**, una barra se mueve bajo el estado y **Elapsed** avanza cada segundo.
+   - **Planned provider** y **Planned model** salen enseguida: es a dónde va a ir la tarea. Cuando el modelo empieza a trabajar pasan a **Provider** y **Model**. Si la tarea salta a otro proveedor, aparece **Attempt: 2 — switched to another provider** y, debajo, por qué terminó cada intento anterior.
    - **Validation: Not requested** es lo normal: el router no ejecutó pruebas porque nadie se las pidió.
    - **Changed Files: none** es lo normal en una tarea **Read-only**.
-   - El primer minuto se va en preparar la tarea (**Inspecting workspace**, **Selecting provider**) antes de que el modelo empiece.
+   - La preparación (**Inspecting workspace**, **Selecting provider**) tarda menos que antes: el modelo local de triage se consulta una sola vez por tarea, no tres.
+   - Al terminar bien, **Instruction** se vacía sola. Si pulsas **Run Task** con la misma instrucción de la tarea anterior, el panel avisa y pide un segundo clic.
 
 Lo que conviene saber:
 
@@ -44,7 +45,7 @@ Lo que conviene saber:
 - **El archivo que tienes abierto en el editor se manda entero** al modelo, y el texto que tengas seleccionado también. Abre el archivo que quieres cambiar antes de pulsar **Run Task**.
 - **Si nombras un archivo en la tarea** (`server.js`, `public/index.html`), ese archivo también va entero.
 - **Una tarea a la vez.** Espera a que termine y pulsa **New Task** para la siguiente.
-- Tiempos normales: entre 1 y 6 minutos. Claude tiene un límite de 5 minutos; si lo agota, la tarea pasa sola a ChatGPT.
+- Tiempos normales: entre 1 y 6 minutos. Cada proveedor tiene un límite de 10 minutos por intento; si lo agota, la tarea pasa sola al siguiente.
 
 ## Después de cada tarea
 
@@ -83,7 +84,7 @@ Con un commit por tarea, deshacer una tarea nunca toca la anterior.
 
 ## Cancelar una tarea
 
-VS Code no tiene botón para cancelar. En el panel: **Tasks** → abre la tarea → **Cancel**. La tarea queda en `CANCELLED` y no cambia ningún archivo.
+Mientras una tarea corre aparece **Cancel Task** junto a **Running…**. También se puede desde el panel web: **Tasks** → abre la tarea → **Cancel**. La tarea queda en **Cancelled** y no cambia ningún archivo.
 
 ## Cuando algo sale mal
 
@@ -92,8 +93,7 @@ VS Code no tiene botón para cancelar. En el panel: **Tasks** → abre la tarea 
 | `BLOCKED` | Los modelos no pudieron proponer un cambio seguro, o pediste algo protegido | Lee **Error**. Escribe la tarea más concreta, nombra el archivo y vuelve a lanzarla. |
 | `FAILED` | Fallaron todos los proveedores | **Profiles / Accounts** → **Test Chat** en cada perfil. |
 | `TRACKING_LOST` | VS Code perdió el seguimiento; la tarea puede seguir | Pulsa **Refresh**. |
-| `BLOCKED` después de pasar por varios proveedores | La tarea era demasiado grande: Claude agotó sus 5 minutos y los demás no pudieron completarla | Pártela en tareas más pequeñas, de uno a tres archivos cada una, y lánzalas una por una. No se cambió ningún archivo. |
-| `TRACKING_LOST` y **Refresh** no responde | La consulta de estado tarda hasta 30 segundos cuando el proyecto ya tiene muchas tareas | Espera un minuto y pulsa **Refresh** otra vez. No pulses **Run Task** de nuevo. |
+| `BLOCKED` después de pasar por varios proveedores | La tarea era demasiado grande: ningún proveedor la terminó en su tiempo | Mira las líneas **Attempt 1**, **Attempt 2**. Pártela en tareas más pequeñas, de uno a tres archivos cada una, y lánzalas una por una. No se cambió ningún archivo. |
 | `COMPLETED` pero el código falla | El modelo se equivocó | Deshaz con Git, o lanza otra tarea que describa el fallo exacto. |
 | El modelo local tarda más de 3 minutos | `qwen3.5:9b` se atasca a veces con archivos grandes | Repite la tarea, o elige `claude` en modo manual. |
 
@@ -123,7 +123,6 @@ Cada tarea media gasta una o dos llamadas a Claude o ChatGPT. Un proyecto de 12 
 
 - No ejecuta las pruebas del proyecto por su cuenta.
 - No hace commit.
-- No tiene botón de cancelar en VS Code.
 - No mide bien los tokens de las suscripciones.
 - El perfil `openrouter` no funciona: su modelo gratuito ya no responde.
 

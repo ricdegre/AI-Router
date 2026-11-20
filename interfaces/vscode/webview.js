@@ -25,29 +25,46 @@
   }
   let data = []; let attachments = []; let workspaceMatched = false; let routingModeTouched = false;
   let currentTask = null;
-  const newTask = document.createElement('button'); newTask.type = 'button'; newTask.id = 'newTask'; newTask.className = 'secondary'; newTask.textContent = 'New Task';
+  let lastRunInstruction = null; let repeatConfirmed = false; let elapsedBase = null;
+  const IDLE = ['READY', 'COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED', 'VALIDATION_FAILED', 'TRACKING_LOST', 'READY_FOR_HANDOFF'];
+  const isBusy = task => Boolean(task) && !task.terminal && !IDLE.includes(task.status || 'READY');
+  // WAITING_FOR_PROVIDER -> Waiting for provider
+  const readable = value => { const text = String(value || 'READY').replaceAll('_', ' ').toLowerCase(); return text.charAt(0).toUpperCase() + text.slice(1); };
+  const FAILURES = { PROVIDER_OVERALL_TIMEOUT: 'ran out of time', PROVIDER_TIMEOUT: 'ran out of time', PROVIDER_INACTIVITY_TIMEOUT: 'stopped responding', PROVIDER_FIRST_TOKEN_TIMEOUT: 'did not start answering', MALFORMED_STRUCTURED_RESPONSE: 'sent an answer the router could not read', INVALID_STRUCTURED_RESPONSE: 'sent an answer the router could not read', ACTION_PLAN_CONFLICT: 'proposed edits that conflict with each other', ACTION_LIMIT_EXCEEDED: 'proposed changes to too many files at once', PATCH_SOURCE_NOT_FOUND: 'tried to edit text that is not in the file', AMBIGUOUS_CHANGESET: 'tried to edit text that appears more than once', STALE_CHANGESET: 'worked from an old version of a file', NO_ACTIONS_PROPOSED: 'said it was done but changed nothing', NO_CHANGE_EVIDENCE_MISSING: 'reported that nothing needs to change', REMAINING_WORK_REPORTED: 'left part of the work undone', CONTEXT_INSUFFICIENT: 'needed files it was not given', PROVIDER_BLOCKED: 'could not do the task', INSUFFICIENT_MODEL_STRENGTH: 'is not strong enough for this task', TASK_CANCELLED: 'was cancelled', CLAUDE_RATE_LIMITED: 'was rate limited', CLAUDE_SUBSCRIPTION_LIMIT_REACHED: 'reached its usage limit', CLAUDE_AUTH_REQUIRED: 'needs you to sign in again', 'project-lock-active': 'another task is still running in this project', 'no-eligible-unused-candidate': 'no other provider is left to try', 'no-eligible-provider': 'no provider is available for this task' };
+  const failureText = code => (code ? (FAILURES[code] ? `${FAILURES[code]} (${code})` : String(code)) : null);
+  const duration = ms => `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+  const newTask = document.createElement('button'); newTask.type = 'button'; newTask.id = 'newTask'; newTask.className = 'tool'; newTask.textContent = 'New Task';
   document.querySelector('#refresh').after(newTask);
   newTask.addEventListener('click', () => {
     instruction.value = ''; attachments = []; fileInput.value = ''; renderAttachments();
     document.querySelector('#executeArtp').hidden = true;
-    if (currentTask && !currentTask.terminal && !['READY', 'FAILED', 'BLOCKED', 'CANCELLED', 'VALIDATION_FAILED'].includes(currentTask.status)) result.textContent = 'Draft cleared. The current task continues running.';
+    lastRunInstruction = null; repeatConfirmed = false;
+    if (isBusy(currentTask)) result.textContent = 'Draft cleared. The current task continues running.';
     else { renderTask({ status: 'READY', taskId: null }); result.textContent = ''; }
     vscode.postMessage({ type: 'clearDraft' });
   });
   function renderTask(task) {
+    const wasBusy = isBusy(currentTask);
     currentTask = task;
+    const busy = isBusy(task);
+    // The instruction of a task that just completed is done: empty the box so Run Task cannot repeat it by accident.
+    if (wasBusy && task.status === 'COMPLETED' && lastRunInstruction !== null && instruction.value === lastRunInstruction) { instruction.value = ''; lastRunInstruction = null; }
     const state = document.querySelector('#taskState');
-    state.textContent = task.status || 'READY';
+    state.textContent = readable(task.status);
+    const activity = document.querySelector('#taskActivity'); activity.hidden = !busy;
+    elapsedBase = busy && Number.isFinite(task.durationMs) ? { ms: task.durationMs, at: Date.now() } : null;
+    updateWriteGuard();
     state.className = ['COMPLETED'].includes(task.status) ? 'ok' : ['FAILED', 'BLOCKED', 'VALIDATION_FAILED', 'TRACKING_LOST'].includes(task.status) ? 'bad' : '';
     const details = document.querySelector('#taskDetails'); details.replaceChildren();
     const row = (label, value, technical = false) => { if (value === null || value === undefined || value === '') return; const item = document.createElement('div'); if (technical) item.className = 'technical-detail'; const name = document.createElement('strong'); name.textContent = `${label}: `; item.append(name, document.createTextNode(String(value))); details.append(item); };
     if (task.status === 'READY') row('Last task', task.lastTask);
-    row('Task', task.taskId, true); if (task.persistedState && task.persistedState !== task.status) row('Recorded state', task.persistedState, true); row('Stage', task.stage); row(task.providerPlanned ? 'Planned provider' : 'Provider', task.provider); row(task.providerPlanned ? 'Planned model' : 'Model', task.model);
+    row('Task', task.taskId, true); if (task.persistedState && task.persistedState !== task.status) row('Recorded state', readable(task.persistedState), true); row('Stage', task.stage); row(task.providerPlanned ? 'Planned provider' : 'Provider', task.provider); row(task.providerPlanned ? 'Planned model' : 'Model', task.model);
+    if (task.earlierAttempts?.length) { row('Attempt', `${task.attemptNumber} — switched to another provider`); for (const [index, item] of task.earlierAttempts.entries()) row(`Attempt ${index + 1}`, `${[item.provider, item.model].filter(Boolean).join(' ')} ${failureText(item.failure) || 'did not finish'}`); }
     if (focusMode) document.querySelector('#advancedTaskId').textContent = task.taskId ? `Task ID: ${task.taskId}` : 'No task yet';
-    row('Elapsed', Number.isFinite(task.durationMs) ? `${Math.floor(task.durationMs / 60000)}m ${Math.floor((task.durationMs % 60000) / 1000)}s` : null);
+    row('Elapsed', Number.isFinite(task.durationMs) ? duration(task.durationMs) : null); if (Number.isFinite(task.durationMs)) details.lastElementChild.id = 'taskElapsed';
     row('Validation', task.validation ? (task.validation.passed === true ? 'Passed' : task.validation.passed === false ? 'Failed' : task.validation.status === 'NOT_REQUESTED' ? 'Not requested' : task.validation.status || 'Not reported') : task.terminal ? 'Not reported' : null);
     row('Changed Files', task.terminal ? (task.changedFiles?.length ? task.changedFiles.join(', ') : 'none') : null);
-    row('Error', task.error);
+    row(task.status === 'COMPLETED' ? 'Note' : 'Error', failureText(task.error));
     const output = document.querySelector('#taskResult'); output.hidden = !task.result; output.textContent = task.result ? `${focusMode ? '' : 'Result\n'}${typeof task.result === 'string' ? task.result : JSON.stringify(task.result, null, 2)}` : '';
     if (focusMode && task.taskId && task.terminal) result.textContent = '';
     else if (task.status === 'TRACKING_LOST') result.textContent = task.error || 'Task tracking was interrupted. Refresh to reconcile its recorded state.';
@@ -70,11 +87,19 @@
   for (const name of ['dragenter', 'dragover']) dropZone.addEventListener(name, event => { event.preventDefault(); dropZone.classList.add('dragging'); }); for (const name of ['dragleave', 'drop']) dropZone.addEventListener(name, event => { event.preventDefault(); dropZone.classList.remove('dragging'); }); dropZone.addEventListener('drop', event => addFiles(event.dataTransfer?.files || []));
   const executeArtp = document.querySelector('#executeArtp');
   const run = document.querySelector('#run');
-  function updateWriteGuard() { run.disabled = !workspaceMatched && !readOnly.checked; run.title = run.disabled ? 'Open or register the matching workspace before writing.' : ''; executeArtp.disabled = !workspaceMatched; }
+  const cancel = document.querySelector('#cancel');
+  function updateWriteGuard() {
+    const busy = isBusy(currentTask); const unmatched = !workspaceMatched && !readOnly.checked;
+    run.disabled = busy || unmatched; run.textContent = busy ? 'Running…' : 'Run Task';
+    run.title = busy ? 'A task is running. Wait for it to finish or cancel it.' : unmatched ? 'Open or register the matching workspace before writing.' : '';
+    cancel.hidden = !(busy && currentTask?.taskId); executeArtp.disabled = !workspaceMatched || busy;
+  }
+  cancel.addEventListener('click', () => { cancel.disabled = true; setTimeout(() => { cancel.disabled = false; }, 5000); result.textContent = 'Cancelling task…'; vscode.postMessage({ type: 'cancel' }); });
+  setInterval(() => { const item = document.querySelector('#taskElapsed'); if (!elapsedBase || !item) return; item.lastChild.textContent = duration(elapsedBase.ms + Date.now() - elapsedBase.at); }, 1000);
   readOnly.addEventListener('change', updateWriteGuard);
   updateWriteGuard();
-  instruction.addEventListener('input', () => { executeArtp.hidden = true; });
-  for (const id of ['run', 'explain', 'preview', 'executeArtp', 'dashboard', 'refresh']) document.querySelector(`#${id}`).addEventListener('click', () => { if (id === 'refresh') result.textContent = 'Refreshing…'; if (id === 'executeArtp') executeArtp.hidden = true; vscode.postMessage({ type: id, instruction: instruction.value, selection: selection(), readOnly: readOnly.checked, attachments: transferableAttachments() }); });
+  instruction.addEventListener('input', () => { executeArtp.hidden = true; repeatConfirmed = false; });
+  for (const id of ['run', 'explain', 'preview', 'executeArtp', 'dashboard', 'refresh']) document.querySelector(`#${id}`).addEventListener('click', () => { if (id === 'refresh') result.textContent = 'Refreshing…'; if (id === 'run') { const text = instruction.value; if (text.trim() && text === lastRunInstruction && !repeatConfirmed) { repeatConfirmed = true; result.textContent = 'This is the same instruction as the last task you ran. Click Run Task again to repeat it, or write a new one.'; return; } lastRunInstruction = text; repeatConfirmed = false; } if (id === 'executeArtp') executeArtp.hidden = true; vscode.postMessage({ type: id, instruction: instruction.value, selection: selection(), readOnly: readOnly.checked, attachments: transferableAttachments() }); });
   window.addEventListener('message', ({ data: message }) => {
     if (message.type === 'workspace') { workspaceMatched = message.status === 'MATCH'; document.querySelector('#vscodeFolder').textContent = message.vscodePath || 'No VS Code folder open'; document.querySelector('#registeredWorkspace').textContent = message.status === 'UNAVAILABLE' ? 'Unavailable while AI Router is offline' : message.registeredPath || 'Not registered'; document.querySelector('#workspaceMatch').textContent = message.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : workspaceMatched ? 'MATCH' : 'WORKSPACE MISMATCH'; document.querySelector('#workspaceStatus').className = `workspace-status ${workspaceMatched ? 'ok' : message.status === 'UNAVAILABLE' ? '' : 'bad'}`; updateWriteGuard(); }
     if (message.type === 'connection') { const connection = document.querySelector('#connection'); connection.className = `status ${message.connected ? 'ok' : 'bad'}`; connection.textContent = `${message.connected ? 'Connected: ' : 'Offline: '}${message.endpoint}${message.error ? `\n${message.error}` : ''}`; }

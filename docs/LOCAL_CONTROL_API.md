@@ -30,7 +30,7 @@ This is localhost protection, not multi-user authentication. Do not reverse-prox
 | `GET /api/projects/:project/tasks/:task/attempts` | Attempt history only |
 | `GET /api/projects/:project/tasks/:task/doctor` | Task-specific diagnostics |
 | `GET /api/projects/:project/tasks/:task/resume-explain` | Safe resume recommendation |
-| `GET /api/routing/explain` | Accepted/rejected route evidence |
+| `GET /api/routing/explain` | Accepted/rejected route evidence. `engine=deterministic` answers from hard policy alone, without calling the Triage model |
 | `GET /api/decision-engines/status` | Decision engine and Triage mode, health, and last decision |
 | `GET /api/decision-engines/config` | Stored decision engine settings |
 | `GET /api/readiness` | First-use readiness gates and recorded evidence |

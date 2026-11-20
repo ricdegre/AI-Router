@@ -19,7 +19,10 @@ function taskSnapshot(detail, { taskId, projectId, readOnly = false, startedAt =
   const durationMs = started ? Math.max(0, Date.parse(ended || new Date().toISOString()) - Date.parse(started)) : null;
   const gitChanged = (detail?.workspace_changes?.changedFiles ?? []).map(entry => /^[ MADRCU?!]{2} /.test(entry) ? entry.slice(3).split(' -> ').at(-1) : entry);
   const changedFiles = readOnly ? [] : [...new Set([...gitChanged, ...(detail?.attempts ?? []).flatMap(item => (item.execution_results ?? []).filter(result => result.status === 'completed' && result.target).map(result => result.target))])];
-  return { taskId, projectId, status, persistedState: state, stage, provider: attempt.provider_id ?? detail?.state?.provider_id ?? null, model: attempt.model_id ?? null, durationMs: Number.isFinite(durationMs) ? durationMs : null, validation: attempt.validation ?? null, changedFiles, result: attempt.result ?? attempt.structured_response ?? attempt.summary ?? null, error: blockedBeforeStart ? reason || 'Task could not start.' : attempt.failure_code ?? (['FAILED', 'BLOCKED'].includes(state) ? reason : null), terminal: TERMINAL.has(state) || blockedBeforeStart };
+  // Earlier attempts explain why the task is now on another provider.
+  const attempts = detail?.attempts ?? [];
+  const earlierAttempts = attempts.slice(0, -1).map(item => ({ provider: item.provider_id ?? null, model: item.model_id ?? null, failure: item.failure_code ?? item.failure_category ?? item.status ?? null }));
+  return { taskId, projectId, status, persistedState: state, stage, attemptNumber: attempts.length || null, earlierAttempts, provider: attempt.provider_id ?? detail?.state?.provider_id ?? null, model: attempt.model_id ?? null, durationMs: Number.isFinite(durationMs) ? durationMs : null, validation: attempt.validation ?? null, changedFiles, result: attempt.result ?? attempt.structured_response ?? attempt.summary ?? null, error: blockedBeforeStart ? reason || 'Task could not start.' : attempt.failure_code ?? (['FAILED', 'BLOCKED'].includes(state) ? reason : null), terminal: TERMINAL.has(state) || blockedBeforeStart };
 }
 
 async function trackTask(router, projectId, taskId, options = {}) {

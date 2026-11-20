@@ -20,7 +20,7 @@ Logs are appended to `logs/control-service.log` under the private runtime. They 
 
 ## Install or repair the VS Code extension
 
-The extension package `dist\ai-router-vscode-0.6.0.vsix` is a build output that is not in Git. Build it once on a fresh clone; the command creates `dist/` itself:
+The extension package `dist\ai-router-vscode-0.7.0.vsix` is a build output that is not in Git. Build it once on a fresh clone; the command creates `dist/` itself:
 
 ```text
 cd interfaces/vscode
@@ -28,13 +28,13 @@ npm ci
 npm run package
 ```
 
-After AI Router is running, double-click `Install AI Router VS Code Extension.vbs`. It detects VS Code, installs `dist\ai-router-vscode-0.6.0.vsix` only when missing or outdated, opens VS Code, and checks for the extension heartbeat at `http://127.0.0.1:43127`.
+After AI Router is running, double-click `Install AI Router VS Code Extension.vbs`. It detects VS Code, installs `dist\ai-router-vscode-0.7.0.vsix` only when missing or outdated, opens VS Code, and checks for the extension heartbeat at `http://127.0.0.1:43127`.
 
 Double-click `Repair AI Router VS Code Extension.vbs` when the extension is damaged or its activation cannot be verified. Repair safely force-installs the same known VSIX without removing unrelated extensions or changing VS Code user settings. Running either launcher repeatedly is safe.
 
 The Dashboard **VS Code** page provides the same fixed Install, Repair, Reinstall, Open, and Test actions. These backend operations are strictly allowlisted to the packaged extension; they do not expose shell input.
 
-If automatic installation cannot find VS Code, install VS Code 1.85 or newer and retry. The manual fallback is **Extensions: Install from VSIX...** using `<repo>\dist\ai-router-vscode-0.6.0.vsix`.
+If automatic installation cannot find VS Code, install VS Code 1.85 or newer and retry. The manual fallback is **Extensions: Install from VSIX...** using `<repo>\dist\ai-router-vscode-0.7.0.vsix`.
 
 ## Limitations
 

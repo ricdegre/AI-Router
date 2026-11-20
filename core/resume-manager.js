@@ -23,8 +23,10 @@ export class ResumeManager {
     }
     let safety = evaluateResumeSafety({ state: task.state, drift, lock, journal: { ...journalIntegrity, pending }, resumePolicy: descriptor.resume_policy });
     let route = null;
-    if (this.routingPolicy && this.providerRegistry && !['COMPLETED', 'CANCELLED'].includes(task.state)) {
-      route = await this.routingPolicy.explain({ ...descriptorToTask(descriptor), recent_failures: attempts.filter((attempt) => attempt.failure_category) }, this.providerRegistry, await this.profileRegistry.list());
+    // Only eligibility matters here, and this runs on every status poll: never spend a Triage model call on it.
+    const policy = this.deterministicRoutingPolicy ?? this.routingPolicy;
+    if (policy && this.providerRegistry && !['COMPLETED', 'CANCELLED'].includes(task.state)) {
+      route = await policy.explain({ ...descriptorToTask(descriptor), recent_failures: attempts.filter((attempt) => attempt.failure_category) }, this.providerRegistry, await this.profileRegistry.list());
     }
     if (safety.recommendation === 'RESUMABLE' && task.state !== 'WAITING_VALIDATION' && !route?.selected) safety = { recommendation: 'BLOCKED', automatic: false, reasons: ['no-eligible-provider'] };
     const lastAttempt = attempts.at(-1) ?? null;

@@ -4,6 +4,14 @@ AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain 
 
 ## Unreleased
 
+- Fixed slow task status: checking a task's state no longer calls the Triage model. Each status poll took 10 to 30 seconds, which made VS Code report `TRACKING_LOST` on live tasks.
+- Changed the VS Code route preview to use the deterministic policy (`engine=deterministic` on `/api/routing/explain`), and skipped Triage on retries when `retry_escalation` is off, so Triage runs once per task instead of three times.
+- Raised the default overall time for one provider attempt from 5 to 10 minutes, and the configurable ceiling from 5 to 15 minutes.
+- Fixed a whole plan being rejected (`ACTION_PLAN_CONFLICT`) when a model edited a file and appended to it in the same plan: both are combined into one changeset. A changeset edit may now be `{ "append": "text" }`.
+- Changed the per-attempt action limit to count actions after same-file edits are combined, so it limits files touched, not places edited.
+- Fixed `MALFORMED_STRUCTURED_RESPONSE` for the most common cause: an unescaped quote or raw line break inside a JSON string is repaired before the answer is rejected.
+- VS Code 0.7.0: added **Cancel Task**; **Run Task** reads **Running…** and is disabled while a task runs; states are shown as plain words; a moving bar and a per-second **Elapsed** show progress; a task that moved to another provider lists each earlier attempt and why it ended; failure codes have a short explanation; the **Instruction** box is emptied when its task completes, and repeating the previous instruction needs a second click; **Open Dashboard**, **Refresh** and **New Task** have their own outlined button style.
+- Added `docs/TASKS_AND_STATES.md`: how to size a task, what each state means, and the limits.
 - Fixed incomplete multi-place edits: the worker prompt now tells models to propose one `modify_file` action per place on the same file (the router already combined them), and not to report changes their actions do not make.
 - VS Code: the panel shows the planned provider and model as soon as the route is chosen, instead of only after the first attempt starts, and shows validation as a short label (`Passed`, `Failed`, `Not requested`) instead of raw JSON.
 - Fixed new files in new directories being rejected: the recovery snapshot records the directories an attempt creates and removes them on restore.

@@ -11,8 +11,11 @@ test('provider timeout policy separates operations and validates bounded configu
   assert.equal(resolveProviderTimeout('connection_test'), 15_000);
   assert.equal(resolveProviderTimeout('inference'), 180_000);
   assert.equal(resolveProviderTimeout('test_chat'), 180_000);
-  assert.deepEqual(resolveExecutionTimeouts(), { startup_ms: 30_000, first_token_ms: 90_000, inactivity_ms: 60_000, overall_ms: 300_000 });
+  assert.deepEqual(resolveExecutionTimeouts(), { startup_ms: 30_000, first_token_ms: 90_000, inactivity_ms: 60_000, overall_ms: 600_000 });
   assert.throws(() => validateProviderTimeouts({ inference_ms: 999 }), { code: 'INVALID_PROVIDER_TIMEOUT_POLICY' });
+  // Large edits may need more than five minutes; fifteen is the ceiling.
+  assert.equal(validateProviderTimeouts({ overall_ms: 900_000 }).overall_ms, 900_000);
+  assert.throws(() => validateProviderTimeouts({ overall_ms: 900_001 }), { code: 'INVALID_PROVIDER_TIMEOUT_POLICY' });
 });
 
 test('execution lifecycle timeouts are independently configurable', () => {

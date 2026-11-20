@@ -29,6 +29,34 @@ function embeddedObject(text) {
   return start > 0 && end > start ? text.slice(start, end + 1) : null;
 }
 
+// Long answers sometimes carry a quote or a line break that the model forgot to escape inside a string.
+// Inside a string, a quote only ends it when what follows can follow a string in JSON; any other quote is text.
+export function repairJsonStrings(text) {
+  let output = ''; let inString = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (!inString) { if (char === '"') inString = true; output += char; continue; }
+    if (char === '\\') { output += char + (text[index + 1] ?? ''); index += 1; continue; }
+    if (char === '\n') { output += '\\n'; continue; }
+    if (char === '\r') { output += '\\r'; continue; }
+    if (char === '\t') { output += '\\t'; continue; }
+    if (char === '"') {
+      const next = /\S/.exec(text.slice(index + 1))?.[0];
+      if (next === undefined || ',}]:'.includes(next)) { inString = false; output += char; } else output += '\\"';
+      continue;
+    }
+    output += char;
+  }
+  return output;
+}
+
+function parseJsonObject(text) {
+  try { return { value: JSON.parse(text), repaired: false }; }
+  catch (error) {
+    try { return { value: JSON.parse(repairJsonStrings(text)), repaired: true }; } catch { throw error; }
+  }
+}
+
 export function validateStructuredResponse(input) {
   inspectKeys(input);
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AiRouterError('Structured response must be an object.', 'INVALID_STRUCTURED_RESPONSE');
@@ -67,10 +95,11 @@ export function parseStructuredResponse(text, options = {}) {
   if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new AiRouterError('Provider response exceeds the configured maximum.', 'PROVIDER_OUTPUT_TOO_LARGE');
   const candidate = normalizeFence(text);
   try {
-    return { valid: true, fallback: false, response: validateStructuredResponse(JSON.parse(candidate)) };
+    const parsed = parseJsonObject(candidate);
+    return { valid: true, fallback: false, repaired: parsed.repaired, response: validateStructuredResponse(parsed.value) };
   } catch (error) {
     const embedded = error instanceof AiRouterError ? null : embeddedObject(candidate);
-    if (embedded) { try { return { valid: true, fallback: false, response: validateStructuredResponse(JSON.parse(embedded)) }; } catch (inner) { if (inner instanceof AiRouterError) throw inner; } }
+    if (embedded) { try { const parsed = parseJsonObject(embedded); return { valid: true, fallback: false, repaired: parsed.repaired, response: validateStructuredResponse(parsed.value) }; } catch (inner) { if (inner instanceof AiRouterError) throw inner; } }
     const looksStructured = /^[\[{]/.test(candidate) || /^```/i.test(text.trim());
     if (looksStructured || options.allowTextFallback === false) {
       if (error instanceof AiRouterError) throw error;

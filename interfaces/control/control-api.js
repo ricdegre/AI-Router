@@ -205,7 +205,9 @@ export class ControlApi {
     const attachmentCount = Math.min(4, Math.max(0, Number.parseInt(query.get('attachment_count') || '0', 10) || 0));
     const objective = query.get('objective') || '';
     if (objective.length > 64_000 || objective.includes('\0')) throw new AiRouterError('Routing objective exceeds the supported input limit.', 'INVALID_CONTROL_INPUT');
-    return this.services.routingPolicy.explain({
+    // engine=deterministic answers at once from hard policy, without the Triage model call (used for route previews).
+    const policy = query.get('engine') === 'deterministic' && this.services.deterministicRoutingPolicy ? this.services.deterministicRoutingPolicy : this.services.routingPolicy;
+    return policy.explain({
       objective, task_type: query.get('task_type') || 'general', risk: query.get('risk') || 'low', required_capabilities: capabilities, routing_mode: query.get('mode') || 'automatic', read_only: query.get('read_only') === 'true',
       attachments: Array.from({ length: attachmentCount }, (_, index) => ({ type: 'image', attachment_id: `explain-${index + 1}` })),
       manual_provider: query.get('provider') || null, manual_profile: query.get('profile') || null, manual_model: query.get('model') || null, manual_execution_channel: query.get('channel') || null, manual_reasoning_effort: query.get('effort') || null,
@@ -396,7 +398,7 @@ export class ControlApi {
     }
     if (pathname === '/api/routing/explain') {
       const query = new URLSearchParams();
-      for (const key of ['objective', 'task_type', 'risk', 'mode', 'read_only', 'attachment_count', 'provider', 'profile', 'model', 'channel', 'effort', 'allow_metered']) {
+      for (const key of ['objective', 'task_type', 'risk', 'mode', 'read_only', 'attachment_count', 'provider', 'profile', 'model', 'channel', 'effort', 'allow_metered', 'engine']) {
         if (body?.[key] != null) query.set(key, String(body[key]));
       }
       for (const capability of Array.isArray(body?.capability) ? body.capability : body?.capability ? [body.capability] : []) query.append('capability', String(capability));

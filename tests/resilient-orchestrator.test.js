@@ -446,6 +446,21 @@ test('several edits to one file in a plan are applied in order as one changeset'
   assert.equal(await readFile(path.join(setup.workspace, 'App.tsx'), 'utf8'), "import Login from './Login';\nimport Reset from './Reset';\n<Route path=\"/reset\" />\n<Route path=\"*\" />\n");
 });
 
+test('an edit and an append to the same file are combined instead of rejecting the whole plan', async (t) => {
+  const setup = await fixture(t, [{ provider: 'provider-a', profile: 'profile-a', execute: async () => ({ structured: response('ok', 'Renamed and added a test.', [
+    { action_id: 'rename-case', type: 'modify_file', target: 'store.test.js', parameters: { patch: { kind: 'exact_replace', search: "test('one'", replacement: "test('uno'" } } },
+    { action_id: 'add-case', type: 'append_file', target: 'store.test.js', parameters: { content: "test('two', () => {});\n" } },
+    { action_id: 'add-note', type: 'append_file', target: 'notes.txt', parameters: { content: 'second\n' } },
+    { action_id: 'fix-note', type: 'modify_file', target: 'notes.txt', parameters: { patch: { kind: 'exact_replace', search: 'first', replacement: 'FIRST' } } }
+  ]) }) }]);
+  await writeFile(path.join(setup.workspace, 'store.test.js'), "test('one', () => {});\n");
+  await writeFile(path.join(setup.workspace, 'notes.txt'), 'first\n');
+  const result = await setup.orchestrator.run({ project_id: setup.project.projectId, task_id: 'edit-append-01', objective: 'Rename a test and add another in store.test.js', preferred_profiles: ['profile-a'], required_capabilities: ['coding'] }, { maxAttempts: 1 });
+  assert.equal(result.status, 'completed');
+  assert.equal(await readFile(path.join(setup.workspace, 'store.test.js'), 'utf8'), "test('uno', () => {});\ntest('two', () => {});\n");
+  assert.equal(await readFile(path.join(setup.workspace, 'notes.txt'), 'utf8'), 'FIRST\nsecond\n');
+});
+
 test('a descriptor task falls back when the first account is out of quota, rate limited, unavailable, or signed out', async (t) => {
   for (const [category, code] of [['quota_exhausted', 'CLAUDE_SUBSCRIPTION_LIMIT_REACHED'], ['rate_limited', 'CLAUDE_RATE_LIMITED'], ['provider_unavailable', 'PROVIDER_CLI_NOT_INSTALLED'], ['authentication', 'PROVIDER_AUTH_REQUIRED']]) {
     const f = await fixture(t, [

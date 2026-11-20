@@ -29,7 +29,7 @@ export function normalizeInferenceProfile(input = {}, model = null) {
     reasoning_effort: effort,
     latency_class: latency,
     max_output_tokens: boundedInteger(input.max_output_tokens, 'max_output_tokens', 1, 1_000_000),
-    timeout_ms: boundedInteger(input.timeout_ms, 'timeout_ms', 1_000, 300_000),
+    timeout_ms: boundedInteger(input.timeout_ms, 'timeout_ms', 1_000, 900_000),
     cost_category: input.cost_category ?? null
   };
 }
