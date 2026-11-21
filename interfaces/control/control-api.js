@@ -334,6 +334,7 @@ export class ControlApi {
           ? (typeof body.default_reasoning_effort === 'string' && body.default_reasoning_effort ? body.default_reasoning_effort : null)
           : existing?.default_reasoning_effort ?? null,
         default_max_output_limit: Number.isInteger(body?.default_max_output_limit) ? body.default_max_output_limit : existing?.default_max_output_limit ?? null,
+        routing_use: body?.routing_use === 'heavy_first' || body?.routing_use === 'all' ? body.routing_use : existing?.routing_use ?? 'all',
         models
       };
       const result = await this.services.profileRegistry.register(profile);

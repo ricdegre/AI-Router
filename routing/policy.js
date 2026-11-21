@@ -24,6 +24,8 @@ function mediumCodeWrite(task) {
   const analysis = task.task_analysis;
   return analysis.complexity === 'medium' && analysis.write_mode === 'write_allowed' && ['edit', 'debug', 'refactor', 'test'].includes(analysis.intent);
 }
+const HEAVY_COMPLEXITIES = new Set(['high', 'expert']);
+export const ROUTING_USES = Object.freeze(['all', 'heavy_first']);
 const EFFORT = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, ultra: 7, ultracode: 8 };
 
 function strongest(...values) {
@@ -81,7 +83,12 @@ export function automaticOrder(task, a, b) {
   const effortDistanceA = a.reasoning_effort == null ? 1 : Math.abs((EFFORT[a.reasoning_effort] ?? desired) - desired);
   const effortDistanceB = b.reasoning_effort == null ? 1 : Math.abs((EFFORT[b.reasoning_effort] ?? desired) - desired);
   if (effortDistanceA !== effortDistanceB) return effortDistanceA - effortDistanceB;
-  if (a.quota_remaining !== b.quota_remaining) return b.quota_remaining - a.quota_remaining;
+  // A profile saved for heavy tasks goes first on heavy tasks and after the others on lighter ones, where it stays a fallback.
+  const heavyA = a.routing_use === 'heavy_first' ? 1 : 0;
+  const heavyB = b.routing_use === 'heavy_first' ? 1 : 0;
+  if (heavyA !== heavyB) return HEAVY_COMPLEXITIES.has(task.task_analysis.complexity) ? heavyB - heavyA : heavyA - heavyB;
+  // An unreported quota is not treated as an empty one: quota only decides when both are known.
+  if (a.quota_remaining >= 0 && b.quota_remaining >= 0 && a.quota_remaining !== b.quota_remaining) return b.quota_remaining - a.quota_remaining;
   if (a.cost_score !== b.cost_score) return a.cost_score - b.cost_score;
   return a.preference_score - b.preference_score || a.profile_id.localeCompare(b.profile_id) || String(a.model_id).localeCompare(String(b.model_id)) || String(a.reasoning_effort).localeCompare(String(b.reasoning_effort));
 }
@@ -237,7 +244,8 @@ export class RoutingPolicy {
           score: cost.score + preference + (profile.default_reasoning_effort && inference.reasoning_effort !== profile.default_reasoning_effort ? 1 : 0),
           cost_score: cost.score, preference_score: preference, quota_remaining: quota,
           reasons, rejected, warnings, health: health.status, capabilities: [...capabilities], vision_execution: visionStatus,
-          strength_class: strength, context_size: contextSize, cost_category: cost.category
+          strength_class: strength, context_size: contextSize, cost_category: cost.category,
+          routing_use: profile.routing_use === 'heavy_first' ? 'heavy_first' : 'all'
         });
         }
       }

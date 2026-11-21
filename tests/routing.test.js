@@ -280,3 +280,25 @@ test('medium code changes skip small local models but keep larger local and subs
   const light = await new RoutingPolicy().explain({ objective: 'Cambia el color del background del header a azul' }, registry, profiles);
   assert.ok(light.evaluations.find((item) => item.profile_id === 'qwen-small').eligible);
 });
+
+test('a profile saved for heavy tasks goes after the others on medium tasks, goes first on heavy tasks, and an unreported quota does not lose the tie', async () => {
+  const registry = new ProviderRegistry();
+  registry.register(new MockProvider('reserved-provider', { strength: 'strong', capabilities: ['chat', 'coding'] }));
+  registry.register(new MockProvider('other-provider', { strength: 'strong', capabilities: ['chat', 'coding'] }));
+  const reportedQuota = { availability: 'available', windows: [{ name: 'week', remaining_percentage: 85 }] };
+  const profiles = (use) => [
+    profile('reserved', 'reserved-provider', 'subscription', { routing_use: use, limits: reportedQuota }),
+    profile('other', 'other-provider', 'subscription')
+  ];
+  const medium = { objective: 'In js/store.js add address and city to the business data, with tests.', required_capabilities: ['coding'] };
+  const heavy = { objective: 'Rework how quotes are stored and printed.', complexity: 'high', required_capabilities: ['coding'] };
+  const plain = await new RoutingPolicy().explain(medium, registry, profiles('all'));
+  assert.equal(plain.task_analysis.complexity, 'medium');
+  assert.equal(plain.selected.profile_id, 'other', 'an unknown quota must not lose to a reported one');
+  const reservedMedium = await new RoutingPolicy().explain(medium, registry, profiles('heavy_first'));
+  assert.deepEqual(reservedMedium.accepted_candidates.map((item) => item.profile_id).filter((id, index, all) => all.indexOf(id) === index), ['other', 'reserved']);
+  const reservedHeavy = await new RoutingPolicy().explain(heavy, registry, [
+    profile('reserved', 'reserved-provider', 'subscription', { routing_use: 'heavy_first' }), profile('other', 'other-provider', 'subscription', { routing_use: 'all' })
+  ]);
+  assert.equal(reservedHeavy.selected.profile_id, 'reserved');
+});
