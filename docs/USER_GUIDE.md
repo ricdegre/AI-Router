@@ -71,11 +71,14 @@ With one commit per task, undoing a task never touches the previous one.
 
 ## Where each task goes
 
-| What you ask for | Where it goes |
-|---|---|
-| Color, text, margin, CSS | Ollama `qwen3.5:9b`, local and free. If Ollama is off, Claude with low effort. |
-| New feature or bug fix | Claude `opus`, medium effort. If it fails, ChatGPT `gpt-5.6-sol`. |
-| Architecture or design | Gemini, high effort. |
+The router decides by itself; you do not assign models to kinds of task.
+
+1. It reads the task and rates its difficulty: simple (a color, a text, a margin), medium (a new field, a button, a bug fix) or heavy (a redesign, a change across the whole project).
+2. It keeps only the models that are strong enough for that difficulty and that are connected and within their limits. Simple tasks try local and free models first.
+3. Among those, it prefers the models with the best record on earlier tasks of the same difficulty. The router writes down the result of every attempt (finished, or failed because of the model's own work), so this record grows with use. Refusals, sign-in problems, limits and cancellations are not counted against a model.
+4. When several models have similar records, it alternates between them, so the work is shared and every model keeps being measured.
+
+**It learns as you use it.** With few tasks the record says little and the router mostly alternates. After dozens of tasks it knows, from your own projects, which model finishes which kind of work. A model you add starts neutral; a model you remove is no longer chosen, and nothing needs to be reconfigured. If a model fails, the task moves to the next one, and that result is also recorded.
 
 - **Explain Route** says where the task would go and why, without running it and without using quota.
 - To choose yourself: **Routing mode** → **Manual Resource Selection**, and then **Profile**, **Model** and **Reasoning effort**.

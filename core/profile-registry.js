@@ -41,7 +41,6 @@ export function validateProfile(input) {
       throw new AiRouterError('Capability overrides must be string arrays.', 'INVALID_PROFILE');
     }
   }
-  if (input.routing_use !== undefined && !['all', 'heavy_first'].includes(input.routing_use)) throw new AiRouterError("Profile routing use must be 'all' or 'heavy_first'.", 'INVALID_PROFILE');
   if (input.models !== undefined && !Array.isArray(input.models)) throw new AiRouterError('Profile models must be an array.', 'INVALID_PROFILE');
   if (input.selected_model_id !== undefined && input.selected_model_id !== null && (typeof input.selected_model_id !== 'string' || !input.selected_model_id || input.selected_model_id.length > 160)) throw new AiRouterError('Profile selected model is invalid.', 'INVALID_PROFILE');
   if (input.models?.some((model) => !model || typeof model !== 'object' || typeof model.model_id !== 'string' || !model.model_id || model.model_id.length > 160 || (model.provider_id && model.provider_id !== input.provider_id))) throw new AiRouterError('Profile model descriptors are invalid.', 'INVALID_PROFILE');

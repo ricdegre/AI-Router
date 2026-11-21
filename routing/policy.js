@@ -6,6 +6,7 @@ import { inferenceVariants } from '../providers/core/inference-profile.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 import { analyzeTask } from './task-analysis.js';
 import { visionExecutionStatus } from '../providers/core/vision-transport.js';
+import { expectedSuccess, learningKey, SUCCESS_RATE_BAND } from './learning.js';
 
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 const STRENGTH = { basic: 0, standard: 1, strong: 2 };
@@ -24,8 +25,6 @@ function mediumCodeWrite(task) {
   const analysis = task.task_analysis;
   return analysis.complexity === 'medium' && analysis.write_mode === 'write_allowed' && ['edit', 'debug', 'refactor', 'test'].includes(analysis.intent);
 }
-const HEAVY_COMPLEXITIES = new Set(['high', 'expert']);
-export const ROUTING_USES = Object.freeze(['all', 'heavy_first']);
 const EFFORT = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, ultra: 7, ultracode: 8 };
 
 function strongest(...values) {
@@ -79,14 +78,18 @@ export function automaticOrder(task, a, b) {
     const tierB = CAPACITY_TIER[b.cost_category] ?? 3;
     if (tierA !== tierB) return tierA - tierB;
   }
+  // What each candidate achieved on earlier tasks of this difficulty, in bands so close records count as equal.
+  const learnedA = Math.floor((a.learned?.expected_success ?? 0.5) / SUCCESS_RATE_BAND);
+  const learnedB = Math.floor((b.learned?.expected_success ?? 0.5) / SUCCESS_RATE_BAND);
+  if (learnedA !== learnedB) return learnedB - learnedA;
   const desired = EFFORT[desiredEffort(task.task_analysis.complexity)] ?? 3;
   const effortDistanceA = a.reasoning_effort == null ? 1 : Math.abs((EFFORT[a.reasoning_effort] ?? desired) - desired);
   const effortDistanceB = b.reasoning_effort == null ? 1 : Math.abs((EFFORT[b.reasoning_effort] ?? desired) - desired);
   if (effortDistanceA !== effortDistanceB) return effortDistanceA - effortDistanceB;
-  // A profile saved for heavy tasks goes first on heavy tasks and after the others on lighter ones, where it stays a fallback.
-  const heavyA = a.routing_use === 'heavy_first' ? 1 : 0;
-  const heavyB = b.routing_use === 'heavy_first' ? 1 : 0;
-  if (heavyA !== heavyB) return HEAVY_COMPLEXITIES.has(task.task_analysis.complexity) ? heavyB - heavyA : heavyA - heavyB;
+  // Among equals, the one used least recently for this difficulty goes first, so work is shared and every model keeps being measured.
+  const usedA = a.learned?.last_used_at ?? '';
+  const usedB = b.learned?.last_used_at ?? '';
+  if (usedA !== usedB) return usedA < usedB ? -1 : 1;
   // An unreported quota is not treated as an empty one: quota only decides when both are known.
   if (a.quota_remaining >= 0 && b.quota_remaining >= 0 && a.quota_remaining !== b.quota_remaining) return b.quota_remaining - a.quota_remaining;
   if (a.cost_score !== b.cost_score) return a.cost_score - b.cost_score;
@@ -137,14 +140,20 @@ function preferenceScore(task, provider, profile, model) {
   return score;
 }
 
+function learnedEntry(stats, profileId, modelId, complexity) {
+  const entry = stats.get(learningKey(profileId, modelId, complexity));
+  return { successes: entry?.successes ?? 0, failures: entry?.failures ?? 0, expected_success: Number(expectedSuccess(entry).toFixed(3)), last_used_at: entry?.last_used_at ?? null };
+}
+
 export class RoutingPolicy {
-  constructor(options = {}) { this.circuitBreaker = options.circuitBreaker ?? null; }
+  constructor(options = {}) { this.circuitBreaker = options.circuitBreaker ?? null; this.learning = options.learning ?? null; }
 
   async explain(taskInput, providerRegistry, profiles) {
     const task = normalizeTaskDescriptor(taskInput);
     const providers = providerRegistry.list();
     const healthById = new Map((await providerRegistry.status()).map((entry) => [entry.provider_id, entry.health]));
     const evaluations = [];
+    const learnedStats = this.learning ? await this.learning.stats() : new Map();
 
     for (const profile of profiles) {
       const provider = providers.find((item) => item.id === profile.provider_id);
@@ -245,7 +254,7 @@ export class RoutingPolicy {
           cost_score: cost.score, preference_score: preference, quota_remaining: quota,
           reasons, rejected, warnings, health: health.status, capabilities: [...capabilities], vision_execution: visionStatus,
           strength_class: strength, context_size: contextSize, cost_category: cost.category,
-          routing_use: profile.routing_use === 'heavy_first' ? 'heavy_first' : 'all'
+          learned: learnedEntry(learnedStats, profile.profile_id, modelId, task.task_analysis.complexity)
         });
         }
       }

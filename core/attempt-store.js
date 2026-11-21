@@ -8,7 +8,7 @@ function assertTaskId(taskId) {
 }
 
 export class AttemptStore {
-  constructor(dataRoot) { this.dataRoot = path.resolve(dataRoot); }
+  constructor(dataRoot, { onFinish = null } = {}) { this.dataRoot = path.resolve(dataRoot); this.onFinish = onFinish; }
 
   path(projectId, taskId) {
     assertSafeProjectId(projectId);
@@ -46,6 +46,7 @@ export class AttemptStore {
       outcome = attempt;
       return attempts;
     });
+    this.onFinish?.(outcome);
     return outcome;
   }
 

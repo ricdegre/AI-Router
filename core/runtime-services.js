@@ -21,6 +21,7 @@ import { ClaudeCodeProvider } from '../providers/anthropic/claude-code-provider.
 import { SecretStore } from './dpapi-vault.js';
 import { CircuitBreaker } from '../providers/core/circuit-breaker.js';
 import { RoutingPolicy } from '../routing/policy.js';
+import { RoutingLearning } from '../routing/learning.js';
 import { ActionMediator } from '../actions/action-mediator.js';
 import { ValidationEngine } from '../validation/validation-engine.js';
 import { ResilientOrchestrator } from './resilient-orchestrator.js';
@@ -69,9 +70,10 @@ export function createRuntimeServices(config, options = {}) {
   const memoryManager = new MemoryManager(dataRoot);
   const circuitBreaker = new CircuitBreaker(dataRoot);
   const projectCoordinator = new ProjectCoordinator(dataRoot);
-  const attemptStore = new AttemptStore(dataRoot);
+  const routingLearning = new RoutingLearning(dataRoot);
+  const attemptStore = new AttemptStore(dataRoot, { onFinish: () => routingLearning.invalidate() });
   const executionPlanStore = new ExecutionPlanStore(dataRoot);
-  const deterministicRoutingPolicy = new RoutingPolicy({ circuitBreaker });
+  const deterministicRoutingPolicy = new RoutingPolicy({ circuitBreaker, learning: routingLearning });
   const auditLog = new AuditLog(dataRoot);
   const decisionEngineConfigStore = new DecisionEngineConfigStore(dataRoot);
   const decisionUsageStore = new DecisionUsageStore(dataRoot);
@@ -89,7 +91,7 @@ export function createRuntimeServices(config, options = {}) {
     projectRegistry, profileRegistry, providerRegistry, secretStore, memoryManager, descriptorStore, attachmentStore, artpAliasStore, artpCompiler,
     taskStore, attemptStore, executionPlanStore, recoveryJournal,
     auditLog, projectCoordinator, contextBuilder: new ContextBuilder(memoryManager),
-    circuitBreaker, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, triageEngine, profileTestService, readinessStore, vscodeIntegration, providerTimeouts,
+    circuitBreaker, routingLearning, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, triageEngine, profileTestService, readinessStore, vscodeIntegration, providerTimeouts,
     actionMediatorFactory: ({ project, task }) => new ActionMediator({
       workspaceRoot: project.workspacePath, backupRoot: path.join(dataRoot, 'backups', project.projectId),
       maxFileBytes: task.execution_limits?.max_file_bytes, actionPolicy: task.action_policy, filesystemScope: task.filesystem_scope,

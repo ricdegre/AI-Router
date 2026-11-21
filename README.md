@@ -16,6 +16,7 @@ AI coding tools keep context inside one private conversation and one account. Wh
 
 - **Shared project memory.** Context, decisions, constraints, the current task, and the latest handoff live in private, human-readable files outside the chat, so any agent can pick up where the last one stopped.
 - **Routes work, not just prompts.** Each task is analyzed (intent, scope, complexity, risk, required capabilities) and sent to the cheapest model that can do it well: a color or typo change goes to a free or local model, a bug fix or feature to a strong subscription model, an architecture redesign to the strongest reasoning setting.
+- **Learns which model is best for what.** The router keeps the result of every attempt. For each model and each level of difficulty it knows how many tasks finished and how many failed, and it uses that record to choose next time. Nobody ranks the models by hand: a new model starts neutral, a removed one simply stops being chosen, and the choice improves the more the router is used. Among models with similar records, the work is shared so each one keeps being measured.
 - **Automatic fallback.** If a model times out, fails, or runs out of quota, the task is handed to another eligible model with the same durable state, without repeating actions that already ran.
 - **Safe by design.** Model output is treated as an untrusted proposal: file changes go through a mediated action protocol with stale-content protection, backups, independent validation, and crash-safe resume.
 - **No surprise bills.** Subscription and free capacity are preferred; metered API usage stays off unless you explicitly allow it.
@@ -27,10 +28,12 @@ AI coding tools keep context inside one private conversation and one account. Wh
 flowchart LR
     T[Task from VS Code, CLI, or dashboard] --> A[Task analysis<br/>intent · scope · complexity · risk]
     A --> P[Hard policy<br/>health · capabilities · cost · limits]
-    P --> O[Ordering<br/>strength fit · capacity tier · effort]
+    P --> O[Ordering<br/>strength fit · capacity tier ·<br/>learned results · effort · share of work]
     O --> X[Execute on selected model]
     X -->|failure or quota| F[Fallback to next eligible model<br/>same memory and checkpoints]
     X --> V[Independent validation] --> H[Handoff and memory update]
+    V -.->|result recorded| L[Learned results<br/>per model and difficulty]
+    L -.-> O
     Tr[Triage classifier<br/>shadow mode] -.->|records opinion| O
 ```
 

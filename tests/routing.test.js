@@ -6,6 +6,10 @@ import { MockProvider } from './mock-provider.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 import { createModelDescriptor } from '../providers/core/model-descriptor.js';
 import { OpenRouterProvider } from '../providers/openrouter/openrouter-provider.js';
+import { RoutingLearning, addOutcome, emptyLearning, expectedSuccess, learningKey } from '../routing/learning.js';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 function profile(profileId, providerId, cost = 'local', overrides = {}) {
   const channel = ({ local: 'local', subscription: 'subscription', metered: 'metered', FREE: 'free', LOCAL: 'local', SUBSCRIPTION_INCLUDED: 'subscription' })[cost] ?? 'local';
@@ -281,24 +285,68 @@ test('medium code changes skip small local models but keep larger local and subs
   assert.ok(light.evaluations.find((item) => item.profile_id === 'qwen-small').eligible);
 });
 
-test('a profile saved for heavy tasks goes after the others on medium tasks, goes first on heavy tasks, and an unreported quota does not lose the tie', async () => {
+test('routing learns from earlier results: a clearly better record wins, close records share the work, and an unreported quota does not lose the tie', async () => {
   const registry = new ProviderRegistry();
-  registry.register(new MockProvider('reserved-provider', { strength: 'strong', capabilities: ['chat', 'coding'] }));
-  registry.register(new MockProvider('other-provider', { strength: 'strong', capabilities: ['chat', 'coding'] }));
+  registry.register(new MockProvider('provider-a', { strength: 'strong', capabilities: ['chat', 'coding'] }));
+  registry.register(new MockProvider('provider-b', { strength: 'strong', capabilities: ['chat', 'coding'] }));
   const reportedQuota = { availability: 'available', windows: [{ name: 'week', remaining_percentage: 85 }] };
-  const profiles = (use) => [
-    profile('reserved', 'reserved-provider', 'subscription', { routing_use: use, limits: reportedQuota }),
-    profile('other', 'other-provider', 'subscription')
-  ];
+  const profiles = [profile('a', 'provider-a', 'subscription', { limits: reportedQuota }), profile('b', 'provider-b', 'subscription')];
   const medium = { objective: 'In js/store.js add address and city to the business data, with tests.', required_capabilities: ['coding'] };
-  const heavy = { objective: 'Rework how quotes are stored and printed.', complexity: 'high', required_capabilities: ['coding'] };
-  const plain = await new RoutingPolicy().explain(medium, registry, profiles('all'));
-  assert.equal(plain.task_analysis.complexity, 'medium');
-  assert.equal(plain.selected.profile_id, 'other', 'an unknown quota must not lose to a reported one');
-  const reservedMedium = await new RoutingPolicy().explain(medium, registry, profiles('heavy_first'));
-  assert.deepEqual(reservedMedium.accepted_candidates.map((item) => item.profile_id).filter((id, index, all) => all.indexOf(id) === index), ['other', 'reserved']);
-  const reservedHeavy = await new RoutingPolicy().explain(heavy, registry, [
-    profile('reserved', 'reserved-provider', 'subscription', { routing_use: 'heavy_first' }), profile('other', 'other-provider', 'subscription', { routing_use: 'all' })
+  const learningWith = (outcomes) => {
+    const stats = emptyLearning();
+    for (const item of outcomes) addOutcome(stats, { complexity: 'medium', modelId: null, ...item });
+    return { stats: async () => stats };
+  };
+  const order = (result) => result.accepted_candidates.map((item) => item.profile_id);
+
+  // No history: neutral for both; the reported quota of 'a' must not beat the unreported one of 'b', so the name decides.
+  const fresh = await new RoutingPolicy({ learning: learningWith([]) }).explain(medium, registry, profiles);
+  assert.equal(fresh.task_analysis.complexity, 'medium');
+  assert.equal(fresh.selected.profile_id, 'a');
+  assert.equal(fresh.selected.learned.expected_success, 0.5);
+
+  // Close records (4 of 5 against 3 of 4): the one used least recently goes first.
+  const close = learningWith([
+    ...Array.from({ length: 4 }, () => ({ profileId: 'a', success: true, endedAt: '2026-11-20T10:00:00Z' })), { profileId: 'a', success: false, endedAt: '2026-11-20T10:00:00Z' },
+    ...Array.from({ length: 3 }, () => ({ profileId: 'b', success: true, endedAt: '2026-11-19T10:00:00Z' })), { profileId: 'b', success: false, endedAt: '2026-11-19T10:00:00Z' }
   ]);
-  assert.equal(reservedHeavy.selected.profile_id, 'reserved');
+  assert.equal((await new RoutingPolicy({ learning: close }).explain(medium, registry, profiles)).selected.profile_id, 'b');
+
+  // A clearly worse record on medium tasks sends the task to the other one, whatever the order of use.
+  const clear = learningWith([
+    ...Array.from({ length: 4 }, () => ({ profileId: 'a', success: false, endedAt: '2026-11-18T10:00:00Z' })),
+    ...Array.from({ length: 4 }, () => ({ profileId: 'b', success: true, endedAt: '2026-11-20T10:00:00Z' }))
+  ]);
+  const learned = await new RoutingPolicy({ learning: clear }).explain(medium, registry, profiles);
+  assert.equal(learned.selected.profile_id, 'b');
+  assert.equal(order(learned).at(-1), 'a', 'the weaker record stays as a fallback');
+
+  // What a model did on another difficulty does not count for this one.
+  const otherLevel = { stats: async () => addOutcome(emptyLearning(), { profileId: 'a', modelId: null, complexity: 'high', success: false }) };
+  assert.equal((await new RoutingPolicy({ learning: otherLevel }).explain(medium, registry, profiles)).selected.learned.failures, 0);
+});
+
+test('learning reads the router attempt records and counts only failures that reflect the work of the model', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ai-router-learning-'));
+  const folder = path.join(root, 'tasks', 'demo-project');
+  await mkdir(folder, { recursive: true });
+  await writeFile(path.join(folder, 'task-1.descriptor.json'), JSON.stringify({ objective: 'In js/store.js add address and city to the business data, with tests.', required_capabilities: ['coding'] }));
+  await writeFile(path.join(folder, 'task-1.attempts.json'), JSON.stringify([
+    { profile_id: 'a', model_id: 'm', status: 'failed', failure_category: 'timeout', ended_at: '2026-11-20T09:00:00Z' },
+    { profile_id: 'a', model_id: 'm', status: 'failed', failure_category: 'rate_limited', ended_at: '2026-11-20T09:01:00Z' },
+    { profile_id: 'a', model_id: 'm', status: 'failed', failure_category: 'user_cancelled', ended_at: '2026-11-20T09:02:00Z' },
+    { profile_id: 'b', model_id: 'n', status: 'success', failure_category: null, ended_at: '2026-11-20T09:03:00Z' }
+  ]));
+  await writeFile(path.join(folder, 'task-2.attempts.json'), 'not json');
+  let now = 0;
+  const learning = new RoutingLearning(root, { now: () => now });
+  const stats = await learning.stats();
+  assert.deepEqual(stats.get(learningKey('a', 'm', 'medium')), { successes: 0, failures: 1, last_used_at: '2026-11-20T09:00:00Z' });
+  assert.deepEqual(stats.get(learningKey('b', 'n', 'medium')), { successes: 1, failures: 0, last_used_at: '2026-11-20T09:03:00Z' });
+  assert.equal(expectedSuccess(undefined), 0.5);
+  await writeFile(path.join(folder, 'task-1.attempts.json'), '[]');
+  assert.equal(await learning.stats(), stats, 'cached between attempts');
+  learning.invalidate();
+  assert.equal((await learning.stats()).size, 0, 'a finished attempt refreshes what was learned');
+  await rm(root, { recursive: true, force: true });
 });
