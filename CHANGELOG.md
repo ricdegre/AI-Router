@@ -54,7 +54,7 @@ AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain 
 - Updated development-only packaging dependencies of the VS Code extension (`npm audit fix`).
 - Changed the minimum Node.js version to 22.
 - Added a CI workflow that runs the tests on Linux and Windows (Node 22 and 24) and builds the VS Code package.
-- Added the October 2026 audit report (`docs/AUDIT-2026-10.md`, in Spanish) and brought the documentation in line with the code.
+- Ran a full audit (October 2026) and brought the documentation in line with the code. The report was later removed from the repository once its findings were fixed; the open items are in the roadmap.
 
 ## 0.12.0-pre.0
 

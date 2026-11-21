@@ -82,7 +82,7 @@ OpenRouter execution and the metered Gemini auth-key path are implemented. Gemin
 
 AI Router separates public source code from private runtime state. The core coordinates a project registry, shared project memory, handoffs, Git checkpoint metadata, and future provider adapters. Interfaces such as the CLI, the local control panel, and the VS Code extension call the core rather than embedding orchestration logic themselves.
 
-The system is intended to **route work, not just prompts**. Current deterministic routing considers health, capabilities, risk strength, cost category, local/subscription/metered status, user preferences, and manual overrides.
+The system is intended to **route work, not just prompts**. Routing is deterministic and explainable: it considers health, capabilities, risk strength, cost category, local/subscription/metered status, the results each model has had on earlier tasks of the same difficulty, user preferences, and manual overrides.
 
 ```mermaid
 flowchart LR
@@ -163,7 +163,7 @@ AI Router 0.12.0-pre.0 is a first-use readiness pre-release and is not yet a pro
 
 ## Known limits
 
-This is a pre-release that one person runs on one Windows machine. The full, dated list is in the [October 2026 audit](docs/AUDIT-2026-10.md) (Spanish), the trial results, and the [roadmap](docs/ROADMAP.md). The main ones:
+This is a pre-release that one person runs on one Windows machine. The full list is in the trial results and the [roadmap](docs/ROADMAP.md). The main ones:
 
 - Automatic fallback, cancellation and secret-file protection were exercised on real accounts in the [November 2026 trial](docs/TRIAL_RESULTS.md) and on a second, larger project ([case study: a quoting app built through AI Router](docs/CASE_STUDY_QUICK_QUOTE.md)). It also lists what is still open: the router does not run the project's tests on its own, and subscription token usage is not measured reliably.
 - Local models under 20B parameters only receive light tasks, so on a 12 GB GPU medium work still goes to a subscription model.
@@ -172,7 +172,7 @@ This is a pre-release that one person runs on one Windows machine. The full, dat
 
 ## How this project is built
 
-AI Router is designed and directed by its author and written with AI coding agents (Claude Code, Codex, and others), which is also the workflow it is meant to serve. The author sets the goals, the rules agents must follow ([AGENTS.md](AGENTS.md)), and decides what is merged. Agents write code and tests under those rules, and the work is checked by the test suite on every push (Linux and Windows), by continuity notes that any agent must read before working ([PROGRESS](PROGRESS/PROGRESS.md), in Spanish), and by independent audits such as the one linked above, whose findings and fixes are recorded commit by commit.
+AI Router is designed and directed by its author and written with AI coding agents (Claude Code, Codex, and others), which is also the workflow it is meant to serve. The author sets the goals, the rules agents must follow ([AGENTS.md](AGENTS.md)), and decides what is merged. Agents write code and tests under those rules, and the work is checked by the test suite on every push (Linux and Windows), by continuity notes that any agent must read before working ([PROGRESS](PROGRESS/PROGRESS.md), in Spanish), and by independent audits (a full audit in October 2026), whose findings and fixes are recorded commit by commit.
 
 ## Author
 

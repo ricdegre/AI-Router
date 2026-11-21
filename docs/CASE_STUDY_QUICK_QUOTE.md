@@ -4,15 +4,15 @@ In November 2026 the author built a small web app, **Cotiza Rápido** (Quick Quo
 
 The app is in its own repository: [ricdegre/cotizador](https://github.com/ricdegre/cotizador).
 
-The author is not a software developer. He wrote the design and the task list in plain language, ran each task, and checked each result by hand in the browser before going on.
+The author is not a software developer, but solves problems with the tools at hand. The design and the task list were written in plain language; the author ran each task and checked each result by hand in the browser before going on.
 
 ## The app
 
 Quick Quote lets a small business prepare a price quote on a phone or a computer: business details, saved services and customers, line items with totals, a history of saved quotes, sending by WhatsApp, printing or saving as PDF, and Spanish and English. It installs as a web app and works without Internet. All data stays in the browser.
 
 - Plain HTML, CSS and JavaScript, with no framework and no backend.
-- 21 files, about 3,000 lines including tests.
-- 64 automated tests, all passing.
+- At the end of the build day: 21 files, about 3,000 lines including tests, and 64 automated tests, all passing.
+- After the first phone test, nine more tasks went through the router the same way (offline fix, full business and customer details, editing saved customers and services, an editable quote date, a complete printed quote, tabs in the business section). The first two went to Claude (the second failed and moved to ChatGPT). After that the author noticed that Claude received almost every task, and the router was changed to choose from its own record of earlier results; the other seven were finished by ChatGPT, one of them after Gemini ran out of time. The app now has 70 tests.
 
 ## Result in numbers
 
@@ -91,7 +91,7 @@ A Gemini subscription (about $10 a month) is also connected to the router but no
 
 **What the same work would have cost on a metered API (estimate).** The router recorded, for the Claude attempts, about 337,000 input tokens (its own estimate of the context it sent) and about 188,000 output tokens (reported by the provider). At the published list price of the current Claude Opus model when this was written, $4 per million input tokens and $20 per million output tokens, that is about **$5**. This is an estimate with three caveats: the subscription client does not say exactly which Opus version served each request; the input figure is the router's estimate, not a billed count; and the four ChatGPT attempts are not included because that client reported no token counts.
 
-So for one small project, a metered API would have cost less than a month of subscriptions. The saving AI Router aims for is a different one: the author already pays for these subscriptions for his daily work, and the router lets a project use them, plus a free local model for the small tasks, without opening a metered account or watching a per-token bill. When one subscription fails or reaches its limit, the task moves to the next one instead of stopping.
+So for one small project, a metered API would have cost less than a month of subscriptions. The saving AI Router aims for is a different one: the author already pays for these subscriptions for daily work, and the router lets a project use them, plus a free local model for the small tasks, without opening a metered account or watching a per-token bill. When one subscription fails or reaches its limit, the task moves to the next one instead of stopping.
 
 ## What the build showed
 
