@@ -145,17 +145,17 @@ The VS Code client lives in `interfaces/vscode`. Build its package once (`cd int
 
 ### Screenshots
 
-The panel on a real run (a small expense tracker built from scratch through AI Router, [results](docs/TRIAL_RESULTS.md)):
+The panel after building [Quick Quote](https://github.com/ricdegre/cotizador), a quoting web app made entirely through AI Router ([case study](docs/CASE_STUDY_QUICK_QUOTE.md)):
 
 ![Overview](docs/img/panel-overview.png)
 
 ![Tasks](docs/img/panel-tasks.png)
 
-![Providers](docs/img/panel-providers.png)
+![Profiles and accounts](docs/img/panel-profiles.png)
 
-The application those tasks produced:
+The app those tasks produced, with sample data: a printed quote and the quote history on a phone.
 
-![Expense tracker built in the trial](docs/img/ensayo-gastos.png)
+<p><img src="docs/img/quick-quote-print.png" alt="Printed quote" width="520"> <img src="docs/img/quick-quote-history.png" alt="Quote history on a phone" width="240"></p>
 
 ## Development status
 

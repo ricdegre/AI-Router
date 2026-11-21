@@ -12,8 +12,6 @@ Connected resources: Claude (subscription, `opus`), ChatGPT (subscription, `gpt-
 
 Result: the application works, with 978 lines across server, page and tests, and its 12 tests pass.
 
-![Gastos, the application created in the trial](img/ensayo-gastos.png)
-
 ## Tasks and chosen route
 
 The table shows the run that completed each task. The duration goes from when the task is created until it ends.
