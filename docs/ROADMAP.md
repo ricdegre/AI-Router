@@ -49,7 +49,6 @@ Status as of 2026-11-19, release `0.12.0-pre.0`. This is a pre-release; nothing 
   - Antigravity: plugins loaded by the CLI add a large fixed prompt (a one-word test used about 25,000 input tokens).
   - Ollama: measure GPU memory before raising the 32K context window.
   - Codex: verify its timers and its sandbox on Windows with real runs.
-- Preparing the repository for publication: screenshots, final review of personal paths, making it public
 
 ## Next
 
