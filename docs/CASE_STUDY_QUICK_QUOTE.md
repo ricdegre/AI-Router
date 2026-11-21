@@ -103,5 +103,5 @@ So for one small project, a metered API would have cost less than a month of sub
 ## How this was checked
 
 - By the author, by hand: each task's result in the browser on a computer, as it was built, and the VS Code panel after the fixes.
-- By automated tests: 64 in the app, 368 in the router.
-- Not yet checked when this was written: the app on a phone (installing it and using it offline).
+- By the author, on an Android phone over a private Tailscale connection: installing the app, quotes, WhatsApp, printing and PDF. The first phone test found that the installed app stayed on its logo in airplane mode; the service worker was changed to answer from its cache first, and the second phone test opened and worked offline.
+- By automated tests: 70 in the app, 370 in the router.
