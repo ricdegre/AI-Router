@@ -229,14 +229,6 @@ test('provider plugin manifest validates provider, channel, operations, and infe
   assert.throws(() => validateProviderPluginManifest({ manifest_version: '0.1', provider_id: 'future', auth_modes: [], execution_channels: [] }), { code: 'INVALID_PROVIDER_PLUGIN_MANIFEST' });
 });
 
-test('Gemini API metered channel is registered disabled by default', async (t) => {
-  const root = await temporaryDirectory(t, 'gemini-default-off-');
-  const services = createRuntimeServices({ dataRoot: root, sourceRoot: root, projectRoots: [] }, { registerOllama: false });
-  assert.equal(services.providerRegistry.isEnabled('gemini'), false);
-  const descriptor = services.providerRegistry.list().find((provider) => provider.id === 'gemini');
-  assert.equal(descriptor.execution_channels[0].id, 'gemini-api-metered'); assert.equal(descriptor.execution_channels[0].metered, true);
-});
-
 test('Claude sends long prompts through stdin instead of the command line', async () => {
   const calls = [];
   const worker = { runStreaming: async (_profile, args, options) => { calls.push({ args, options }); return { stdout: JSON.stringify({ type: 'result', subtype: 'success', result: '{}' }) }; } };

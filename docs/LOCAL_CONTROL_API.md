@@ -62,6 +62,9 @@ This is localhost protection, not multi-user authentication. Do not reverse-prox
 | `POST /api/providers/:provider/enable` | Enable a registered adapter |
 | `POST /api/providers/:provider/disable` | Disable a registered adapter |
 | `POST /api/profiles` | Create or update non-secret profile metadata; secret-shaped fields are rejected |
+| `GET /api/connections/presets` | Ready-made connection starting points |
+| `POST /api/connections` | Create or update a connection (non-secret settings only) and register it at once |
+| `POST /api/connections/:id/delete` | Delete a connection that no profile uses |
 | `POST /api/profiles/:profile/connect` | Authenticate the profile through its adapter (see below) |
 | `POST /api/profiles/:profile/reconnect` | Repeat authentication, keeping the previous state if it fails |
 | `POST /api/profiles/:profile/auth-status` | Poll an interactive sign-in that returned `auth-pending` |
@@ -78,6 +81,6 @@ This is localhost protection, not multi-user authentication. Do not reverse-prox
 | `POST /api/settings` | Update allowlisted settings |
 | `POST /api/shutdown` | Cleanly stop the local service |
 
-`connect` and `reconnect` are the only endpoints that accept a credential: an optional `credential` string (for example an OpenRouter or Gemini API key) plus `metered_opt_in`. The value is passed to the provider adapter, which stores it in the private encrypted vault; it is not written to profile metadata or the audit log. Adapters that sign in through a browser or an existing CLI session take no credential and may return `auth-pending`.
+`connect` and `reconnect` are the only endpoints that accept a credential: an optional `credential` string (an API key for a connection). The value is passed to the provider adapter, which stores it in the private encrypted vault; it is not written to profile metadata or the audit log. Adapters that sign in through a browser or an existing CLI session take no credential and may return `auth-pending`.
 
 No endpoint accepts a shell command, arbitrary validation command, or arbitrary runtime filename.

@@ -13,8 +13,8 @@ import { ResumeManager } from './resume-manager.js';
 import { MemoryManager } from '../memory/memory-manager.js';
 import { ProviderRegistry } from '../providers/core/registry.js';
 import { OllamaProvider } from '../providers/ollama/ollama-provider.js';
-import { OpenRouterProvider } from '../providers/openrouter/openrouter-provider.js';
-import { GeminiProvider } from '../providers/gemini/gemini-provider.js';
+import { ApiConnectionProvider } from '../providers/connections/api-connection-provider.js';
+import { ConnectionStore } from './connection-store.js';
 import { CodexSubscriptionProvider } from '../providers/openai/codex-subscription-provider.js';
 import { AntigravityProvider } from '../providers/google/antigravity-provider.js';
 import { ClaudeCodeProvider } from '../providers/anthropic/claude-code-provider.js';
@@ -60,13 +60,14 @@ export function createRuntimeServices(config, options = {}) {
   const providerTimeouts = validateProviderTimeouts(config.providerTimeouts ?? {});
   if (options.registerOllama !== false) providerRegistry.register(options.ollamaProvider ?? new OllamaProvider({ timeoutPolicy: providerTimeouts }));
   if (options.registerCloudProviders ?? options.providers === undefined) {
-    providerRegistry.register(options.openRouterProvider ?? new OpenRouterProvider({ secretStore, timeoutPolicy: providerTimeouts }));
-    providerRegistry.register(options.geminiProvider ?? new GeminiProvider({ secretStore, timeoutPolicy: providerTimeouts }), { enabled: false });
     providerRegistry.register(options.openAiProvider ?? new CodexSubscriptionProvider({ secretStore, timeoutPolicy: providerTimeouts, dataRoot }));
     providerRegistry.register(options.antigravityProvider ?? new AntigravityProvider({ dataRoot }));
     providerRegistry.register(options.claudeProvider ?? new ClaudeCodeProvider({ dataRoot }));
   }
   for (const provider of options.providers ?? []) providerRegistry.register(provider);
+  const connectionStore = new ConnectionStore(dataRoot);
+  const createConnectionProvider = (connection) => new ApiConnectionProvider(connection, { secretStore, timeoutPolicy: providerTimeouts, fetch: options.connectionFetch });
+  if (options.registerConnections ?? options.providers === undefined) for (const connection of connectionStore.loadSync()) providerRegistry.register(createConnectionProvider(connection));
   const memoryManager = new MemoryManager(dataRoot);
   const circuitBreaker = new CircuitBreaker(dataRoot);
   const projectCoordinator = new ProjectCoordinator(dataRoot);
@@ -88,7 +89,7 @@ export function createRuntimeServices(config, options = {}) {
   const readinessStore = new ReadinessStore(dataRoot);
   const vscodeIntegration = options.vscodeIntegration ?? new VsCodeIntegration({ sourceRoot: config.sourceRoot, readinessStore });
   const dependencies = {
-    projectRegistry, profileRegistry, providerRegistry, secretStore, memoryManager, descriptorStore, attachmentStore, artpAliasStore, artpCompiler,
+    projectRegistry, profileRegistry, providerRegistry, connectionStore, createConnectionProvider, secretStore, memoryManager, descriptorStore, attachmentStore, artpAliasStore, artpCompiler,
     taskStore, attemptStore, executionPlanStore, recoveryJournal,
     auditLog, projectCoordinator, contextBuilder: new ContextBuilder(memoryManager),
     circuitBreaker, routingLearning, routingPolicy, deterministicRoutingPolicy, decisionEngineConfigStore, decisionUsageStore, triageEngine, profileTestService, readinessStore, vscodeIntegration, providerTimeouts,

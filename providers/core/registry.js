@@ -20,6 +20,19 @@ export class ProviderRegistry {
     return descriptor;
   }
 
+  replace(adapter, options = {}) {
+    const descriptor = validateProviderDescriptor(adapter?.descriptor);
+    const enabled = this.enabled.get(descriptor.id);
+    this.adapters.set(descriptor.id, adapter);
+    this.enabled.set(descriptor.id, options.enabled ?? enabled ?? true);
+    return descriptor;
+  }
+
+  unregister(providerId) {
+    if (!this.adapters.has(providerId)) throw new AiRouterError(`Unknown provider '${providerId}'.`, 'PROVIDER_NOT_FOUND');
+    this.adapters.delete(providerId); this.enabled.delete(providerId);
+  }
+
   setEnabled(providerId, enabled) {
     if (!this.adapters.has(providerId)) throw new AiRouterError(`Unknown provider '${providerId}'.`, 'PROVIDER_NOT_FOUND');
     this.enabled.set(providerId, Boolean(enabled));

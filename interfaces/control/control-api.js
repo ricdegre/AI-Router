@@ -12,6 +12,7 @@ import { isProductionRoutingProfile } from '../../core/profile-routing-classific
 import { decorateModelForProfiles } from '../../core/model-catalog.js';
 import { validateProviderPluginManifest } from '../../providers/core/plugin-manifest.js';
 import { inferenceVariants } from '../../providers/core/inference-profile.js';
+import { CONNECTION_PRESETS } from '../../providers/connections/presets.js';
 
 const MEMORY_DOCUMENTS = ['context.md', 'decisions.md', 'constraints.md', 'current-task.md', 'handoff.md', 'ai-changelog.md'];
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{1,79}$/;
@@ -243,6 +244,7 @@ export class ControlApi {
     if (pathname === '/api/projects') return this.projects();
     if (pathname === '/api/providers') return this.providers(query.get('refresh') === 'true');
     if (pathname === '/api/profiles') return this.profiles(query);
+    if (pathname === '/api/connections/presets') return CONNECTION_PRESETS;
     if (pathname === '/api/models') return this.models({ detailed: query.get('detailed') === 'true', force: query.get('refresh') === 'true', providerId: query.get('provider') || null, profileId: query.get('profile') || null });
     if (pathname === '/api/tasks') return this.tasks(query);
     if (pathname === '/api/routing/explain') return this.routing(query);
@@ -307,6 +309,28 @@ export class ControlApi {
       await this.services.auditLog.record('decision_engine_config_changed', { enabled: saved.enabled, routing_mode: saved.mode, transport: saved.transport, fallback_enabled: saved.fallback_enabled, usage_categories: saved.usage_categories, budgets: saved.budgets });
       return saved;
     }
+    if (pathname === '/api/connections') {
+      rejectSecretFields(body);
+      const registry = this.services.providerRegistry;
+      const reservedIds = registry.list().filter((provider) => !provider.connection).map((provider) => provider.id);
+      const { connection, created } = await this.services.connectionStore.save(body ?? {}, { reservedIds });
+      const adapter = this.services.createConnectionProvider(connection);
+      if (registry.list().some((provider) => provider.id === connection.id)) registry.replace(adapter); else registry.register(adapter);
+      this.providerCache.at = 0; this.modelCache.clear();
+      await this.services.auditLog.record(created ? 'connection_added' : 'connection_updated', { connection_id: connection.id, dialect: connection.dialect, auth: connection.auth, cost: connection.cost, location: connection.location });
+      return { connection, created };
+    }
+    const connectionDelete = pathname.match(/^\/api\/connections\/([^/]+)\/delete$/);
+    if (connectionDelete) {
+      const connectionId = requiredId(decodeURIComponent(connectionDelete[1]), 'Connection ID');
+      const used = await this.services.profileRegistry.list(connectionId);
+      if (used.length) throw new AiRouterError(`Delete the profiles that use this connection first: ${used.map((profile) => profile.profile_id).join(', ')}.`, 'CONNECTION_IN_USE');
+      const result = await this.services.connectionStore.remove(connectionId);
+      this.services.providerRegistry.unregister(connectionId);
+      this.providerCache.at = 0; this.modelCache.clear();
+      await this.services.auditLog.record('connection_deleted', { connection_id: connectionId });
+      return result;
+    }
     if (pathname === '/api/profiles') {
       rejectSecretFields(body);
       const profileId = requiredId(body?.profile_id, 'Profile ID');
@@ -349,7 +373,7 @@ export class ControlApi {
         if (typeof adapter.connect !== 'function') throw new AiRouterError('This provider does not support profile authentication.', 'PROVIDER_CONNECT_NOT_SUPPORTED');
         await this.services.profileRegistry.updateConnection(profileId, { status: 'connecting', enabled: false });
         try {
-          const connected = await adapter.connect({ profile_id: profileId, credential: body?.credential, metered_opt_in: body?.metered_opt_in === true, reconnect: action === 'reconnect' });
+          const connected = await adapter.connect({ profile_id: profileId, credential: body?.credential, reconnect: action === 'reconnect' });
           if (connected.status === 'auth-pending') {
             const updated = await this.services.profileRegistry.updateConnection(profileId, { status: 'auth-pending', enabled: false, auth_mode: connected.auth_mode ?? adapter.authenticationModes()[0] ?? profile.auth_mode });
             await this.services.auditLog.record('profile_authentication_started', { profile_id: profileId, provider_id: profile.provider_id });

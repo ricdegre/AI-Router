@@ -68,7 +68,7 @@ test('profiles UI supports multi-account management and isolated connection test
 
 test('Add Profile discovers provider models, filters embeddings, and requires explicit multi-model choice', async () => {
   const app = await readFile(new URL('../interfaces/dashboard/app.js', import.meta.url), 'utf8');
-  for (const text of ['Loading models…', 'Advanced: show all models', 'OpenRouter cost filter', 'Free only', 'One compatible model found and selected automatically.', 'Choose one to continue.', 'No compatible chat model', 'Temporary override:', 'profile model']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  for (const text of ['Loading models…', 'Advanced: show all models', 'Cost filter', 'Add connection', 'Edit connection', 'Free only', 'One compatible model found and selected automatically.', 'Choose one to continue.', 'No compatible chat model', 'Temporary override:', 'profile model']) assert.match(app, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   assert.match(app, /api\/models\?provider=\$\{encodeURIComponent\(provider\)\}&detailed=true&refresh=true/);
   assert.match(app, /profile_metadata\?\.chat_compatible/);
   assert.match(app, /selected_model_id/);

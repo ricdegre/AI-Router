@@ -5,7 +5,9 @@ import { RoutingPolicy } from '../routing/policy.js';
 import { MockProvider } from './mock-provider.js';
 import { classifyProfileRouting } from '../core/profile-routing-classification.js';
 import { createModelDescriptor } from '../providers/core/model-descriptor.js';
-import { OpenRouterProvider } from '../providers/openrouter/openrouter-provider.js';
+import { ApiConnectionProvider } from '../providers/connections/api-connection-provider.js';
+import { CONNECTION_PRESETS } from '../providers/connections/presets.js';
+import { validateConnection } from '../core/connection-store.js';
 import { RoutingLearning, addOutcome, emptyLearning, expectedSuccess, learningKey } from '../routing/learning.js';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -119,8 +121,8 @@ test('a FREE model on a metered execution channel is still excluded when metered
   assert.equal(result.selected, null); assert.ok(result.evaluations[0].rejected.includes('metered-execution-channel-disallowed'));
 });
 
-test('real OpenRouter free channel routes manually without enabling metered fallback', async () => {
-  const provider = new OpenRouterProvider();
+test('the free channel of a pay-per-use connection routes manually without enabling metered fallback', async () => {
+  const provider = new ApiConnectionProvider(validateConnection(CONNECTION_PRESETS.find((item) => item.id === 'openrouter')));
   provider.health = async () => ({ status: 'healthy', reachable: true });
   const registry = new ProviderRegistry(); registry.register(provider);
   const freeModel = provider.modelDescriptor({ id: 'vendor/free:free', pricing: { prompt: '0', completion: '0' }, supported_parameters: [] });
@@ -128,7 +130,7 @@ test('real OpenRouter free channel routes manually without enabling metered fall
   const selected = await new RoutingPolicy().explain({ objective: 'Read README.md only', required_capabilities: ['coding'], manual_provider: 'openrouter', manual_profile: freeProfile.profile_id, manual_model: freeModel.model_id, manual_execution_channel: 'openrouter-free' }, registry, [freeProfile]);
   assert.equal(selected.selected?.profile_id, freeProfile.profile_id);
   assert.equal(selected.selected?.cost_category, 'FREE');
-  const stale = await new RoutingPolicy().explain({ objective: 'Read README.md only', required_capabilities: ['coding'], manual_profile: freeProfile.profile_id }, registry, [{ ...freeProfile, execution_channel: 'openrouter-cloud' }]);
+  const stale = await new RoutingPolicy().explain({ objective: 'Read README.md only', required_capabilities: ['coding'], manual_profile: freeProfile.profile_id }, registry, [{ ...freeProfile, execution_channel: 'openrouter-metered' }]);
   assert.equal(stale.selected, null);
   assert.ok(stale.evaluations[0].rejected.includes('execution-channel-cost-mismatch'));
 });

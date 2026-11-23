@@ -85,6 +85,17 @@ The router decides by itself; you do not assign models to kinds of task.
 - **Read-only / no file changes**: the model only answers, it does not touch files. Use it to ask a question or to ask for a design.
 - **Attach image**: attaches a screenshot as a reference (PNG, JPEG or WebP, up to 4 of 5 MB). You can also paste it.
 
+## Add another model
+
+Any model can be added without code: a server on your PC or network (LM Studio, llama.cpp, vLLM, Jan, LocalAI) or a cloud API (OpenRouter, DeepSeek, Groq, Mistral, the OpenAI, Anthropic or Gemini API, and others).
+
+1. In the web panel: **Providers** → **Add connection**. Choose one from **Start from**; the fields fill in. Change the address if your server uses another one. **Add connection**.
+2. **Profiles / Accounts** → **Add profile**, choose the new connection as **Provider** and save.
+3. On the profile, **Connect**: paste the API key (a local server does not ask for one).
+4. **Edit** the profile and choose the **Model**. **Test Chat** checks that it answers.
+
+From then on the router can choose it. It starts with no record and learns from results what it is good for. Pay-per-use services only use their free models unless you turn on **Allow metered** in **Settings**.
+
 ## Cancel a task
 
 While a task is running, **Cancel Task** appears under **Running…**. You can also do it from the web panel: **Tasks** → open the task → **Cancel**. The task ends in **Cancelled** and does not change any file.
@@ -127,6 +138,5 @@ Each medium task uses one or two calls to Claude or ChatGPT. A project of 12 tas
 - It does not run the project's tests on its own.
 - It does not commit.
 - It does not measure subscription tokens well.
-- The `openrouter` profile does not work: its free model no longer responds.
 
 Results of the real trial and full list of open items: [TRIAL_RESULTS.md](TRIAL_RESULTS.md).

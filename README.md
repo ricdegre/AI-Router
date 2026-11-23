@@ -16,6 +16,7 @@ AI coding tools keep context inside one private conversation and one account. Wh
 
 - **Shared project memory.** Context, decisions, constraints, the current task, and the latest handoff live in private, human-readable files outside the chat, so any agent can pick up where the last one stopped.
 - **Routes work, not just prompts.** Each task is analyzed (intent, scope, complexity, risk, required capabilities) and sent to the cheapest model that can do it well: a color or typo change goes to a free or local model, a bug fix or feature to a strong subscription model, an architecture redesign to the strongest reasoning setting.
+- **Connect any model.** Besides the built-in subscription and Ollama channels, any local server (LM Studio, llama.cpp, vLLM, Jan, LocalAI) or cloud API that speaks the OpenAI, Anthropic or Gemini format can be added from the control panel with **Add connection**: pick a ready-made preset or type the address. No code changes, and the router learns what each new model is good at.
 - **Learns which model is best for what.** The router keeps the result of every attempt. For each model and each level of difficulty it knows how many tasks finished and how many failed, and it uses that record to choose next time. Nobody ranks the models by hand: a new model starts neutral, a removed one simply stops being chosen, and the choice improves the more the router is used. Among models with similar records, the work is shared so each one keeps being measured.
 - **Automatic fallback.** If a model times out, fails, or runs out of quota, the task is handed to another eligible model with the same durable state, without repeating actions that already ran.
 - **Safe by design.** Model output is treated as an untrusted proposal: file changes go through a mediated action protocol with stale-content protection, backups, independent validation, and crash-safe resume.
@@ -44,7 +45,7 @@ flowchart LR
 | Add a CSV export endpoint with tests | edit · medium | Strong subscription model, medium effort |
 | Redesign the authentication architecture | architecture · high | Strongest model, high effort |
 
-Supported providers today: Claude Code (subscription), ChatGPT/Codex (subscription), Google Antigravity (subscription), OpenRouter (free and metered), Gemini API (opt-in, metered), and Ollama (local). New providers plug in through a versioned provider protocol.
+Supported providers today: Claude Code (subscription), ChatGPT/Codex (subscription), Google Antigravity (subscription), Ollama (local), and any number of connections: local OpenAI-compatible servers, and cloud APIs such as OpenRouter, OpenAI API, Anthropic API, Gemini API, DeepSeek, Groq, Mistral, xAI, Together, Fireworks, Cerebras, Hugging Face, or any other OpenAI-compatible address. New providers plug in through a versioned provider protocol.
 
 ## Current scope in detail
 
@@ -69,14 +70,14 @@ This repository currently provides:
 - operator commands and a privacy-conscious diagnostic report;
 - a local-only operational control panel with explainable routing, continuity inspection, durable task controls, and system diagnostics;
 - multi-account profile management with provider-aware model selection, isolated connection checks, and bounded Test Chat inference that has no project or tool access;
-- encrypted per-profile cloud credentials, real OpenRouter and opt-in Gemini API adapters, and explicit free/metered cost policy;
+- connections for any model in three API formats (OpenAI-compatible, Anthropic Messages, Gemini), managed from the control panel, with encrypted per-profile API keys and an explicit free/metered cost policy;
 - isolated personal ChatGPT subscription profiles using the official Codex App Server browser flow, exact provider-reported limits, model discovery, Test Chat, and routed execution without OpenAI API billing fallback;
 - generic inference profiles that keep provider, execution channel, account, model, reasoning effort, timeout, output ceiling, and cost policy separate;
 - official CLI subscription channels for Google Antigravity and Claude Code, with dynamic model discovery, provider-specific inference controls, and reported usage limits after the user installs and signs in to those CLIs;
 - a thin VS Code extension that connects only to the local AI Router control API and can select a router provider/profile/model;
 - an artificial continuity demo and isolated tests.
 
-OpenRouter execution and the metered Gemini auth-key path are implemented. Gemini stays off until explicit metered opt-in. OpenAI profiles use the official Codex App Server “Sign in with ChatGPT” flow in a separate runtime home per profile; the router never copies global login state or silently uses paid API billing. Claude Code uses the authenticated Claude subscription CLI with explicit model and effort selection, tool-free test inference, and official `/usage` observations; it does not enable Anthropic API billing. Controlled failed writes have recovery snapshots; generalized Git rollback is not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Triage, the built-in task classifier, is optional and off by default; it runs as a mock or on a local Ollama model and never calls an external service.
+Pay-per-use connections use only models whose reported price is zero until metered use is allowed in Settings. OpenAI profiles use the official Codex App Server “Sign in with ChatGPT” flow in a separate runtime home per profile; the router never copies global login state or silently uses paid API billing. Claude Code uses the authenticated Claude subscription CLI with explicit model and effort selection, tool-free test inference, and official `/usage` observations; it does not enable Anthropic API billing. Controlled failed writes have recovery snapshots; generalized Git rollback is not implemented. Ollama execution requires an explicit installed model and is never activated implicitly by startup. Triage, the built-in task classifier, is optional and off by default; it runs as a mock or on a local Ollama model and never calls an external service.
 
 ## Conceptual architecture
 
@@ -101,8 +102,7 @@ flowchart LR
     POLICY --> PREG[Provider Registry]
     POLICY --> PROFILES[Private Profile Registry]
     PREG --> OLLAMA[Ollama adapter]
-    PREG --> OPENROUTER[OpenRouter API]
-    PREG --> GEMINI[Gemini API opt-in]
+    PREG --> CONN[Connections<br/>any local server or cloud API]
     PREG --> CODEX[Isolated Codex subscription worker]
     PREG --> CLAUDE[Claude Code subscription CLI]
     PREG --> AGY[Google Antigravity subscription CLI]

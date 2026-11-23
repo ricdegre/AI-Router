@@ -22,7 +22,8 @@ Status as of 2026-11-19, release `0.12.0-pre.0`. This is a pre-release; nothing 
 **Providers and accounts**
 
 - Provider Protocol 0.1 with a mock-based conformance suite; CI runs the tests on Linux and Windows
-- Six adapters: Ollama, OpenRouter, Gemini (metered, opt-in), OpenAI Codex App Server, Claude Code, Google Antigravity
+- Built-in adapters: Ollama, OpenAI Codex App Server, Claude Code, Google Antigravity
+- Connections for any model: local servers and cloud APIs in the OpenAI-compatible, Anthropic and Gemini formats, added and edited from the dashboard, with ready-made presets
 - Multiple profiles per provider, per-profile authentication, DPAPI-encrypted API keys, isolated Codex homes
 - Model and effort discovery, subscription usage parsing, bounded startup/first-token/inactivity/overall timeouts
 
@@ -52,6 +53,8 @@ Status as of 2026-11-19, release `0.12.0-pre.0`. This is a pre-release; nothing 
 
 ## Next
 
+- **More ways to connect (stage 2).** OAuth sign-in where the service offers it (OpenRouter, GitHub Models, Hugging Face, Google) and enterprise cloud credentials (AWS Bedrock, Google Vertex AI, Azure OpenAI / Microsoft Foundry).
+- **Command-line agents (stage 3).** A template to add any terminal agent (Gemini CLI, Qwen Code, GitHub Copilot CLI, Aider, OpenCode) without code.
 - **Real end-to-end validation.** Run a real task with fallback between two different subscription providers and cancel a real running task. This consumes quota and needs the owner's approval.
 - **Ollama context window.** `num_ctx` is sized to the prompt but capped at 32,768 tokens even when the model supports more; measure GPU memory before raising it.
 - **Codex timers.** Turns that think for more than 90 seconds before the first token can fail, and a process that dies mid-turn is noticed only at the overall timeout. The overall limit cannot be configured above 300 seconds, which is short for medium tasks on the strongest models.

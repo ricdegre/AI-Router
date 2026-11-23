@@ -17,7 +17,7 @@ Image eligibility is the intersection of **model vision support**, **execution-c
 | Ollama `/api/chat` | `/api/show` capabilities per installed model | Base64 pixels in `messages[].images` | Yes | **Passed** with local `gemma4:26b` |
 | Claude Code subscription CLI | Model metadata may report vision | `--input-format stream-json` stdin user message containing base64 image content block; tools disabled | Yes | **Not verified**: authenticated `claude.ai` Pro CLI 2.1.280 timed out in controlled test |
 | OpenAI Codex App Server subscription | Per-model metadata | Existing `localImage` turn input | Yes | Not tested in F09; no login started |
-| OpenRouter | Per-model metadata | Existing image data URL message part | Yes | Not tested; metered requests prohibited |
+| API connections | Per-model metadata or the connection's Images setting | Native image part of each format (data URL, base64 block, inline data) | Yes | Not tested live; metered requests prohibited |
 | Antigravity | Do not infer from model name | None verified or implemented | Filtering only | Not tested; ineligible for visual execution |
 
 Ollama's [official vision documentation](https://docs.ollama.com/capabilities/vision) specifies `images` on chat messages. Claude's [official Agent SDK streaming-input documentation](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode) specifies image content blocks for streaming input, while single-message input is text-only. That supports the implemented mechanism, **not** a claim that this installation completed an image request. Textual image paths are never used as visual transport.

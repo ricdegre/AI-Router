@@ -4,7 +4,9 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { temporaryDirectory } from './helpers.js';
 import { OllamaProvider } from '../providers/ollama/ollama-provider.js';
-import { OpenRouterProvider } from '../providers/openrouter/openrouter-provider.js';
+import { ApiConnectionProvider } from '../providers/connections/api-connection-provider.js';
+import { CONNECTION_PRESETS } from '../providers/connections/presets.js';
+import { validateConnection } from '../core/connection-store.js';
 import { ClaudeCodeProvider } from '../providers/anthropic/claude-code-provider.js';
 
 async function image(t) { const root = await temporaryDirectory(t, 'provider-image-'); const file = path.join(root, 'screen.png'); await writeFile(file, Buffer.from('private-image-bytes')); return file; }
@@ -15,10 +17,15 @@ test('Ollama serializes attached images through the native images field', async 
   assert.equal(result.output, 'blue panel'); assert.deepEqual(body.messages[0].images, [Buffer.from('private-image-bytes').toString('base64')]); assert.equal(body.messages[0].content, 'Describe it');
 });
 
-test('OpenRouter serializes attached images as provider-native image_url content', async (t) => {
-  const file = await image(t); let request; const provider = new OpenRouterProvider({ secretStore: { get: async () => 'key' } }); provider.request = async (_path, options) => { request = options.body; return { model: 'visual-free', choices: [{ message: { content: 'green button' } }] }; };
-  const result = await provider.execute({ profile_id: 'free', model: 'visual-free', prompt: 'Describe it', attachments: [{ path: file, mime_type: 'image/png' }] });
-  assert.equal(result.output, 'green button'); assert.equal(request.messages[0].content[0].type, 'text'); assert.match(request.messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+test('API connections serialize attached images in the native form of each dialect', async (t) => {
+  const file = await image(t); const base64 = Buffer.from('private-image-bytes').toString('base64');
+  const make = (id) => { const provider = new ApiConnectionProvider(validateConnection(CONNECTION_PRESETS.find((item) => item.id === id)), { secretStore: { get: async () => 'key' } }); provider.request = async (_path, options) => { provider.sent = options.body; return { choices: [{ message: { content: 'green button' } }], content: [{ type: 'text', text: 'green button' }], candidates: [{ content: { parts: [{ text: 'green button' }] } }] }; }; return provider; };
+  const openai = make('openrouter'); const result = await openai.execute({ profile_id: 'free', model: 'visual-free', prompt: 'Describe it', attachments: [{ path: file, mime_type: 'image/png' }] });
+  assert.equal(result.output, 'green button'); assert.equal(openai.sent.messages[0].content[0].type, 'text'); assert.equal(openai.sent.messages[0].content[1].image_url.url, `data:image/png;base64,${base64}`);
+  const anthropic = make('anthropic-api'); await anthropic.execute({ profile_id: 'p', model: 'm', prompt: 'Describe it', attachments: [{ path: file, mime_type: 'image/png' }] });
+  assert.deepEqual(anthropic.sent.messages[0].content[1], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } });
+  const gemini = make('gemini-api'); await gemini.execute({ profile_id: 'p', model: 'm', prompt: 'Describe it', attachments: [{ path: file, mime_type: 'image/png' }] });
+  assert.deepEqual(gemini.sent.contents[0].parts, [{ text: 'Describe it' }, { inline_data: { mime_type: 'image/png', data: base64 } }]);
 });
 
 test('Claude Code sends native image blocks over stream-json stdin without exposing local paths', async (t) => {

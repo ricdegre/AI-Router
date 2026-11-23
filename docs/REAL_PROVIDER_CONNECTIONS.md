@@ -4,17 +4,27 @@
 
 A provider is an integration, a profile is one isolated identity/resource, a model is an explicit execution target, and an execution channel is the protocol used to reach it. These fields are kept separate in routing and the Dashboard.
 
-## OpenRouter
+## Connections: any local server or cloud API
 
-OpenRouter is operational through its official bearer-key API. Create a cloud profile, save it unconfigured, click Connect, enter an OpenRouter API key, then edit the profile and choose a discovered model. The model list records provider-reported pricing, context, modalities, and supported parameters. The UI starts with Free only; paid routing remains disabled until the global metered setting and the task both opt in. AI Router always sends one explicit model and does not delegate fallback authority to OpenRouter.
+Any model that is not one of the built-in subscription channels is added as a **connection**. In the control panel open **Providers → Add connection**, choose a preset (or **Other (OpenAI-compatible)**) and adjust any field:
 
-Test Connection validates authentication, reachability, and model discovery. Test Chat sends only the selected profile, model, short message, and output limit. It sends no tools or project context.
+| Field | Meaning |
+|---|---|
+| Connection ID, Name | How the connection appears in Providers, Profiles and routing. Built-in provider IDs are reserved. |
+| API format | `openai` (chat/completions: most services and local servers), `anthropic` (Messages API) or `gemini` (generateContent). |
+| Authentication | `None` for local servers, `API key` for cloud services. The key is never entered here: it is entered with **Connect** on the profile and stored encrypted with Windows DPAPI. |
+| Base URL | The API address, for example a server on this PC or on your network. User names, passwords and query strings are rejected. |
+| Location, Cost | `Local, no cost`, `Free`, `Flat-rate plan` or `Pay per use`. Pay-per-use connections get two channels: models whose reported price is zero use the free channel; the rest use the metered channel, which routing skips until **Allow metered** is on. |
+| Starting strength | Only the first guess. The router learns from real results which tasks each model finishes. |
+| Images | Detect from the models' metadata, or force on/off. |
+| Structured output | `JSON schema`, `JSON object` or `Prompt only`, for servers that do not support schemas. The prompt always describes the JSON shape. |
+| Usage path, Extra headers | Optional. A path under the base URL that reports key usage and limits (OpenRouter: `key`), and non-secret headers. Credential-like headers are rejected. |
 
-## Gemini
+Presets included: LM Studio, llama.cpp server, vLLM, Jan, LocalAI, OpenRouter, OpenAI API, Anthropic API, Gemini API, DeepSeek, Groq, Mistral, xAI, Together AI, Fireworks AI, Cerebras and Hugging Face. They are only starting values; nothing is special-cased in code.
 
-Gemini uses the official Gemini auth-key path. It is programmatic API capacity rather than a claim that a consumer Gemini subscription can be automated. As of September 2026, Google requires migration away from standard keys to service-account-bound auth keys. Connect requires the user to acknowledge metered use before the credential is validated or stored. Global metered routing remains off by default.
+After saving the connection, add a profile for it under **Profiles / Accounts**, click **Connect** (enter the API key, or just confirm for a local server), then edit the profile and choose a discovered model. **Test Connection** validates authentication, reachability and model discovery; **Test Chat** sends only the chosen model, a short message and an output limit, with no tools or project context. Reasoning models may need a larger output limit before they print an answer.
 
-Google also documents OAuth/ADC for applications with a Cloud project and consent configuration. That is not treated as consumer-subscription capacity and is not embedded in this release.
+A connection cannot be deleted while profiles use it. API keys for a pay-per-use service such as the OpenAI or Anthropic API are separate from the ChatGPT and Claude subscriptions, which AI Router reaches only through their official apps.
 
 ## OpenAI / Codex subscription
 

@@ -4,6 +4,8 @@ AI Router follows Semantic Versioning while pre-1.0. Minor versions may contain 
 
 ## Unreleased
 
+- Added connections for any model: a local server or cloud API in the OpenAI-compatible, Anthropic Messages or Gemini format can be added, edited and deleted from **Providers → Add connection**, with presets for LM Studio, llama.cpp, vLLM, Jan, LocalAI, OpenRouter, OpenAI API, Anthropic API, Gemini API, DeepSeek, Groq, Mistral, xAI, Together, Fireworks, Cerebras and Hugging Face. Saved in `accounts/connections.json`; keys stay in the per-profile vault.
+- Removed the separate OpenRouter and Gemini API adapters; OpenRouter and the Gemini API are now connection presets. Migration: create the OpenRouter connection, rename the stored secret `openrouter-api-key` to `api-key`, and rename the channel `openrouter-cloud` to `openrouter-metered`. Error codes `OPENROUTER_*` and `GEMINI_*` became `CONNECTION_*`, and Connect no longer takes `metered_opt_in`.
 - Fixed slow task status: checking a task's state no longer calls the Triage model. Each status poll took 10 to 30 seconds, which made VS Code report `TRACKING_LOST` on live tasks.
 - Changed the VS Code route preview to use the deterministic policy (`engine=deterministic` on `/api/routing/explain`), and skipped Triage on retries when `retry_escalation` is off, so Triage runs once per task instead of three times.
 - Raised the default overall time for one provider attempt from 5 to 10 minutes, and the configurable ceiling from 5 to 15 minutes.
